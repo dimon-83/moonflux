@@ -41,42 +41,39 @@ pub(all) enum DiffOp {
 /// compiles to the same topology (plan diffs stay stable).
 pub fn compile(spec : @spec.PipelineSpec) -> Topology {
   let processes : Array[Process] = []
-  processes.push(
-    Process::{
-      name: "broker",
-      role: "broker",
-      capability: "native",
-      detail: "topic \{spec.topic.name}, single partition",
-    },
-  )
+  processes.push(Process::{
+    name: "broker",
+    role: "broker",
+    capability: "native",
+    detail: "topic \{spec.topic.name}, single partition",
+  })
   let (role, detail) = match spec.source {
     FileSource(path) => ("source-runner", "file source: \{path}")
     // non-exhaustive guard: v1alpha1 has exactly one source kind
   }
-  processes.push(
-    Process::{ name: "source-runner", role, capability: "native", detail },
-  )
+  processes.push(Process::{
+    name: "source-runner",
+    role,
+    capability: "native",
+    detail,
+  })
   for i, t in spec.transforms {
     let expr = match t {
       ExprTransform(expr) => expr
     }
-    processes.push(
-      Process::{
-        name: "transform-\{i}",
-        role: "transform-runner",
-        capability: "mbel-p1",
-        detail: "expr transform: \{expr}",
-      },
-    )
+    processes.push(Process::{
+      name: "transform-\{i}",
+      role: "transform-runner",
+      capability: "mbel-p1",
+      detail: "expr transform: \{expr}",
+    })
   }
-  processes.push(
-    Process::{
-      name: "sink-runner",
-      role: "sink-runner",
-      capability: "native",
-      detail: "stdout sink",
-    },
-  )
+  processes.push(Process::{
+    name: "sink-runner",
+    role: "sink-runner",
+    capability: "native",
+    detail: "stdout sink",
+  })
   Topology::{ pipeline: spec.metadata_name, topic: spec.topic.name, processes }
 }
 
@@ -99,11 +96,10 @@ pub fn diff(old : Topology?, new : Topology) -> Array[DiffOp] {
   let ops : Array[DiffOp] = []
   let old_map : Map[String, Process] = {}
   match old {
-    Some(t) => {
+    Some(t) =>
       for p in t.processes {
         old_map[p.name] = p
       }
-    }
     None => ()
   }
   let new_names : Map[String, Bool] = {}
@@ -111,11 +107,12 @@ pub fn diff(old : Topology?, new : Topology) -> Array[DiffOp] {
     new_names[p.name] = true
     match old_map.get(p.name) {
       None => ops.push(Add(p))
-      Some(previous) => {
-        if previous.detail != p.detail || previous.role != p.role || previous.capability != p.capability {
+      Some(previous) =>
+        if previous.detail != p.detail ||
+          previous.role != p.role ||
+          previous.capability != p.capability {
           ops.push(Update(p.name, previous.detail, p.detail))
         }
-      }
     }
   }
   for name, _ in old_map {
@@ -153,6 +150,8 @@ pub fn render_diff(ops : Array[DiffOp]) -> String {
   if ops.is_empty() {
     sb.write_string("  (no changes)\n")
   }
-  sb.write_string("diff: \{adds} to add, \{updates} to update, \{removes} to remove\n")
+  sb.write_string(
+    "diff: \{adds} to add, \{updates} to update, \{removes} to remove\n",
+  )
   sb.to_string()
 }

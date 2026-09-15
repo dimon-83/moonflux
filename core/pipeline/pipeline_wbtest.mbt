@@ -10,16 +10,13 @@ fn spec(text : String) -> @spec.PipelineSpec {
 }
 
 ///|
-const SPEC_A : String =
-  "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"file-to-stdout\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"a.txt\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}"
+const SPEC_A : String = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"file-to-stdout\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"a.txt\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}"
 
 ///|
-const SPEC_B : String =
-  "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"file-to-stdout\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"b.txt\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}"
+const SPEC_B : String = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"file-to-stdout\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"b.txt\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}"
 
 ///|
-const SPEC_T : String =
-  "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"file-to-stdout\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"a.txt\"},\"transforms\":[{\"type\":\"expr\",\"expr\":\"upper()\"}],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}"
+const SPEC_T : String = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"file-to-stdout\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"a.txt\"},\"transforms\":[{\"type\":\"expr\",\"expr\":\"upper()\"}],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}"
 
 ///|
 test "compile produces broker + source + sink" {
@@ -60,7 +57,10 @@ test "diff: full create, no-op, update" {
   // source path change -> one update, same process set
   let update = diff(Some(a), b)
   assert_eq(update.length(), 1)
-  assert_true(update[0] is Update("source-runner", "file source: a.txt", "file source: b.txt"))
+  assert_true(
+    update[0]
+    is Update("source-runner", "file source: a.txt", "file source: b.txt"),
+  )
 }
 
 ///|
@@ -68,6 +68,8 @@ test "render_diff prints stable human-readable output" {
   let a = compile(spec(SPEC_A))
   let b = compile(spec(SPEC_B))
   let text = render_diff(diff(Some(a), b))
-  assert_true(text.contains("~ source-runner: file source: a.txt -> file source: b.txt"))
+  assert_true(
+    text.contains("~ source-runner: file source: a.txt -> file source: b.txt"),
+  )
   assert_true(text.contains("diff: 0 to add, 1 to update, 0 to remove"))
 }

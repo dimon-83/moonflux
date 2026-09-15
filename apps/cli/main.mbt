@@ -70,7 +70,9 @@ fn parse_flags(argv : Array[String]) -> Flags {
   let mut i = 0
   while i < argv.length() {
     let arg = argv[i]
-    if arg.has_prefix("-") && arg.length() > 1 && !(arg.has_prefix("--") && arg.length() == 2) {
+    if arg.has_prefix("-") &&
+      arg.length() > 1 &&
+      !(arg.has_prefix("--") && arg.length() == 2) {
       let body = if arg.has_prefix("--") {
         canonical(arg[2:arg.length()].to_owned())
       } else {

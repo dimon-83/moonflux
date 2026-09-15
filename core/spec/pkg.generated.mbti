@@ -1,0 +1,51 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/spec"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub const SPEC_API_VERSION : String = "moonflux.io/v1alpha1"
+
+pub const SPEC_KIND : String = "Pipeline"
+
+pub fn parse_spec(String) -> Result[PipelineSpec, Array[SpecError]]
+
+// Errors
+
+// Types and methods
+pub(all) struct PipelineSpec {
+  metadata_name : String
+  source : SourceSpec
+  transforms : Array[TransformSpec]
+  topic : TopicSpec
+  sink : SinkSpec
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) enum SinkSpec {
+  StdoutSink
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) enum SourceSpec {
+  FileSource(String)
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct SpecError {
+  path : String
+  code : String
+  message : String
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct TopicSpec {
+  name : String
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) enum TransformSpec {
+  ExprTransform(String)
+} derive(Eq, Show, @debug.Debug)
+
+// Type aliases
+
+// Traits
+

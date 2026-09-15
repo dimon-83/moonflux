@@ -1,0 +1,43 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/pipeline"
+
+import {
+  "moonbitlang/core/debug",
+  "moonflux/core/spec",
+}
+
+// Values
+pub fn compile(@spec.PipelineSpec) -> Topology
+
+pub fn diff(Topology?, Topology) -> Array[DiffOp]
+
+pub fn render_diff(Array[DiffOp]) -> String
+
+pub fn runnable(Topology) -> Bool
+
+// Errors
+
+// Types and methods
+pub(all) enum DiffOp {
+  Add(Process)
+  Update(String, String, String)
+  Remove(String)
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct Process {
+  name : String
+  role : String
+  capability : String
+  detail : String
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct Topology {
+  pipeline : String
+  topic : String
+  processes : Array[Process]
+} derive(Eq, Show, @debug.Debug)
+
+// Type aliases
+
+// Traits
+

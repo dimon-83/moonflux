@@ -1,0 +1,55 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/log"
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/debug",
+  "moonflux/core/protocol",
+}
+
+// Values
+
+// Errors
+pub(all) suberror LogError {
+  Storage(String)
+  CorruptFrame
+  OffsetOutOfRange
+  BatchTooLarge
+} derive(Eq, @debug.Debug)
+pub impl Show for LogError
+
+// Types and methods
+pub(all) struct LogEntry {
+  offset : Int64
+  record : @protocol.Record
+} derive(Eq, Show, @debug.Debug)
+
+pub struct MemorySegment {
+  data : @buffer.Buffer
+}
+pub fn MemorySegment::contents(Self) -> Bytes
+pub fn MemorySegment::handle(Self) -> SegmentFile
+pub fn MemorySegment::new() -> Self
+
+pub(all) struct SegmentFile {
+  read : (Int, Int) -> Result[Bytes, LogError]
+  append : (Bytes) -> Result[Int, LogError]
+  size : () -> Result[Int, LogError]
+  flush : () -> Result[Unit, LogError]
+  truncate : (Int) -> Result[Unit, LogError]
+} derive(@debug.Debug)
+
+pub struct SegmentedLog {
+  file : SegmentFile
+  mut valid_size : Int
+  mut next_offset : Int64
+} derive(@debug.Debug)
+pub fn SegmentedLog::append(Self, Array[@protocol.Record]) -> Result[Int64, LogError]
+pub fn SegmentedLog::high_watermark(Self) -> Int64
+pub fn SegmentedLog::open(SegmentFile) -> Result[Self, LogError]
+pub fn SegmentedLog::read(Self, Int64, Int) -> Result[Array[LogEntry], LogError]
+
+// Type aliases
+
+// Traits
+

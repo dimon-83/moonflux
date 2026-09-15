@@ -2,5 +2,5 @@
 // Pure computation; compiles for every target.
 
 import {
-  "moonflux/core/spec" @spec,
+  "moonflux/core/spec",
 }

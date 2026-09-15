@@ -1,0 +1,20 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/spec_test"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+type InvalidCase derive(Eq, @debug.Debug)
+
+type ValidCase derive(Eq, @debug.Debug)
+
+// Type aliases
+
+// Traits
+

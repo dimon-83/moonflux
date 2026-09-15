@@ -90,7 +90,8 @@ fn persist_applied(
     Ok(_) => ()
     Err(e) => return Err("mkdir \{data_dir}: \{e}")
   }
-  match @fs.write_file(topology_path(data_dir), @utf8.encode(text[0:text.length()])) {
+  match
+    @fs.write_file(topology_path(data_dir), @utf8.encode(text[0:text.length()])) {
     Ok(_) => Ok(())
     Err(e) => Err("write topology: \{e}")
   }
@@ -174,7 +175,10 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
   let applied = match load_applied(data_dir) {
     Some(applied) => applied
-    None => fail("no applied pipeline under \{data_dir}; run: moonflux pipeline apply -f <spec>")
+    None =>
+      fail(
+        "no applied pipeline under \{data_dir}; run: moonflux pipeline apply -f <spec>",
+      )
   }
   if flags.get("name") is Some(want) {
     if want != applied.pipeline {
@@ -182,17 +186,18 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     }
   }
   let topology = @pipeline.compile(applied.spec)
-  if !(@pipeline.runnable(topology)) {
+  if !@pipeline.runnable(topology) {
     fail(
       "pipeline uses capabilities not available until P1 (mbel dynamic rules); P0 runtime refuses to execute",
     )
   }
   // 1. source: file -> records
   let records : Array[@protocol.Record] = match applied.spec.source {
-    FileSource(path) => match file_records(path) {
-      Ok(records) => records
-      Err(e) => fail(e)
-    }
+    FileSource(path) =>
+      match file_records(path) {
+        Ok(records) => records
+        Err(e) => fail(e)
+      }
   }
   // 2. broker: append to the topic log
   let log = match open_topic_log(data_dir, applied.spec.topic.name) {
@@ -209,7 +214,9 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     Err(e) => fail("read: \{e}")
   }
   for entry in entries {
-    println(@utf8.decode_lossy(entry.record.value[0:entry.record.value.length()]))
+    println(
+      @utf8.decode_lossy(entry.record.value[0:entry.record.value.length()]),
+    )
   }
   cli_exit(0)
 }
