@@ -2,10 +2,13 @@ supported_targets = "native"
 
 import {
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
   "moonbitlang/core/string",
   "moonflux/core/codec",
   "moonflux/core/log",
+  "moonflux/core/pipeline",
   "moonflux/core/protocol",
+  "moonflux/core/spec",
   "moonflux/adapters/fs-native" @fs,
   "moonflux/adapters/net-native" @net,
 }

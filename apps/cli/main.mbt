@@ -56,12 +56,26 @@ fn Flags::require(self : Flags, name : String) -> String {
 
 ///|
 fn parse_flags(argv : Array[String]) -> Flags {
+  // single-dash aliases for the flags humans actually type
+  fn canonical(body : String) -> String {
+    match body {
+      "f" => "file"
+      "t" => "topic"
+      "d" => "data-dir"
+      other => other
+    }
+  }
+
   let map : Map[String, String] = {}
   let mut i = 0
   while i < argv.length() {
     let arg = argv[i]
-    if arg.has_prefix("--") {
-      let body = arg[2:arg.length()].to_owned()
+    if arg.has_prefix("-") && arg.length() > 1 && !(arg.has_prefix("--") && arg.length() == 2) {
+      let body = if arg.has_prefix("--") {
+        canonical(arg[2:arg.length()].to_owned())
+      } else {
+        canonical(arg[1:arg.length()].to_owned())
+      }
       if body.contains("=") {
         match body.split_once("=") {
           Some((name, value)) => map[name.to_owned()] = value.to_owned()
@@ -110,6 +124,7 @@ fn main {
     "produce" => cmd_produce(rest)
     "consume" => cmd_consume(rest)
     "serve" => cmd_serve(rest)
+    "pipeline" => cmd_pipeline(rest)
     _ => usage()
   }
 }

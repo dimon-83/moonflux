@@ -1,0 +1,6 @@
+// core/pipeline: spec -> process topology compiler + plan diff.
+// Pure computation; compiles for every target.
+
+import {
+  "moonflux/core/spec" @spec,
+}
