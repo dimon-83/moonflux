@@ -86,6 +86,12 @@ diff -u "$WORK/expect2.txt" "$WORK/out2.txt" || fail "v2 rule output"
 kill -0 "$SERVER_PID" || fail "server restarted (must stay up)"
 pass "rule v2 hot-swapped into the running server (same PID)"
 
+# the same rules execute on the single-process run path (--spec direct)
+"$EXE" pipeline run --spec "$WORK/spec-v2.json" --data-dir "$WORK/run-data" | awk -F'\t' '{print $1}' > "$WORK/out3.txt" \
+  || fail "pipeline run with transform failed"
+diff -u "$WORK/expect2.txt" "$WORK/out3.txt" || fail "pipeline run transform output"
+pass "pipeline run --spec executes the same transform chain"
+
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 echo "E2E-RULES: all green"

@@ -188,31 +188,48 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
 fn pipeline_run(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
-  let applied = match load_applied(data_dir) {
-    Some(applied) => applied
+  // --spec runs a document directly (no applied state needed);
+  // otherwise the applied topology supplies it
+  let applied = match flags.get("spec") {
+    Some(path) => {
+      let (spec, _) = load_spec_doc(path)
+      Applied::{ pipeline: spec.metadata_name, spec }
+    }
     None =>
-      fail(
-        "no applied pipeline under \{data_dir}; run: moonflux pipeline apply -f <spec>",
-      )
+      match load_applied(data_dir) {
+        Some(applied) => applied
+        None =>
+          fail(
+            "no applied pipeline under \{data_dir}; run: moonflux pipeline apply -f <spec> or pass --spec",
+          )
+      }
   }
   if flags.get("name") is Some(want) {
     if want != applied.pipeline {
       fail("applied pipeline is '\{applied.pipeline}', not '\{want}'")
     }
   }
-  let topology = @pipeline.compile(applied.spec)
-  if !@pipeline.runnable(topology) {
-    fail(
-      "pipeline uses capabilities not available until P1 (mbel dynamic rules); P0 runtime refuses to execute",
-    )
+  // dynamic rule chain: compiled once for this run (P1 capability)
+  let chain : Array[@transform.Transform] = []
+  for t in applied.spec.transforms {
+    let expr = match t {
+      ExprTransform(expr) => expr
+    }
+    match @transform.compile(expr) {
+      Ok(compiled) => chain.push(compiled)
+      Err(e) => fail("transform '\{expr}' rejected: \{e}")
+    }
   }
-  // 1. source: file -> records
-  let records : Array[@protocol.Record] = match applied.spec.source {
-    FileSource(path) =>
-      match file_records(path) {
-        Ok(records) => records
-        Err(e) => fail(e)
-      }
+  // 1. source: one pull through the connector framework
+  let now = @env.now().reinterpret_as_int64()
+  let source = match applied.spec.source {
+    FileSource(path) => @connectors.file_source(path, now)
+    HttpSource(url) => @connectors.http_source(url, now)
+    StdinSource => @connectors.stdin_source(now)
+  }
+  let records = match (source.pull)() {
+    Ok(records) => records
+    Err(e) => fail("source \{source.name}: \{e}")
   }
   // 2. broker: append to the topic log
   let log = match open_topic_log(data_dir, applied.spec.topic.name) {
@@ -223,15 +240,25 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     Ok(base) => base
     Err(e) => fail("append: \{e}")
   }
-  // 3. sink: stdout, one line per record value
+  // 3. dynamic rules on the consumption path, then the sink
   let entries = match log.read(base, records.length()) {
     Ok(entries) => entries
     Err(e) => fail("read: \{e}")
   }
+  let out_records : Array[@protocol.Record] = []
   for entry in entries {
-    println(
-      @utf8.decode_lossy(entry.record.value[0:entry.record.value.length()]),
-    )
+    match @transform.apply_chain(chain, entry.record) {
+      Ok(record) => out_records.push(record)
+      Err(e) => fail("transform: \{e}")
+    }
+  }
+  let sink = match applied.spec.sink {
+    StdoutSink => @connectors.stdout_sink()
+    HttpSink(url) => @connectors.http_sink(url)
+  }
+  match (sink.flush)(out_records) {
+    Ok(_) => ()
+    Err(e) => fail("sink \{sink.name}: \{e}")
   }
   cli_exit(0)
 }

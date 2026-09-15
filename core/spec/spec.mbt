@@ -28,6 +28,10 @@ pub(all) struct SpecError {
 pub(all) enum SourceSpec {
   /// Read newline-delimited text from a local file path.
   FileSource(String)
+  /// HTTP GET a URL; the response body splits into lines (P1).
+  HttpSource(String)
+  /// Read newline-delimited text from standard input (P1).
+  StdinSource
 } derive(Debug, Eq, Show)
 
 ///|
@@ -47,6 +51,8 @@ pub(all) struct TopicSpec {
 pub(all) enum SinkSpec {
   /// Write one line per record to standard output.
   StdoutSink
+  /// HTTP POST the batch (newline-joined values) to a URL (P1).
+  HttpSink(String)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -197,9 +203,9 @@ fn parse_body(
   // source
   let source : SourceSpec? = match body.get("source") {
     Some(Object(src)) => {
-      reject_unknown_keys("$.spec.source", src, ["type", "path"], errors)
-      match (src.get("type"), src.get("path")) {
-        (Some(String("file")), Some(String(path))) =>
+      reject_unknown_keys("$.spec.source", src, ["type", "path", "url"], errors)
+      match (src.get("type"), src.get("path"), src.get("url")) {
+        (Some(String("file")), Some(String(path)), _) =>
           if path.length() == 0 {
             errors.push(SpecError::{
               path: "$.spec.source.path",
@@ -210,19 +216,39 @@ fn parse_body(
           } else {
             Some(FileSource(path))
           }
-        (Some(String(other)), _) => {
+        (Some(String("http")), _, Some(String(url))) =>
+          if url.has_prefix("http://") && url.length() > 7 {
+            Some(HttpSource(url))
+          } else {
+            errors.push(SpecError::{
+              path: "$.spec.source.url",
+              code: "bad-value",
+              message: "url must start with http:// (P1 client speaks plain HTTP/1.1)",
+            })
+            None
+          }
+        (Some(String("http")), _, _) => {
           errors.push(SpecError::{
-            path: "$.spec.source.type",
-            code: "bad-value",
-            message: "unknown source type \"\{other}\" (supported: file)",
+            path: "$.spec.source.url",
+            code: "missing-field",
+            message: "http sources require a url",
           })
           None
         }
-        (_, _) => {
+        (Some(String("stdin")), _, _) => Some(StdinSource)
+        (Some(String(other)), _, _) => {
+          errors.push(SpecError::{
+            path: "$.spec.source.type",
+            code: "bad-value",
+            message: "unknown source type \"\{other}\" (supported: file, http, stdin)",
+          })
+          None
+        }
+        (_, _, _) => {
           errors.push(SpecError::{
             path: "$.spec.source",
             code: "bad-type",
-            message: "type must be \"file\" and path a string",
+            message: "type must be one of file/http/stdin with its required fields",
           })
           None
         }
@@ -336,22 +362,41 @@ fn parse_body(
   // sink
   let sink : SinkSpec? = match body.get("sink") {
     Some(Object(sk)) => {
-      reject_unknown_keys("$.spec.sink", sk, ["type"], errors)
-      match sk.get("type") {
-        Some(String("stdout")) => Some(StdoutSink)
-        Some(String(other)) => {
+      reject_unknown_keys("$.spec.sink", sk, ["type", "url"], errors)
+      match (sk.get("type"), sk.get("url")) {
+        (Some(String("stdout")), _) => Some(StdoutSink)
+        (Some(String("http")), Some(String(url))) =>
+          if url.has_prefix("http://") && url.length() > 7 {
+            Some(HttpSink(url))
+          } else {
+            errors.push(SpecError::{
+              path: "$.spec.sink.url",
+              code: "bad-value",
+              message: "url must start with http:// (P1 client speaks plain HTTP/1.1)",
+            })
+            None
+          }
+        (Some(String("http")), _) => {
           errors.push(SpecError::{
-            path: "$.spec.sink.type",
-            code: "bad-value",
-            message: "unknown sink type \"\{other}\" (supported: stdout)",
+            path: "$.spec.sink.url",
+            code: "missing-field",
+            message: "http sinks require a url",
           })
           None
         }
-        _ => {
+        (Some(String(other)), _) => {
+          errors.push(SpecError::{
+            path: "$.spec.sink.type",
+            code: "bad-value",
+            message: "unknown sink type \"\{other}\" (supported: stdout, http)",
+          })
+          None
+        }
+        (_, _) => {
           errors.push(SpecError::{
             path: "$.spec.sink",
             code: "bad-type",
-            message: "type must be \"stdout\"",
+            message: "type must be one of stdout/http with its required fields",
           })
           None
         }

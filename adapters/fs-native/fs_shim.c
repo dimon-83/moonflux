@@ -42,6 +42,12 @@ int mf_fs_write(int fd, const uint8_t *buf, int len) {
 
 int mf_fs_close(int fd) { return close(fd); }
 
+/* Sequential read from a descriptor (fd 0 = stdin for P1's stdin
+ * source). Returns bytes read, 0 at EOF, negative -errno. */
+int mf_fs_read(int fd, uint8_t *buf, int len) {
+  return (int)read(fd, buf, len);
+}
+
 int mf_fs_filesize(int fd) {
   struct stat st;
   if (fstat(fd, &st) != 0) return -errno;

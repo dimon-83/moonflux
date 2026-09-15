@@ -50,7 +50,8 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
   })
   let (role, detail) = match spec.source {
     FileSource(path) => ("source-runner", "file source: \{path}")
-    // non-exhaustive guard: v1alpha1 has exactly one source kind
+    HttpSource(url) => ("source-runner", "http source: \{url}")
+    StdinSource => ("source-runner", "stdin source")
   }
   processes.push(Process::{
     name: "source-runner",

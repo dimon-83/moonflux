@@ -46,3 +46,7 @@ pub extern "C" fn fs_truncate(fd : Int, new_size : Int) -> Int = "mf_fs_truncate
 ///|
 #borrow(path)
 pub extern "C" fn fs_mtime(path : Bytes, len : Int) -> Int64 = "mf_fs_mtime"
+
+///|
+#borrow(buf)
+pub extern "C" fn fs_read(fd : Int, buf : FixedArray[Byte], len : Int) -> Int = "mf_fs_read"

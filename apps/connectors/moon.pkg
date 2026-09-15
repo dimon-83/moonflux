@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/connectors: Source/Sink framework + file/stdin/http connectors.
+
+supported_targets = "native"
+
+import {
+  "moonbitlang/core/encoding/utf8" @utf8,
+  "moonbitlang/core/string" @string,
+  "moonflux/core/protocol" @protocol,
+  "moonflux/adapters/fs-native" @fs,
+  "moonflux/adapters/net-native" @net,
+}

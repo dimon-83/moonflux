@@ -230,6 +230,25 @@ pub fn read_file(path : String) -> Result[Bytes, FsError] {
 }
 
 ///|
+/// Reads standard input to EOF in 64 KiB chunks (the P1 stdin
+/// source). Blocking; terminates on EOF.
+pub fn read_stdin() -> Result[Bytes, FsError] {
+  let out = Buffer::Buffer()
+  let chunk : FixedArray[Byte] = FixedArray::make(65536, b'\x00')
+  while true {
+    let n = fs_read(0, chunk, 65536)
+    if n < 0 {
+      return Err(Io(-n, "read(stdin)"))
+    }
+    if n == 0 {
+      break
+    }
+    out.write_bytes(Bytes::from_fixedarray(chunk, len=n)[0:n])
+  }
+  Ok(out.to_bytes())
+}
+
+///|
 /// Writes `data` to `path`, creating or truncating it.
 pub fn write_file(path : String, data : Bytes) -> Result[Unit, FsError] {
   let f = match File::open_write_or_create(path) {

@@ -21,6 +21,9 @@ struct InvalidCase {
 let valid_cases : Array[ValidCase] = [
   ValidCase::{ name: "minimal-file-to-stdout", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"file-to-stdout\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"events.txt\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}" },
   ValidCase::{ name: "with-expr-transform", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x-1\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"/tmp/in.log\"},\"transforms\":[{\"type\":\"expr\",\"expr\":\".value | trim()\"}],\"topic\":{\"name\":\"t_1.log\"},\"sink\":{\"type\":\"stdout\"}}}" },
+  ValidCase::{ name: "http-source", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"connector-demo\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:18080/data\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}" },
+  ValidCase::{ name: "stdin-source", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"connector-demo\"},\"spec\":{\"source\":{\"type\":\"stdin\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}" },
+  ValidCase::{ name: "http-sink", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"connector-demo\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"in.txt\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:18080/sink\"}}}" },
 ]
 
 ///|
@@ -36,4 +39,7 @@ let invalid_cases : Array[InvalidCase] = [
   InvalidCase::{ name: "missing-spec", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"}}", expect_codes: ["missing-field"] },
   InvalidCase::{ name: "transform-missing-expr", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"p\"},\"transforms\":[{\"type\":\"expr\"}],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}", expect_codes: ["missing-field"] },
   InvalidCase::{ name: "transform-unknown-type", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"p\"},\"transforms\":[{\"type\":\"magic\"}],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}", expect_codes: ["bad-value"] },
+  InvalidCase::{ name: "http-source-missing-url", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\"},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}", expect_codes: ["missing-field"] },
+  InvalidCase::{ name: "http-source-bad-scheme", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"https://x/y\"},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}", expect_codes: ["bad-value"] },
+  InvalidCase::{ name: "http-sink-missing-url", json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"p\"},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"http\"}}}", expect_codes: ["missing-field"] },
 ]
