@@ -51,9 +51,7 @@ fn recv_exact(stream : @net.TcpStream, n : Int) -> Result[Bytes, String] {
 ///|
 /// Reads one session frame; `Ok(None)` on a clean EOF at the frame
 /// boundary.
-fn recv_session_frame(
-  stream : @net.TcpStream,
-) -> Result[(Int, Bytes)?, String] {
+fn recv_session_frame(stream : @net.TcpStream) -> Result[(Int, Bytes)?, String] {
   let head = match recv_exact(stream, 10) {
     Ok(head) => head
     Err(_) => return Ok(None) // clean EOF before any header byte
@@ -73,7 +71,7 @@ fn recv_session_frame(
   let len1 = head[7].to_int()
   let len2 = head[8].to_int()
   let len3 = head[9].to_int()
-  let payload_len = (((len0 << 8) | len1) << 8 | len2) << 8 | len3
+  let payload_len = (((((len0 << 8) | len1) << 8) | len2) << 8) | len3
   let payload = match recv_exact(stream, payload_len) {
     Ok(payload) => payload
     Err(e) => return Err(e)
@@ -101,10 +99,11 @@ fn send_session_frame(
 /// Splits "host:port" (IPv4/name only for P0).
 fn parse_listen_addr(addr : String) -> (String, Int) {
   match addr.rev_split_once(":") {
-    Some((host, port)) => match (try? @string.parse_int(port[0:port.length()])) {
-      Ok(port) => (host.to_owned(), port)
-      Err(_) => fail("bad port in --listen \{addr}")
-    }
+    Some((host, port)) =>
+      match (try? @string.parse_int(port[0:port.length()])) {
+        Ok(port) => (host.to_owned(), port)
+        Err(_) => fail("bad port in --listen \{addr}")
+      }
     None => fail("--listen expects host:port, got \{addr}")
   }
 }

@@ -16,7 +16,9 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     Ok(port) => port
     Err(_) => port
   }
-  println("moonflux serve listening on \{host}:\{actual} (data dir \{data_dir})")
+  println(
+    "moonflux serve listening on \{host}:\{actual} (data dir \{data_dir})",
+  )
   while true {
     match listener.accept() {
       Ok(stream) => {
@@ -44,12 +46,20 @@ fn handle_connection(stream : @net.TcpStream, data_dir : String) -> Unit {
         let _ = send_session_frame(stream, reply.0, reply.1)
       }
       Ok(Some((_, _))) => {
-        let _ = send_session_frame(stream, CMD_ERR, @utf8.encode("unknown command"[0:14]))
+        let _ = send_session_frame(
+          stream,
+          CMD_ERR,
+          @utf8.encode("unknown command"[0:14]),
+        )
         return
       }
       Err(e) => {
         // framed bytes arrived but were unintelligible: report and cut
-        let _ = send_session_frame(stream, CMD_ERR, @utf8.encode(e[0:e.length()]))
+        let _ = send_session_frame(
+          stream,
+          CMD_ERR,
+          @utf8.encode(e[0:e.length()]),
+        )
         return
       }
     }
@@ -120,11 +130,7 @@ fn dispatch_fetch(payload : Bytes, data_dir : String) -> (Int, Bytes) {
   for entry in entries {
     records.push(entry.record)
   }
-  let base : Int64 = if records.length() > 0 {
-    entries[0].offset
-  } else {
-    from
-  }
+  let base : Int64 = if records.length() > 0 { entries[0].offset } else { from }
   let frame = @protocol.encode_frame(base, records)
   let out = Buffer::Buffer()
   out.write_uint_be(1U)

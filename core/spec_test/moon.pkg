@@ -1,0 +1,5 @@
+// Blackbox tests for moonflux/core/spec. Data corpus generated from
+// testdata/spec_corpus.json.
+import {
+  "moonflux/core/spec",
+}

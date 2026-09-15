@@ -8,17 +8,17 @@
 // This package is pinned to the native target: on any other backend
 // the dependency graph fails fast at compile time (AGENTS 金规则 2).
 
-options(
-  "native-stub": ["fs_shim.c"],
-)
-
 supported_targets = "native"
 
 import {
-  "moonbitlang/core/encoding/utf8" @utf8,
-  "moonflux/core/log" @log,
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/core/log",
 }
 
 import {
-  "moonflux/core/protocol" @protocol,
+  "moonflux/core/protocol",
 } for "wbtest"
+
+options(
+  "native-stub": [ "fs_shim.c" ],
+)

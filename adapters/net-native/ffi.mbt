@@ -7,7 +7,11 @@ pub extern "C" fn net_connect(host : Bytes, host_len : Int, port : Int) -> Int =
 
 ///|
 #borrow(host)
-pub extern "C" fn net_bind_listen(host : Bytes, host_len : Int, port : Int) -> Int = "mf_net_bind_listen"
+pub extern "C" fn net_bind_listen(
+  host : Bytes,
+  host_len : Int,
+  port : Int,
+) -> Int = "mf_net_bind_listen"
 
 ///|
 pub extern "C" fn net_getsockport(fd : Int) -> Int = "mf_net_getsockport"

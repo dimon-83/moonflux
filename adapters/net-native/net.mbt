@@ -66,7 +66,7 @@ pub fn TcpStream::connect(
     Err(e) => return Err(e)
   }
   match io_result(net_connect(h, h.length(), port), "connect") {
-    Ok(fd) => Ok(TcpStream::{ fd })
+    Ok(fd) => Ok(TcpStream::{ fd, })
     Err(e) => Err(e)
   }
 }
@@ -74,7 +74,7 @@ pub fn TcpStream::connect(
 ///|
 /// Wraps a raw fd (from `accept` or `socketpair`) as a stream.
 pub fn TcpStream::from_fd(fd : Int) -> TcpStream {
-  TcpStream::{ fd }
+  TcpStream::{ fd, }
 }
 
 ///|
@@ -86,7 +86,10 @@ pub fn TcpStream::raw_fd(self : TcpStream) -> Int {
 ///|
 /// Sends every byte of `data`, looping until done; returns the
 /// number of bytes sent (== data.length()).
-pub fn TcpStream::send_all(self : TcpStream, data : Bytes) -> Result[Int, NetError] {
+pub fn TcpStream::send_all(
+  self : TcpStream,
+  data : Bytes,
+) -> Result[Int, NetError] {
   let total = data.length()
   let mut sent = 0
   while sent < total {
@@ -145,7 +148,7 @@ pub fn TcpListener::bind_listen(
     Err(e) => return Err(e)
   }
   match io_result(net_bind_listen(h, h.length(), port), "bind") {
-    Ok(fd) => Ok(TcpListener::{ fd })
+    Ok(fd) => Ok(TcpListener::{ fd, })
     Err(e) => Err(e)
   }
 }
@@ -163,7 +166,7 @@ pub fn TcpListener::local_port(self : TcpListener) -> Result[Int, NetError] {
 /// Blocks until a peer connects; returns the accepted stream.
 pub fn TcpListener::accept(self : TcpListener) -> Result[TcpStream, NetError] {
   match io_result(net_accept(self.fd), "accept") {
-    Ok(fd) => Ok(TcpStream::{ fd })
+    Ok(fd) => Ok(TcpStream::{ fd, })
     Err(e) => Err(e)
   }
 }

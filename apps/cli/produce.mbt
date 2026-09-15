@@ -34,14 +34,12 @@ fn file_records(path : String) -> Result[Array[@protocol.Record], String] {
   for line in text.split("\n") {
     let line = line.to_owned()
     if line.length() > 0 {
-      records.push(
-        @protocol.Record::{
-          timestamp: @env.now().reinterpret_as_int64(),
-          key: b"",
-          value: @utf8.encode(line[0:line.length()]),
-          headers: [],
-        },
-      )
+      records.push(@protocol.Record::{
+        timestamp: @env.now().reinterpret_as_int64(),
+        key: b"",
+        value: @utf8.encode(line[0:line.length()]),
+        headers: [],
+      })
     }
   }
   Ok(records)
@@ -91,7 +89,8 @@ fn produce_remote(topic : String, file : String, addr : String) -> Unit {
   }
   let reply = match recv_session_frame(stream) {
     Ok(Some((CMD_OK, payload))) => payload
-    Ok(Some((CMD_ERR, payload))) => fail("server: \{@utf8.decode_lossy(payload[0:payload.length()])}")
+    Ok(Some((CMD_ERR, payload))) =>
+      fail("server: \{@utf8.decode_lossy(payload[0:payload.length()])}")
     Ok(_) => fail("unexpected reply")
     Err(e) => fail(e)
   }
@@ -104,7 +103,9 @@ fn produce_remote(topic : String, file : String, addr : String) -> Unit {
     Ok(count) => count.reinterpret_as_int()
     Err(_) => fail("bad produce reply")
   }
-  println("produced \{count} records to topic \{topic} at offsets \{base}..\{base + count.to_int64()}")
+  println(
+    "produced \{count} records to topic \{topic} at offsets \{base}..\{base + count.to_int64()}",
+  )
   let _ = stream.close()
   cli_exit(0)
 }

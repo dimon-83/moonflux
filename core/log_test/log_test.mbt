@@ -3,7 +3,12 @@
 
 ///|
 fn rec(value : String) -> @protocol.Record {
-  @protocol.Record::{ timestamp: 0L, key: b"", value: encode_ascii(value), headers: [] }
+  @protocol.Record::{
+    timestamp: 0L,
+    key: b"",
+    value: encode_ascii(value),
+    headers: [],
+  }
 }
 
 ///|
@@ -34,7 +39,11 @@ test "append assigns consecutive offsets and read replays them" {
   assert_eq(
     l.read(0, 10),
     Ok([
-      entry(0L, "a"), entry(1L, "b"), entry(2L, "c"), entry(3L, "d"), entry(4L, "e"),
+      entry(0L, "a"),
+      entry(1L, "b"),
+      entry(2L, "c"),
+      entry(3L, "d"),
+      entry(4L, "e"),
     ]),
   )
   // windowed reads: from inside the first batch, exact max
@@ -146,11 +155,7 @@ test "segment file is a valid protocol byte stream" {
 fn flip_byte(data : Bytes, index : Int, replacement : Byte) -> Bytes {
   let out = Buffer::Buffer()
   for i in 0..<data.length() {
-    out.write_byte(if i == index {
-      replacement
-    } else {
-      data[i]
-    })
+    out.write_byte(if i == index { replacement } else { data[i] })
   }
   out.to_bytes()
 }

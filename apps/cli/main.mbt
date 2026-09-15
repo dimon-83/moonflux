@@ -14,7 +14,7 @@ extern "C" fn cli_exit(code : Int) -> Unit = "exit"
 ///|
 /// Prints and exits; typed as `T` so call sites may use it in
 /// position of any expected value (exit never returns).
-fn fail[T](msg : String) -> T {
+fn[T] fail(msg : String) -> T {
   println("error: \{msg}")
   cli_exit(1)
   abort("unreachable")
@@ -79,7 +79,7 @@ fn parse_flags(argv : Array[String]) -> Flags {
       i += 1
     }
   }
-  Flags::{ map }
+  Flags::{ map, }
 }
 
 ///|
@@ -88,7 +88,10 @@ fn main {
   // the runtime may or may not include the program name as args[0]:
   // find the first argument that names a subcommand
   fn is_command(text : String) -> Bool {
-    text == "produce" || text == "consume" || text == "serve" || text == "pipeline"
+    text == "produce" ||
+    text == "consume" ||
+    text == "serve" ||
+    text == "pipeline"
   }
 
   let start = if args.length() > 0 && is_command(args[0]) {
@@ -121,7 +124,12 @@ fn valid_topic(topic : String) -> Bool {
   let mut ok = true
   for i in 0..<topic.length() {
     let c = topic[i]
-    let good = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 46 || c == 95
+    let good = (c >= 48 && c <= 57) ||
+      (c >= 65 && c <= 90) ||
+      (c >= 97 && c <= 122) ||
+      c == 45 ||
+      c == 46 ||
+      c == 95
     if not(good) {
       ok = false
     }

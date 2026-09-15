@@ -70,7 +70,12 @@ test "segment file survives reopen with committed prefix intact" {
   let path = temp_path("segment-0.log")
   let _ = remove_file(path)
   let records = fn(value : String) -> @protocol.Record {
-    @protocol.Record::{ timestamp: 7L, key: b"", value: @utf8.encode(value[0:value.length()]), headers: [] }
+    @protocol.Record::{
+      timestamp: 7L,
+      key: b"",
+      value: @utf8.encode(value[0:value.length()]),
+      headers: [],
+    }
   }
   let entry = fn(offset : Int64, value : String) -> @log.LogEntry {
     @log.LogEntry::{ offset, record: records(value) }
@@ -83,10 +88,7 @@ test "segment file survives reopen with committed prefix intact" {
     Ok(l) => l
     Err(e) => abort("open log: \{e}")
   }
-  assert_eq(
-    log.append([records("one"), records("two")]),
-    Ok(0L),
-  )
+  assert_eq(log.append([records("one"), records("two")]), Ok(0L))
   let _ = log.append([records("three")])
   // reopen the same file: recovery must keep all three records
   let second = match open_segment_file(path) {
@@ -100,9 +102,7 @@ test "segment file survives reopen with committed prefix intact" {
   assert_eq(recovered.high_watermark(), 3L)
   assert_eq(
     recovered.read(0, 10),
-    Ok([
-      entry(0L, "one"), entry(1L, "two"), entry(2L, "three"),
-    ]),
+    Ok([entry(0L, "one"), entry(1L, "two"), entry(2L, "three")]),
   )
   let _ = remove_file(path)
 }

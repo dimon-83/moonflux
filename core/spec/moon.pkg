@@ -1,0 +1,6 @@
+// core/spec: PipelineSpec v1alpha1 model + strict validation.
+// Pure computation; compiles for every target.
+
+import {
+  "moonbitlang/core/json",
+}

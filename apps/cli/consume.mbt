@@ -7,10 +7,11 @@ fn cmd_consume(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let topic = flags.require("topic")
   let from : Int64 = match flags.get("from") {
-    Some(text) => match (try? @string.parse_int(text[0:text.length()])) {
-      Ok(n) => n.to_int64()
-      Err(_) => fail("--from expects an integer, got \{text}")
-    }
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) => n.to_int64()
+        Err(_) => fail("--from expects an integer, got \{text}")
+      }
     None => 0L
   }
   match flags.get("remote") {
@@ -25,7 +26,9 @@ fn cmd_consume(argv : Array[String]) -> Unit {
 ///|
 fn print_entry(entry : @log.LogEntry) -> Unit {
   let key = @utf8.decode_lossy(entry.record.key[0:entry.record.key.length()])
-  let value = @utf8.decode_lossy(entry.record.value[0:entry.record.value.length()])
+  let value = @utf8.decode_lossy(
+    entry.record.value[0:entry.record.value.length()],
+  )
   println("\{entry.offset}\t\{entry.record.timestamp}\t\{key}\t\{value}")
 }
 
@@ -75,7 +78,8 @@ fn consume_remote(topic : String, from : Int64, addr : String) -> Unit {
   }
   let reply = match recv_session_frame(stream) {
     Ok(Some((CMD_OK, payload))) => payload
-    Ok(Some((CMD_ERR, payload))) => fail("server: \{@utf8.decode_lossy(payload[0:payload.length()])}")
+    Ok(Some((CMD_ERR, payload))) =>
+      fail("server: \{@utf8.decode_lossy(payload[0:payload.length()])}")
     Ok(_) => fail("unexpected reply")
     Err(e) => fail(e)
   }

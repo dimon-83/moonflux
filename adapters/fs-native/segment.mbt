@@ -64,9 +64,7 @@ fn make_segment_file(f : File) -> @log.SegmentFile {
 /// Opens (or creates) `path` as a durable commit-log segment for the
 /// kernel's `SegmentedLog`. The file is opened in append mode for
 /// writes and read positionally, matching the single-writer model.
-pub fn open_segment_file(
-  path : String,
-) -> Result[@log.SegmentFile, FsError] {
+pub fn open_segment_file(path : String) -> Result[@log.SegmentFile, FsError] {
   let f = match File::open_read_write_append(path) {
     Ok(f) => f
     Err(e) => return Err(e)

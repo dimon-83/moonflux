@@ -8,6 +8,7 @@
 // frames from the segment start (documented limitation).
 
 ///|
+
 ///|
 /// Host-reported failure or log-semantic violation.
 pub(all) suberror LogError {
@@ -83,12 +84,8 @@ pub fn MemorySegment::handle(self : MemorySegment) -> SegmentFile {
       self.data.write_bytes(bytes[0:bytes.length()])
       Ok(self.data.length())
     },
-    size: fn() {
-      Ok(self.data.length())
-    },
-    flush: fn() {
-      Ok(())
-    },
+    size: fn() { Ok(self.data.length()) },
+    flush: fn() { Ok(()) },
     truncate: fn(new_size) {
       if new_size > self.data.length() {
         return Err(Storage("truncate beyond size"))
@@ -230,14 +227,13 @@ pub fn SegmentedLog::read(
           // before it (never negative — earlier batches may already
           // have covered `from`), then take what remains.
           let raw_skip = (from - next).to_int()
-          let skip = if raw_skip < 0 {
-            0
-          } else {
-            raw_skip
-          }
+          let skip = if raw_skip < 0 { 0 } else { raw_skip }
           let mut i = skip
           while i < count && out.length() < max_records {
-            out.push(LogEntry::{ offset: next + i.to_int64(), record: batch.records[i] })
+            out.push(LogEntry::{
+              offset: next + i.to_int64(),
+              record: batch.records[i],
+            })
             i += 1
           }
         }

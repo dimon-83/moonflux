@@ -7,7 +7,12 @@ pub extern "C" fn fs_open(path : Bytes, len : Int, mode : Int) -> Int = "mf_fs_o
 
 ///|
 #borrow(buf)
-pub extern "C" fn fs_pread(fd : Int, buf : FixedArray[Byte], len : Int, offset : Int) -> Int = "mf_fs_pread"
+pub extern "C" fn fs_pread(
+  fd : Int,
+  buf : FixedArray[Byte],
+  len : Int,
+  offset : Int,
+) -> Int = "mf_fs_pread"
 
 ///|
 #borrow(buf)

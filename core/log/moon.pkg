@@ -3,6 +3,6 @@
 
 import {
   "moonbitlang/core/buffer",
-  "moonflux/core/codec" @codec,
-  "moonflux/core/protocol" @protocol,
+  "moonflux/core/codec",
+  "moonflux/core/protocol",
 }

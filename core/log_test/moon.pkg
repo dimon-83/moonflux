@@ -1,6 +1,6 @@
 // Blackbox tests for moonflux/core/log.
 import {
-  "moonflux/core/codec" @codec,
-  "moonflux/core/log" @log,
-  "moonflux/core/protocol" @protocol,
+  "moonflux/core/codec",
+  "moonflux/core/log",
+  "moonflux/core/protocol",
 }
