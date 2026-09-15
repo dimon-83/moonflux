@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Bridges real files onto the kernel's injected SegmentFile
 // interface, so SegmentedLog can persist to the native filesystem.
 // Error mapping is deliberately lossy (FsError -> Storage(msg))

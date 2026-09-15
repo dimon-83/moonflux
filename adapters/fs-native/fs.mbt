@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Structured facade over the raw FFI: paths as MoonBit strings,
 // errors as FsError, platform-specific flags confined to the shim.
 

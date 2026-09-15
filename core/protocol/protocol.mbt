@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // core/protocol: moonflux wire protocol v1 — Record and RecordBatch
 // framing. Pure computation only (kernel red lines, AGENTS §5).
 //

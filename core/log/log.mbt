@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // core/log: single-partition commit log over an injected segment
 // handle. Pure computation (kernel red lines, AGENTS §5): the host
 // supplies IO through `SegmentFile` function fields; the kernel owns
@@ -107,19 +108,44 @@ pub(all) struct LogEntry {
 } derive(Debug, Eq, Show)
 
 ///|
+/// Why recovery cut bytes off the segment end.
+pub(all) enum RecoveryReason {
+  /// Every byte decoded as complete frames.
+  Clean
+  /// The last frame ran past the end of the file (crash mid-append).
+  TornTail
+  /// A frame failed integrity checks; everything from it on was
+  /// discarded (crash-recovery semantics: ignore torn/corrupt
+  /// batches, expose the confirmed watermark).
+  CorruptFrame
+} derive(Debug, Eq, Show)
+
+///|
+/// Outcome of the recovery scan performed by `open`.
+pub(all) struct RecoveryReport {
+  reason : RecoveryReason
+  /// Bytes kept: the end of the last complete, valid frame.
+  valid_size : Int
+  /// Bytes removed from the tail by recovery.
+  discarded_bytes : Int
+} derive(Debug, Eq, Show)
+
+///|
 /// Commit log over one segment: assigns offsets, frames batches with
 /// the wire protocol, and recovers a consistent prefix on open.
 pub struct SegmentedLog {
   file : SegmentFile
   mut valid_size : Int
   mut next_offset : Int64
+  recovery : RecoveryReport
 } derive(Debug)
 
 ///|
 /// Opens (or recovers) the log backed by `file`. The valid prefix of
-/// the segment is kept; a torn tail (trailing partial frame) is
-/// truncated away, matching crash semantics: an append either fully
-/// survived or is entirely lost.
+/// the segment is kept and a torn tail (trailing partial frame) or a
+/// corrupt frame truncates the segment there, matching crash
+/// semantics: an append either fully survived or is entirely lost.
+/// What recovery did is reported on `log.recovery` — never silent.
 pub fn SegmentedLog::open(file : SegmentFile) -> Result[SegmentedLog, LogError] {
   let size = match (file.size)() {
     Ok(size) => size
@@ -132,7 +158,7 @@ pub fn SegmentedLog::open(file : SegmentFile) -> Result[SegmentedLog, LogError] 
   let reader = @codec.Reader::new(bytes)
   let mut consumed = 0
   let mut next_offset : Int64 = 0L
-  let mut torn_tail = false
+  let mut reason = Clean
   while reader.remaining() > 0 {
     match @protocol.decode_frame(reader) {
       Ok(batch) => {
@@ -140,19 +166,27 @@ pub fn SegmentedLog::open(file : SegmentFile) -> Result[SegmentedLog, LogError] 
         consumed = size - reader.remaining()
       }
       Err(Incomplete) => {
-        torn_tail = true
+        reason = TornTail
         break
       }
-      Err(_) => return Err(CorruptFrame)
+      Err(_) => {
+        reason = CorruptFrame
+        break
+      }
     }
   }
-  if torn_tail && consumed < size {
+  if consumed < size {
     match (file.truncate)(consumed) {
       Ok(_) => ()
       Err(e) => return Err(e)
     }
   }
-  Ok(SegmentedLog::{ file, valid_size: consumed, next_offset })
+  let recovery = RecoveryReport::{
+    reason,
+    valid_size: consumed,
+    discarded_bytes: size - consumed,
+  }
+  Ok(SegmentedLog::{ file, valid_size: consumed, next_offset, recovery })
 }
 
 ///|

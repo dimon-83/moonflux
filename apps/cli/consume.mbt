@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // consume: topic log -> stdout, one line per record:
 //   <offset>\t<timestamp>\t<key>\t<value>
 // Key and value render as lossy UTF-8 (P0 output is text-oriented).

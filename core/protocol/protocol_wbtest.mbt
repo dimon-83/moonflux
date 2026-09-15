@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Whitebox tests for core/protocol — round trips, corruption
 // injection, and bound enforcement (AGENTS §5).
 

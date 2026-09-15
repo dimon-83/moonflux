@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Whitebox tests for adapters/net-native — in-process smoke tests
 // over an AF_UNIX socketpair (no concurrency needed). Full TCP
 // round trips live in the E2E scripts; single-flight loopback TCP

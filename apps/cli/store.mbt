@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Topic log storage helpers: one directory per topic, one segment
 // file per partition (P0: partition 0 only).
 
@@ -24,7 +25,15 @@ fn open_topic_log(
     Err(e) => return Err("open segment: \{e}")
   }
   match @log.SegmentedLog::open(handle) {
-    Ok(log) => Ok(log)
+    Ok(log) => {
+      // never silent: recovery that discarded bytes is surfaced
+      if !(log.recovery.reason is Clean) {
+        println(
+          "warning: topic \{topic} recovery discarded \{log.recovery.discarded_bytes} bytes (\{log.recovery.reason}); watermark restored to \{log.high_watermark()}",
+        )
+      }
+      Ok(log)
+    }
     Err(e) => Err("recover log: \{e}")
   }
 }

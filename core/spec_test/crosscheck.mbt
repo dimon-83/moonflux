@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Spec corpus crosschecks. Data comes from
 // testdata/spec_corpus.json via corpus_gen.mbt; imports in moon.pkg.
 

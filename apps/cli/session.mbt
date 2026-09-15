@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // P0 session protocol (app-level framing on top of TCP): a thin
 // command envelope so produce/consume can talk to `serve`. The
 // record payloads are wire-protocol batch frames. P1 replaces this

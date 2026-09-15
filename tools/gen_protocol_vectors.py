@@ -20,6 +20,7 @@ VECTORS_JSON = ROOT / "core/protocol/testdata/protocol_vectors.json"
 GEN_MBT = ROOT / "core/protocol_test/vectors_gen.mbt"
 
 HEADER = """\
+// SPDX-License-Identifier: Apache-2.0
 // AUTO-GENERATED from core/protocol/testdata/protocol_vectors.json — do not edit.
 // Regenerate: python3 tools/gen_protocol_vectors.py
 // The JSON document is the source of truth; this module only renders it.

@@ -16,6 +16,7 @@ CORPUS_JSON = ROOT / "core/spec/testdata/spec_corpus.json"
 GEN_MBT = ROOT / "core/spec_test/corpus_gen.mbt"
 
 HEADER = """\
+// SPDX-License-Identifier: Apache-2.0
 // AUTO-GENERATED from core/spec/testdata/spec_corpus.json — do not edit.
 // Regenerate: python3 tools/gen_spec_corpus.py
 

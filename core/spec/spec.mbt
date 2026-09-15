@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // core/spec: PipelineSpec v1alpha1 — the single source of truth for
 // pipelines (golden rule 7). Pure parsing/validation, no IO; JSON is
 // the on-the-wire/document form (a JSON document is also valid YAML,
@@ -58,6 +59,34 @@ pub(all) struct PipelineSpec {
 } derive(Debug, Eq, Show)
 
 ///|
+/// Shared rule for a required string field whose value must equal
+/// `expected`: pushes exactly one error (bad-type / missing-field /
+/// `code`) when violated.
+fn expect_fixed_string(
+  obj : Map[String, Json],
+  path : String,
+  key : String,
+  expected : String,
+  code : String,
+  errors : Array[SpecError],
+) -> Unit {
+  match obj.get(key) {
+    Some(String(s)) =>
+      if s != expected {
+        errors.push(SpecError::{
+          path,
+          code,
+          message: "expected \"\{expected}\", got \"\{s}\"",
+        })
+      }
+    Some(_) =>
+      errors.push(SpecError::{ path, code: "bad-type", message: "must be a string" })
+    None =>
+      errors.push(SpecError::{ path, code: "missing-field", message: "required" })
+  }
+}
+
+///|
 /// Parses and validates a PipelineSpec document. Returns every
 /// validation error found (empty list means success is impossible:
 /// an `Err` always carries at least one error).
@@ -76,54 +105,9 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
       ["apiVersion", "kind", "metadata", "spec"],
       errors,
     )
-    // apiVersion
-    if root.get("apiVersion") is Some(v) {
-      if v is String(s) {
-        if s != SPEC_API_VERSION {
-          errors.push(SpecError::{
-            path: "$.apiVersion",
-            code: "bad-api-version",
-            message: "expected \"\{SPEC_API_VERSION}\", got \"\{s}\"",
-          })
-        }
-      } else {
-        errors.push(SpecError::{
-          path: "$.apiVersion",
-          code: "bad-type",
-          message: "must be a string",
-        })
-      }
-    } else {
-      errors.push(SpecError::{
-        path: "$.apiVersion",
-        code: "missing-field",
-        message: "required",
-      })
-    }
-    // kind
-    if root.get("kind") is Some(v) {
-      if v is String(s) {
-        if s != SPEC_KIND {
-          errors.push(SpecError::{
-            path: "$.kind",
-            code: "bad-kind",
-            message: "expected \"\{SPEC_KIND}\", got \"\{s}\"",
-          })
-        }
-      } else {
-        errors.push(SpecError::{
-          path: "$.kind",
-          code: "bad-type",
-          message: "must be a string",
-        })
-      }
-    } else {
-      errors.push(SpecError::{
-        path: "$.kind",
-        code: "missing-field",
-        message: "required",
-      })
-    }
+    // apiVersion + kind: required strings with fixed values
+    expect_fixed_string(root, "$.apiVersion", "apiVersion", SPEC_API_VERSION, "bad-api-version", errors)
+    expect_fixed_string(root, "$.kind", "kind", SPEC_KIND, "bad-kind", errors)
     // metadata.name
     let name = match root.get("metadata") {
       Some(Object(meta)) => {
@@ -158,11 +142,6 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
         })
         None
       }
-    }
-    if name is Some(_) {
-      // parsed below
-    } else {
-      // keep going to collect remaining errors
     }
     // spec.*
     let parsed_body = match root.get("spec") {
@@ -438,9 +417,9 @@ fn is_dns_label(s : String) -> Bool {
 }
 
 ///|
-/// Topic names share the CLI whitelist: 1..128 of [a-z0-9._-]
-/// (ASCII code points).
-fn valid_topic_name(s : String) -> Bool {
+/// Topic names share one whitelist across spec validation and the
+/// CLI data-dir layout: 1..128 of [a-z0-9._-] (ASCII code points).
+pub fn valid_topic_name(s : String) -> Bool {
   if s.length() == 0 || s.length() > 128 {
     return false
   }

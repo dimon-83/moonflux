@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Blackbox tests for moonflux/core/codec — only the public contract.
 // Imports are declared in moon.pkg; no import blocks in .mbt files.
 

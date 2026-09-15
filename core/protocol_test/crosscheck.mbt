@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Blackbox golden-vector crosschecks for core/protocol.
 // Imports live in moon.pkg; vectors come from vectors_gen.mbt.
 

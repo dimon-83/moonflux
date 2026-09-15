@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // FFI surface to the net shims. Return convention: negative values
 // are -errno; buffers are borrowed.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Whitebox tests for core/pipeline — compile shape, determinism,
 // diff semantics.
 

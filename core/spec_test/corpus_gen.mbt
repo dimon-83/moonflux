@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // AUTO-GENERATED from core/spec/testdata/spec_corpus.json — do not edit.
 // Regenerate: python3 tools/gen_spec_corpus.py
 

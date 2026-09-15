@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Whitebox tests for core/codec — observe internal edge behavior that
 // the public contract does not pin down (AGENTS §4).
 

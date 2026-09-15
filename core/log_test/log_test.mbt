@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Blackbox tests for moonflux/core/log — public contract over the
 // injected-memory segment handle. Imports live in moon.pkg.
 
@@ -97,6 +98,7 @@ test "recovery truncates a torn tail and keeps committed records" {
     Ok(l) => l
     Err(e) => abort("recovery failed: \{e}")
   }
+  assert_eq(recovered.recovery.reason, @log.TornTail)
   assert_eq(recovered.high_watermark(), 3L)
   assert_eq(
     recovered.read(0, 10),
@@ -109,26 +111,38 @@ test "recovery truncates a torn tail and keeps committed records" {
 }
 
 ///|
-test "recovery refuses mid-file corruption instead of guessing" {
+test "recovery discards a corrupt frame region and exposes the confirmed watermark" {
   let mem = @log.MemorySegment::new()
   let l = match @log.SegmentedLog::open(mem.handle()) {
     Ok(l) => l
     Err(_) => abort("unreachable")
   }
   let _ = l.append([rec("a")])
+  let committed = mem.contents()
   // a full-size but corrupted frame (payload byte flipped) followed
-  // by a valid one: silent skipping would lose offsets, so this must
-  // surface as CorruptFrame
+  // by a valid one: crash-recovery semantics stop at the bad frame,
+  // keep the confirmed prefix, and report the discard
   let corrupted = flip_byte(@protocol.encode_frame(1L, [rec("b")]), 30, b'!')
   let good = @protocol.encode_frame(2L, [rec("c")])
   let h = mem.handle()
   let _ = (h.append)(corrupted)
   let _ = (h.append)(good)
-  match @log.SegmentedLog::open(mem.handle()) {
-    Err(@log.CorruptFrame) => ()
-    Err(_) => abort("expected CorruptFrame, got another LogError")
-    Ok(_) => abort("expected CorruptFrame, but open succeeded")
+  let on_disk = match (mem.handle().size)() {
+    Ok(size) => size
+    Err(e) => abort("size: \{e}")
   }
+  let recovered = match @log.SegmentedLog::open(mem.handle()) {
+    Ok(l) => l
+    Err(e) => abort("recovery must not fail: \{e}")
+  }
+  assert_eq(recovered.high_watermark(), 1L)
+  assert_eq(recovered.recovery.reason, @log.CorruptFrame)
+  assert_eq(recovered.recovery.valid_size, committed.length())
+  assert_eq(recovered.recovery.discarded_bytes, on_disk - committed.length())
+  assert_eq(recovered.read(0, 10), Ok([entry(0L, "a")]))
+  // the corrupt region was truncated: next append continues cleanly
+  assert_eq(recovered.append([rec("d")]), Ok(1L))
+  assert_eq(recovered.read(1, 10), Ok([entry(1L, "d")]))
 }
 
 ///|

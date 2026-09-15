@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // JSON representation of records, shared by the golden-vector tooling
 // and tests. Pure computation: bytes travel as lowercase hex strings
 // so payloads need not be UTF-8. Shape per record:

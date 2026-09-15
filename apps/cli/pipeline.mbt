@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // pipeline: spec -> topology compilation, plan diff preview, apply
 // (persist), run (in-process execution of the compiled topology).
 //
@@ -81,8 +82,11 @@ fn persist_applied(
   name : String,
   spec_json : Json,
 ) -> Result[Unit, String] {
+  // Clock lives in the apps layer (kernel red line: core never reads
+  // the wall clock); the timestamp records when apply compiled+saved.
   let doc_map : Map[String, Json] = {}
   doc_map["pipeline"] = Json::string(name)
+  doc_map["applied_at"] = Json::number(@env.now().reinterpret_as_int64().to_double())
   doc_map["spec"] = spec_json
   let doc = Json::object(doc_map)
   let text = doc.stringify(indent=2)

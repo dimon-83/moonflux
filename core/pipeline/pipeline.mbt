@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // core/pipeline: compiles a validated PipelineSpec into the process
 // topology that executes it, and diffs topologies for `plan` output.
 // Pure computation (kernel red lines); the CLI owns persistence and

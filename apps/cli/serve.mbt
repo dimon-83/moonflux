@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // serve: single-process, single-connection-at-a-time broker holding
 // topic logs under the data dir. P1 adds multiplexing and the fully
 // versioned protocol service; P0 keeps the loop deliberately simple.

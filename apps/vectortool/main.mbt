@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // vectortool: emits the golden-vector JSON for the wire protocol.
 // The printed document is reviewed once and checked in as
 // core/protocol/testdata/protocol_vectors.json — the source of truth
@@ -22,8 +23,10 @@ fn emit_case(
 }
 
 ///|
-/// A value of 300 identical bytes exercises multi-byte ULEB128
-/// lengths without hand-writing the hex.
+/// A value of 300 identical bytes exercises two-byte ULEB128
+/// lengths; the 20000-byte case crosses into three-byte lengths.
+/// (The 10-byte ULEB width bound is pinned at the raw varint level
+/// in core/codec tests; a full-size payload is infeasible.)
 fn case_wide_varint() -> String {
   let sb = StringBuilder::new()
   sb.write_string("[{ \"timestamp\": 7, \"key\": \"\", \"value\": \"")
@@ -32,6 +35,17 @@ fn case_wide_varint() -> String {
   }
   sb.write_string("\", \"headers\": [] }]")
   emit_case("two-byte-varint-length", 0L, sb.to_string())
+}
+
+///|
+fn case_wide_varint_3() -> String {
+  let sb = StringBuilder::new()
+  sb.write_string("[{ \"timestamp\": 8, \"key\": \"\", \"value\": \"")
+  for _i in 0..<20000 {
+    sb.write_string("cd")
+  }
+  sb.write_string("\", \"headers\": [] }]")
+  emit_case("three-byte-varint-length", 0L, sb.to_string())
 }
 
 ///|
@@ -75,6 +89,7 @@ fn main {
       "with-headers", 2L, "[{ \"timestamp\": 1726000000002, \"key\": \"\", \"value\": \"78797a\", \"headers\": [[\"6831\", \"7631\"], [\"\", \"\"], [\"7a\", \"313233\"]] }]",
     ),
     case_wide_varint(),
+    case_wide_varint_3(),
     case_many_headers(),
     emit_case(
       "negative-timestamp", 0L, "[{ \"timestamp\": -1, \"key\": \"\", \"value\": \"6e6567\", \"headers\": [] }]",

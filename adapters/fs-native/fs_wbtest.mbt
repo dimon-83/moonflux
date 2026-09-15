@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Integration tests for adapters/fs-native — exercise real files
 // under a fixed temp root. Only meaningful on the native target; the
 // package is excluded from other backends via supported_targets.

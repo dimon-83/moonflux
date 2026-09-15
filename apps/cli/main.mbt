@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // moonflux — single binary, multiple subcommands (P0 minimal loop).
 //
 //   moonflux produce --topic T --file F [--data-dir D | --remote host:port]

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // FFI surface to the fs shims. Bytes/FixedArray[Byte] map to
 // uint8_t*; every borrowed pointer parameter is annotated #borrow.
 

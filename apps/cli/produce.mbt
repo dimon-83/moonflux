@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // produce: file Source -> RecordBatch -> topic log (local or remote).
 
 ///|
