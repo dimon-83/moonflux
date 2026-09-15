@@ -11,3 +11,7 @@ readme = "README.md"
 license = "Apache-2.0"
 
 description = "moonflux — a MoonBit full-stack streaming platform (Fluvio-class capability, independently built)."
+
+import {
+  "dimon-83/mbel@0.3.3",
+}

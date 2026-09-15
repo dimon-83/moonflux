@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+// Blackbox tests for the expr front-end package.
+import {
+  "dimon-83/mbel/ast",
+  "dimon-83/mbel/builtin",
+  "dimon-83/mbel/engine",
+  "dimon-83/mbel/evaluator",
+  "dimon-83/mbel/expr",
+  "moonbitlang/core/bytes",
+}

@@ -31,6 +31,18 @@ pub fn MemorySegment::contents(Self) -> Bytes
 pub fn MemorySegment::handle(Self) -> SegmentFile
 pub fn MemorySegment::new() -> Self
 
+pub(all) enum RecoveryReason {
+  Clean
+  TornTail
+  CorruptFrame
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct RecoveryReport {
+  reason : RecoveryReason
+  valid_size : Int
+  discarded_bytes : Int
+} derive(Eq, Show, @debug.Debug)
+
 pub(all) struct SegmentFile {
   read : (Int, Int) -> Result[Bytes, LogError]
   append : (Bytes) -> Result[Int, LogError]
@@ -43,6 +55,7 @@ pub struct SegmentedLog {
   file : SegmentFile
   mut valid_size : Int
   mut next_offset : Int64
+  recovery : RecoveryReport
 } derive(@debug.Debug)
 pub fn SegmentedLog::append(Self, Array[@protocol.Record]) -> Result[Int64, LogError]
 pub fn SegmentedLog::high_watermark(Self) -> Int64

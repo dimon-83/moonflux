@@ -12,6 +12,8 @@ pub const SPEC_KIND : String = "Pipeline"
 
 pub fn parse_spec(String) -> Result[PipelineSpec, Array[SpecError]]
 
+pub fn valid_topic_name(String) -> Bool
+
 // Errors
 
 // Types and methods

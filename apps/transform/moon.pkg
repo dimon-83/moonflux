@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/transform: mbel-backed dynamic rule execution for records (P1).
+
+import {
+  "dimon-83/mbel/ast" @ast,
+  "dimon-83/mbel/engine" @mengine,
+  "moonbitlang/core/encoding/utf8" @utf8,
+  "moonflux/core/protocol" @protocol,
+}

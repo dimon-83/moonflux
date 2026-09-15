@@ -1,0 +1,412 @@
+# mbel — Expression Engine for MoonBit
+
+mbel is a native MoonBit expression-language engine for rules engines,
+dynamic configuration, low-code platforms, and workflow orchestration.
+It ships two expression dialects — a modern **standard dialect** with
+typed semantics and static checking, and a locked **classic dialect
+(legacy)** with JS-style dynamic semantics — evaluated by dual
+execution engines (a walk-tree interpreter and a bytecode VM) under
+safety budgets.
+
+Current status: the **classic dialect's** full language and API surface
+is locked and verified byte-for-byte by a 3,360+ expression
+differential corpus; the **standard dialect** covers the modern syntax
+family with typed runtime semantics, a static checker (Compile mode),
+resource budgets, a builtin function library, `??`/`..`/`matches`
+operators, and compile-time constant folding. The close-out roadmap is
+tracked in [docs/coverage-vs-expr.md](docs/coverage-vs-expr.md) (status)
+and [docs/expr-gap-analysis.md](docs/expr-gap-analysis.md) (rationale).
+
+## Quick start (CLI)
+
+The command-line runner evaluates expressions with an optional JSON
+context:
+
+```text
+$ moon run cmd/main -- "1 + 2 * 3"
+7
+
+$ moon run cmd/main -- "'hello' + ' ' + 'world'"
+"hello world"
+
+$ moon run cmd/main -- "6+x*2>10 ? 'big' : 'small'" '{"x": 3}'
+"big"
+
+$ moon run cmd/main -- "age * (3 - 1)" '{"age": 36}'
+72
+
+$ moon run cmd/main -- 'assoc[.first == "Lana"].last' \
+  '{"assoc": [{"first": "Lana", "last": "Kane"}, {"first": "Cyril", "last": "Figgis"}]}'
+"Kane"
+
+$ moon run cmd/main -- "user.name + ' scored ' + (score * 10)" \
+  '{"user": {"name": "alice"}, "score": 8.5}'
+"alice scored 85"
+
+$ moon run cmd/main -- "items[.price <= 2].name" \
+  '{"items": [{"name": "apple", "price": 1.5}, {"name": "pear", "price": 3}]}'
+"apple"
+```
+
+Predicate aggregates work on both engines:
+
+```text
+$ moon run cmd/main -- "map(nums, # * 2)" '{"nums": [1, 2, 3, 4, 5]}'
+[2,4,6,8,10]
+
+$ moon run cmd/main -- "filter(users, .age >= 18)[0].name" \
+  '{"users": [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 15}]}'
+"Alice"
+
+$ moon run cmd/main -- "sum(1..100)"
+5050
+
+$ moon run cmd/main -- "count(users, .age >= 18)" \
+  '{"users": [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 15}, {"name": "Cyx", "age": 24}]}'
+2
+
+$ moon run cmd/main -- "groupBy(nums, # % 2)" '{"nums": [1, 2, 3, 4, 5]}'
+{"1":[1,3,5],"0":[2,4]}
+
+$ moon run cmd/main -- "reduce(nums, #acc + #, 100)" '{"nums": [1, 2, 3, 4, 5]}'
+115
+```
+
+Contexts are JSON: `null` → `nil`, numbers and nested objects/arrays
+work as expected. A few demo transforms (`dbl`, `first`,
+`concatWith`) are registered in the CLI, so pipes work too:
+
+```text
+$ moon run cmd/main -- "[1,2,3]|first"
+1
+
+$ moon run cmd/main -- "5|dbl|dbl"
+20
+```
+
+## Playground (browser WASM)
+
+A zero-install browser test page ships with the repo — the same engine
+as the CLI and library, compiled to wasm-gc and wired to the three
+dialect/mode entries with plain JS strings:
+
+```text
+cd playground && python3 -m http.server 8000   # then open http://localhost:8000
+```
+
+The page offers three dialect/mode selectors, a 🧩 custom-functions
+drawer (load a functions `.json` file — format v1, see
+[docs/en/functions.md](docs/en/functions.md) → "Expression-defined
+functions"), plus ready-made examples:
+
+- **standard dialect · Eval mode** — recommended; typed runtime
+  semantics.
+- **standard dialect · Compile mode (strict)** — the static checker
+  runs first.
+- **classic dialect (legacy)** — the v0.2 JS-semantics dialect;
+  corpus-locked and receiving no new features.
+
+Real AST (parse tree), bytecode (disassembly) and debug views sit next
+to the result panel. The examples double as a dialect comparison:
+
+Because dialects differ by design, an expression such as `1 + "a"`
+errors under the standard dialect (typed), errors statically under
+strict checking, and yields `"1a"` under the classic dialect (JS
+semantics).
+
+Rebuild the shipped wasm (wasm-gc release) with:
+
+```text
+moon build --target wasm-gc --release
+cp _build/wasm-gc/release/build/playground/web/web.wasm playground/mbel.wasm
+```
+
+The browser entry lives in `playground/web` and exports
+`eval_expr`/`eval_jexl`/`eval_checked` (each `(expr, env, engine)`),
+`eval_with_functions` `(code, env, funcs_json, mode, engine)` — the env
+doubles as the loaded functions' default bindings — `describe_functions`
+(funcs_json → resolved signature list), `disassemble`/`dump_ast`; all
+callable with plain JS strings via the js-string builtins integration
+(no glue code). Requirements: Chrome/Edge 130+, Firefox 134+, Safari
+18.4+; serve over HTTP, never `file://`. The wasm is stateless —
+custom functions persist on the page (localStorage) and embedding hosts
+must pass the funcs JSON on every call. Build and interop details:
+AGENTS.md "Playground (browser WASM)".
+
+## User documentation
+
+User documentation, in English and Chinese:
+
+- English: docs/en (getting-started, environment & configuration,
+  custom functions, visitor, patch, language definition)
+- 中文: docs/zh(快速上手、环境与配置、自定义函数、visitor、patch、语言定义)
+
+Internal/dev docs (parity contract, coverage matrix, gap analysis,
+perf report) live in docs/.
+
+## Using mbel as a library
+
+The engine is organized into small packages — `grammar`, `lexer`,
+`parser`, `ast`, `evaluator`, and `engine` (the top-level API):
+
+```moonbit nocheck
+import {
+  "dimon-83/mbel/ast",
+  "dimon-83/mbel/evaluator",
+  "dimon-83/mbel/engine",
+}
+
+let inst = @engine.new()
+
+// Evaluate against a context
+let ctx = @ast.ObjectVal([
+  ("user", @ast.ObjectVal([("age", @ast.NumVal(36.0))])),
+])
+let v = try {
+  @engine.Engine::eval(inst, "user.age > 18 ? 'adult' : 'minor'", ctx)
+} catch {
+  @engine.EngineErr(msg) => abort(msg)
+} // StrVal("adult")
+
+// Register transforms / functions / operators
+@engine.Engine::add_transform(
+  inst,
+  "dbl",
+  fn(args : Array[@ast.Value]) -> @ast.Value {
+    @ast.NumVal(@evaluator.to_number(args[0]) * 2.0)
+  },
+)
+let doubled = try {
+  @engine.Engine::eval(inst, "21|dbl", @ast.ObjectVal([]))
+} catch {
+  @engine.EngineErr(msg) => abort(msg)
+} // NumVal(42.0)
+
+// resource budgets: nodes at parse time, depth + steps at
+// eval time (0 disables a limit)
+@engine.Engine::set_limits(inst, 10000, 10000, 1000000)
+```
+
+### Expression-defined user functions (JSON)
+
+Functions can also be defined **as data** — the body is an expression
+source string compiled by the standard-dialect front end, loaded from a
+JSON file (the playground's 🧩 card) or built directly:
+
+```moonbit nocheck
+// params omitted: auto-extracted from the body's free identifiers
+let resolved = @engine.Engine::add_expression_functions(
+  inst,
+  [{ name: "tax", params: None, body: "price * rate" }],
+  Some(ctx), // unpassed params fall back to same-named env keys
+)
+// resolved == [("tax", ["price", "rate"])] — usable as tax(…), x | tax(),
+// and (classic dialect) x|tax; pass None instead for purely lexical params
+```
+
+Names must be valid identifiers and may not shadow aggregates;
+validation is atomic; bodies run on the instance's current engine with
+a per-function Vm program cache. File format v1, validation rules and
+persistence semantics (the wasm is stateless — hosts persist the JSON):
+see [docs/en/functions.md](docs/en/functions.md) →
+"Expression-defined functions".
+
+### Choosing an engine: Walk (tree-walk) or Vm (bytecode)
+
+mbel ships two execution engines that share one semantic layer, so
+they produce identical results and identical error messages (asserted
+by an internal parity suite over the whole differential corpus). Pick
+the engine per instance:
+
+```moonbit nocheck
+// Walk — the reference tree-walk interpreter (default)
+let walk_inst = @engine.new()
+@engine.Engine::set_engine(walk_inst, Walk)
+
+// Vm — compiles the (constant-folded) AST to bytecode once per
+// Expression, caches the program, and runs a 26-opcode stack machine
+let vm_inst = @engine.new()
+@engine.Engine::set_engine(vm_inst, Vm)
+
+// Both engines run the same expressions, transforms, and budgets
+let ctx = @ast.ObjectVal([("x", @ast.NumVal(3.0))])
+let a = @engine.Engine::eval(walk_inst, "6+x*2>10 ? 'big' : 'small'", ctx)
+let b = @engine.Engine::eval(vm_inst, "6+x*2>10 ? 'big' : 'small'", ctx)
+// value_equal(a, b) — always true; vm_parity tests enforce it
+
+// The CLI can run either engine too:
+//   moon run cmd/main -- "2+2*3" "" vm
+```
+
+Engine notes: the Vm mode's value is the compiled `Program` cached on
+each `Expression` (re-evaluations skip compilation entirely);
+`FilterExpression` subtrees and manual-eval (lazy) operators are
+executed by tree-walk callbacks that share the step budget, so
+budgets behave identically on both engines.
+
+### Dialects and evaluation modes (stage 4.4.5)
+
+The engine separates the classic dialect (legacy) from the
+standard-dialect front end, which has two evaluation modes:
+
+- `Engine::eval(inst, src, ctx)` — **classic dialect (legacy)**: the
+  v0.2 grammar, JS dynamic semantics (numbers are doubles, loose `==`,
+  substring `in`), locked by the compatibility differential corpus and
+  the legacy test suites.
+- `Engine::eval_expr(inst, src, ctx)` — **standard dialect, Eval
+  mode**: full modern syntax, typed runtime semantics — integer
+  literals and integer arithmetic are typed `IntVal` (int64, Go wrap),
+  `/` is always float division (`7/2 = 3.5`, `1/0 = +Inf`), `%` is
+  integer-only, cross-kind comparisons/`+` raise
+  `invalid operation: ...` at runtime. No static checks.
+- `Engine::eval_expr_checked(inst, src, ctx)` — **standard dialect,
+  Compile mode**: runs the static checker first; statically-known type
+  violations surface compile-mode messages (`invalid operation: +
+  (mismatched types int and string)`, `non-bool expression (type int)
+  used as condition`).
+
+All three entries run on either engine (Walk or Vm) with identical
+results, and all honor `set_limits` budgets (the standard dialect
+applies `max_nodes` at parse time).
+
+## Current capabilities (classic dialect)
+
+- **Literals**: numbers, single/double-quoted strings with escapes,
+  booleans; **array** and **object** literals (`{a: 1, "b": 2}`).
+- **Operators**: arithmetic `+ - * / // % ^`, comparison
+  `== != > >= < <=` with JavaScript coercion semantics, logic
+  `&& || !`, `in` (substring / array membership), ternary `?:`
+  including the `a ?: b` form.
+- **Access**: dotted chains `a.b.c`, computed keys `obj["k"]`, array
+  indexing, **relative filters** `arr[.x == 1]` with element-0 drill
+  semantics, transforms via `|` pipes (`foo|toUpper`), and custom
+  function calls `f(x)`.
+- **Extensibility**: `add_transform`, `add_function`, `add_binary_op`
+  (incl. manual/lazy operand evaluation), `add_unary_op`, `remove_op`,
+  `get_transform` / `get_function` — each engine instance owns an
+  isolated grammar (elements can be added and removed per instance).
+- **Safety**: configurable node limit (default 10 000), sub-expression
+  nesting limit, eval depth and shared step budgets — safety protections
+  beyond the classic baseline.
+- **Verification**: 111 MoonBit tests mirror the original Jest suites
+  (lexer/parser/evaluator/API), and a differential harness runs 3 300+
+  expressions (hand-written corpus, generated fuzz, JSON-context
+  corpus) against the original JavaScript implementation, requiring
+  byte-identical output (`tools/`, `docs/parity-contract.md`).
+
+## Builtins already available
+
+The engine is seeded with builtins (registered on
+every instance, callable as plain functions): `abs ceil floor round
+max min mean median`, `trim trimPrefix trimSuffix upper lower split
+splitAfter replace repeat join indexOf lastIndexOf hasPrefix hasSuffix
+string`, `len first last get take keys values reverse uniq concat
+flatten sort`, `int float string type toJSON fromJSON toBase64
+fromBase64 toPairs fromPairs`, `bitand bitor bitxor bitnand bitnot
+bitshl bitshr bitushr`, plus minimal `now duration date timezone`.
+Three standard-dialect operators work too: `??` (nil coalescing), `..` (range:
+`1..3 == [1,2,3]`), and `matches`. Constant subtrees are folded at
+compile time (constant folding).
+
+Examples:
+
+```text
+$ moon run cmd/main -- "median([1, 9, 5])"
+5
+
+$ moon run cmd/main -- "fromBase64(toBase64("héllo ✓"))"
+"héllo ✓"
+
+$ moon run cmd/main -- "missing ?? 'fallback'"
+"fallback"
+
+$ moon run cmd/main -- "sort([3,1,2]) | first"
+1
+```
+
+## Roadmap
+
+Stage 4 (the standard-dialect language layer) is in its close-out
+phase. Remaining items — the verifiable list lives in
+[docs/coverage-vs-expr.md](docs/coverage-vs-expr.md) §6.2 item 8:
+
+- **4.4 close-out**: byte-string evaluation, position-carrying checker
+  errors (`行:列` with caret), classic-package physical split, Options
+  alignment (env whitelist, AsBool), and the reference TestExpr
+  167-line want-table transcription.
+- **4.5**: full regex for `matches` (the MoonBit core regex is
+  literal-only), full time objects/timezones, and implicit time-string
+  arithmetic (`request.Time - resource.Age < duration("24h")`).
+
+Already delivered: the standard-dialect syntax layer (4.4.1/4.4.2),
+typed value model (4.4.3), static checker with the Compile-mode entry
+(4.4.4), locked dialect/mode API (4.4.5 surface), dual-engine parity,
+safety budgets, builtin library, and the browser playground. Items
+that cannot map 1:1 to MoonBit (Go-reflection struct environments, the
+Go `time`/`regexp` dependencies) are tracked as explicit cut items in
+[docs/expr-gap-analysis.md](docs/expr-gap-analysis.md).
+
+## Performance & stability report (Walk vs Vm)
+
+Full three-target report in [docs/perf-report.md](docs/perf-report.md).
+Both engines share one semantic layer (instructions only dispatch), so
+results and error messages are identical by construction and by test.
+> ⚠️ The Vm columns of earlier reports (2026-09-06, incl. the tables in
+> docs/perf-report.md) are invalid: the end-to-end `Expression::eval`
+> never dispatched to the Vm engine until f37f10d, so those "Vm"
+> measurements were the tree-walk engine. The tables below and
+> docs/coverage-vs-expr.md §7 are the first genuine dual-engine data.
+
+Latest paired benchmarks, same batch (wasm-gc / moonrun; native in
+parentheses), 10×N runs, mean:
+
+| Scenario | Walk | Vm |
+|---|---|---|
+| Precompiled eval (constant-folded) | 13.2 ns (22.9) | 23.2 ns (50.0) |
+| Ternary + logic + `??` chain | 107 ns (112) | 76.1 ns (85.8) |
+| 50-term un-foldable chain | 1.60 µs (1.35) | 846 ns (615) |
+| End-to-end compile + eval | 6.33 µs (13.8) | 6.37 µs (14.4) |
+| 100-item relative filter | 4.48 µs (5.50) | 3.72 µs (3.10) |
+| 100-item long-predicate filter | 16.3 µs (24.6) | 10.0 µs (7.60) |
+| Aggregate `map` over 100 items | 3.57 µs (4.31) | 3.33 µs (3.03) |
+| Aggregate `filter`+`sum` over 100 items | 6.09 µs (7.02) | 4.76 µs (4.17) |
+| String builtin chain | 527 ns (520) | 472 ns (540) |
+| `toJSON`/`fromJSON` roundtrip | 639 ns (839) | 619 ns (932) |
+| Tokenize only (engine-independent) | 3.10 µs (5.88) | — |
+
+Reading the numbers: on **iteration-shaped loads** (filters, aggregate
+loops, long chains) the Vm leads on every target — the native-backend
+gap is the widest (long-predicate filter −69%, aggregates −30% to
+−41%, 50-term chain −55%), because the Vm's native relative-filter
+loop and typed-slot aggregate loop (one reused sub-VM per aggregate)
+remove the per-element allocation tree-walks pay; js (V8 JIT) narrows
+the gap by JIT-compiling the recursive walk. On **micro loads**
+(folded-constant eval, JSON round-trips) the Vm trails by a fixed
+per-eval setup cost. Choose by workload profile — full data and
+analysis: [docs/coverage-vs-expr.md](docs/coverage-vs-expr.md) §7.
+
+Stability invariants are asserted **per engine** with one shared
+suite (`engine_test/stability_test.mbt`): instance isolation, 500×
+deterministic re-evaluation, budget non-bypass against 100k-element
+contexts, recovery after parse/transform/budget failures, interleaved
+multi-instance evaluation, nesting/wide-structure limits, and
+1000-record JSON contexts — all green on both engines. Three
+independent safety nets guard behavior: 168 unit/parity tests (green
+on native, wasm-gc and js), the internal Walk-vs-Vm parity corpus (207
+expressions, results and error messages byte-equal — genuinely green
+since f37f10d restored the Vm dispatch), and the external
+differential harness against the original implementation (3,360+
+expressions, byte-identical).
+
+## Development
+
+```text
+moon test                       # 168 unit/parity tests (add --target native|js)
+moon run cmd/main -- "2+2"      # expression runner
+./tools/run_diff.sh tools/corpus.txt      # differential check vs original runtime
+./tools/run_diff.sh tools/corpus_ctx.txt  # JSON-context corpus
+```
+
+See also: [docs/parity-contract.md](docs/parity-contract.md) (JS
+semantics and known divergences) and
+[docs/expr-gap-analysis.md](docs/expr-gap-analysis.md).
