@@ -1,0 +1,8 @@
+import {
+  "moonflux/core/codec",
+  "moonflux/core/protocol",
+}
+
+options(
+  "is-main": true,
+)

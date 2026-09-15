@@ -1,0 +1,54 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/protocol"
+
+import {
+  "moonbitlang/core/debug",
+  "moonflux/core/codec",
+}
+
+// Values
+pub const MAX_BATCH_BYTES : Int = 16777216
+
+pub const MAX_HEADERS_PER_RECORD : Int = 1024
+
+pub const MAX_RECORDS_PER_BATCH : Int = 100000
+
+pub const MAX_RECORD_BYTES : Int = 4194304
+
+pub fn decode_frame(@codec.Reader) -> Result[DecodedBatch, ProtocolError]
+
+pub fn decode_frame_strict(Bytes) -> Result[DecodedBatch, ProtocolError]
+
+pub fn encode_frame(Int64, Array[Record]) -> Bytes
+
+pub fn records_from_json(String) -> Result[Array[Record], String]
+
+// Errors
+pub(all) suberror ProtocolError {
+  Incomplete
+  BadMagic
+  UnsupportedVersion(Int)
+  CrcMismatch
+  MalformedLength
+  InvalidVarint
+  ValueTooLarge
+} derive(Eq, @debug.Debug)
+pub impl Show for ProtocolError
+
+// Types and methods
+pub(all) struct DecodedBatch {
+  base_offset : Int64
+  records : Array[Record]
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct Record {
+  timestamp : Int64
+  key : Bytes
+  value : Bytes
+  headers : Array[(Bytes, Bytes)]
+} derive(Eq, Show, @debug.Debug)
+
+// Type aliases
+
+// Traits
+

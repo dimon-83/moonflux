@@ -1,0 +1,7 @@
+// Test data for protocol golden vectors lives in vectors_gen.mbt
+// (generated from testdata/protocol_vectors.json).
+
+import {
+  "moonflux/core/codec",
+  "moonflux/core/protocol",
+}

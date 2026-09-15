@@ -1,0 +1,18 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/protocol_test"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+type VectorCase derive(Eq, @debug.Debug)
+
+// Type aliases
+
+// Traits
+

@@ -1,0 +1,8 @@
+// core/protocol: moonflux wire protocol v1 (Record/RecordBatch framing).
+// Pure computation; compiles for every target (no supported_targets).
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/json",
+  "moonflux/core/codec",
+}
