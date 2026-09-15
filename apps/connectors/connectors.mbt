@@ -38,14 +38,12 @@ pub fn records_from_text(
       line
     }
     if line.length() > 0 {
-      records.push(
-        @protocol.Record::{
-          timestamp,
-          key: b"",
-          value: @utf8.encode(line[0:line.length()]),
-          headers: [],
-        },
-      )
+      records.push(@protocol.Record::{
+        timestamp,
+        key: b"",
+        value: @utf8.encode(line[0:line.length()]),
+        headers: [],
+      })
     }
   }
   records
@@ -145,7 +143,7 @@ pub fn http_sink(url : String) -> Sink {
 ///|
 /// Parses "http://host[:port][/path]" into (host, port, path).
 pub fn parse_http_url(url : String) -> Result[(String, Int, String), String] {
-  if !(url.has_prefix("http://")) {
+  if !url.has_prefix("http://") {
     return Err("only http:// URLs are supported")
   }
   let rest = url[7:url.length()].to_owned()
@@ -219,7 +217,7 @@ pub fn parse_http_response(bytes : Bytes) -> Result[(Int, Bytes), String] {
   for part in status_line.split(" ") {
     parts.push(part.to_owned())
   }
-  if parts.length() < 2 || !(parts[0].has_prefix("HTTP/")) {
+  if parts.length() < 2 || !parts[0].has_prefix("HTTP/") {
     return Err("malformed status line: \{status_line}")
   }
   let status = match (try? @string.parse_int(parts[1][0:parts[1].length()])) {

@@ -39,9 +39,10 @@ test "compile once, evaluate per record (Vm program cache)" {
 
 ///|
 test "context exposes record fields" {
-  let t = match compile(
-    "timestamp > 0 && key == \"\" ? value + \"-plain\" : value + \"-keyed\"",
-  ) {
+  let t = match
+    compile(
+      "timestamp > 0 && key == \"\" ? value + \"-plain\" : value + \"-keyed\"",
+    ) {
     Ok(t) => t
     Err(e) => abort("compile: \{e}")
   }
@@ -54,9 +55,7 @@ test "context exposes record fields" {
   }
   assert_eq(value_of(must_apply(t, keyed)), "a-keyed")
   // headers_count is readable too
-  let t2 = match compile(
-    "headers_count == 0 ? value : value + \"!\"",
-  ) {
+  let t2 = match compile("headers_count == 0 ? value : value + \"!\"") {
     Ok(t) => t
     Err(e) => abort("compile: \{e}")
   }

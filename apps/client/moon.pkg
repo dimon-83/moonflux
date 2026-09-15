@@ -5,9 +5,9 @@ supported_targets = "native"
 
 import {
   "moonbitlang/core/buffer",
-  "moonbitlang/core/encoding/utf8" @utf8,
-  "moonflux/core/codec" @codec,
-  "moonflux/core/log" @log,
-  "moonflux/core/protocol" @protocol,
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/core/codec",
+  "moonflux/core/log",
+  "moonflux/core/protocol",
   "moonflux/adapters/net-native" @net,
 }

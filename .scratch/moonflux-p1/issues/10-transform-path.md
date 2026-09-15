@@ -4,10 +4,10 @@
 
 **Blocked by:** 09.
 
-**Status:** ready-for-agent
+**Status:** done (2026-09-15)
 
-- [ ] serve 启动时从 applied topology.json 编译 transform 链（09 的执行件）；fetch 回放路径应用
-- [ ] 热重载：轮询 topology.json（~1s 粒度），变更→重新 parse+compile→原子换入；非法 spec→保留旧规则+警告
-- [ ] `pipeline run` 执行 transform 链（移除 mbel-p1 拒绝分支，core/pipeline 标记保留但 run 改为执行）
-- [ ] `scripts/e2e-p1-rules.sh`：apply(upper) → produce → consume 显示转换 → 改 spec → apply（不重启 serve）→ consume 显示新输出 → diff 断言
-- [ ] 集成测试：重载失败保留旧规则；transform 链顺序执行
+- [x] serve 启动时从 applied topology.json 编译 transform 链（09 的执行件）；fetch 回放路径应用
+- [x] 热重载：轮询 topology.json（~1s 粒度），变更→重新 parse+compile→原子换入；非法 spec→保留旧规则+警告
+- [x] `pipeline run` 执行 transform 链（移除 mbel-p1 拒绝分支，core/pipeline 标记保留但 run 改为执行）
+- [x] `scripts/e2e-p1-rules.sh`：apply(upper) → produce → consume 显示转换 → 改 spec → apply（不重启 serve）→ consume 显示新输出 → diff 断言
+- [x] 集成测试：重载失败保留旧规则；transform 链顺序执行

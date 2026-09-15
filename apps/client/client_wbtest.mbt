@@ -16,11 +16,12 @@ fn rec(value : String) -> @protocol.Record {
 
 ///|
 fn seed_welcome(server : Conn) -> Unit {
-  match server.send_frame(Frame::{
-    cmd: CMD_WELCOME,
-    rid: 0,
-    payload: encode_hello(1, 0),
-  }) {
+  match
+    server.send_frame(Frame::{
+      cmd: CMD_WELCOME,
+      rid: 0,
+      payload: encode_hello(1, 0),
+    }) {
     Ok(_) => ()
     Err(e) => abort("seed welcome: \{e}")
   }
@@ -74,11 +75,12 @@ test "producer handshake and send over socketpair" {
   let reply_payload = Buffer::Buffer()
   reply_payload.write_int64_be(10L)
   reply_payload.write_uint_be(2U)
-  match server_conn.send_frame(Frame::{
-    cmd: CMD_OK,
-    rid: 1,
-    payload: reply_payload.to_bytes(),
-  }) {
+  match
+    server_conn.send_frame(Frame::{
+      cmd: CMD_OK,
+      rid: 1,
+      payload: reply_payload.to_bytes(),
+    }) {
     Ok(_) => ()
     Err(e) => abort("seed produce reply: \{e}")
   }
@@ -124,11 +126,12 @@ test "handshake rejection surfaces the server error code" {
     Err(e) => abort("socketpair: \{e}")
   }
   // server rejects an old client: major version mismatch
-  match server_conn.send_frame(Frame::{
-    cmd: CMD_ERR,
-    rid: 0,
-    payload: encode_error(ERR_UNSUPPORTED_VERSION, "server speaks major 1"),
-  }) {
+  match
+    server_conn.send_frame(Frame::{
+      cmd: CMD_ERR,
+      rid: 0,
+      payload: encode_error(ERR_UNSUPPORTED_VERSION, "server speaks major 1"),
+    }) {
     Ok(_) => ()
     Err(e) => abort("seed err: \{e}")
   }
@@ -154,7 +157,8 @@ test "request id echo is enforced" {
     Err(e) => abort("handshake: \{e}")
   }
   // reply echoes the wrong rid: the client must refuse it
-  match server_conn.send_frame(Frame::{ cmd: CMD_OK, rid: 99, payload: b"\x00" }) {
+  match
+    server_conn.send_frame(Frame::{ cmd: CMD_OK, rid: 99, payload: b"\x00" }) {
     Ok(_) => ()
     Err(e) => abort("seed reply: \{e}")
   }
@@ -182,7 +186,12 @@ test "consumer fetch decodes offsets from batch frames" {
   payload.write_uint_be(1U)
   payload.write_uint_be(batch.length().reinterpret_as_uint())
   payload.write_bytes(batch[0:batch.length()])
-  match server_conn.send_frame(Frame::{ cmd: CMD_OK, rid: 1, payload: payload.to_bytes() }) {
+  match
+    server_conn.send_frame(Frame::{
+      cmd: CMD_OK,
+      rid: 1,
+      payload: payload.to_bytes(),
+    }) {
     Ok(_) => ()
     Err(e) => abort("seed fetch reply: \{e}")
   }
@@ -233,7 +242,12 @@ test "server-side first read distinguishes v1 peers and garbage" {
     Ok(pair) => pair
     Err(e) => abort("socketpair: \{e}")
   }
-  match peer3.send_frame(Frame::{ cmd: CMD_HELLO, rid: 0, payload: encode_hello(1, 0) }) {
+  match
+    peer3.send_frame(Frame::{
+      cmd: CMD_HELLO,
+      rid: 0,
+      payload: encode_hello(1, 0),
+    }) {
     Ok(_) => ()
     Err(e) => abort("send: \{e}")
   }

@@ -86,9 +86,17 @@ fn expect_fixed_string(
         })
       }
     Some(_) =>
-      errors.push(SpecError::{ path, code: "bad-type", message: "must be a string" })
+      errors.push(SpecError::{
+        path,
+        code: "bad-type",
+        message: "must be a string",
+      })
     None =>
-      errors.push(SpecError::{ path, code: "missing-field", message: "required" })
+      errors.push(SpecError::{
+        path,
+        code: "missing-field",
+        message: "required",
+      })
   }
 }
 
@@ -112,7 +120,14 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
       errors,
     )
     // apiVersion + kind: required strings with fixed values
-    expect_fixed_string(root, "$.apiVersion", "apiVersion", SPEC_API_VERSION, "bad-api-version", errors)
+    expect_fixed_string(
+      root,
+      "$.apiVersion",
+      "apiVersion",
+      SPEC_API_VERSION,
+      "bad-api-version",
+      errors,
+    )
     expect_fixed_string(root, "$.kind", "kind", SPEC_KIND, "bad-kind", errors)
     // metadata.name
     let name = match root.get("metadata") {

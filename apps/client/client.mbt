@@ -4,7 +4,6 @@
 // speak sequentially (P1 scope; multiplexing arrives with the
 // concurrency milestone).
 
-
 ///|
 /// A connected producer session.
 pub struct Producer {
@@ -24,12 +23,12 @@ pub struct Consumer {
 ///|
 /// Raises a client-side protocol failure.
 pub(all) suberror ClientError {
-/// Transport failure (connect/send/recv/close).
+  /// Transport failure (connect/send/recv/close).
   Transport(String)
-/// The server rejected the handshake or a command: stable code +
-/// message as sent by the server.
+  /// The server rejected the handshake or a command: stable code +
+  /// message as sent by the server.
   Server(Int, String)
-/// The reply frame did not match the request (id or command kind).
+  /// The reply frame did not match the request (id or command kind).
   Protocol(String)
 } derive(Debug, Eq)
 
@@ -45,7 +44,12 @@ pub impl Show for ClientError with fn output(self, logger) {
 ///|
 /// Performs the HELLO/WELCOME handshake on a fresh connection.
 fn handshake(conn : Conn) -> Result[(Int, Int), ClientError] {
-  match conn.send_frame(Frame::{ cmd: CMD_HELLO, rid: 0, payload: encode_hello(1, 0) }) {
+  match
+    conn.send_frame(Frame::{
+      cmd: CMD_HELLO,
+      rid: 0,
+      payload: encode_hello(1, 0),
+    }) {
     Ok(_) => ()
     Err(e) => return Err(Transport(e))
   }
@@ -93,143 +97,158 @@ fn request(
 
 ///|
 /// Connects a producer and handshakes with a moonflux server.
-pub fn Producer::connect(host : String, port : Int) -> Result[Producer, ClientError] {
-    let conn = match Conn::tcp(host, port) {
-      Ok(conn) => conn
-      Err(e) => return Err(Transport(e))
-    }
-    let session = match handshake(conn) {
-      Ok(session) => session
-      Err(e) => {
-        (conn.close)()
-        return Err(e)
-      }
-    }
-    Ok(Producer::{ conn, next_rid: 1, session })
+pub fn Producer::connect(
+  host : String,
+  port : Int,
+) -> Result[Producer, ClientError] {
+  let conn = match Conn::tcp(host, port) {
+    Ok(conn) => conn
+    Err(e) => return Err(Transport(e))
   }
-
-/// Wraps an already-connected pipe (tests, loopback).
-pub fn Producer::from_conn(conn : Conn) -> Result[Producer, ClientError] {
-    let session = match handshake(conn) {
-      Ok(session) => session
-      Err(e) => return Err(e)
-    }
-    Ok(Producer::{ conn, next_rid: 1, session })
-  }
-
-/// The server's advertised protocol version.
-pub fn Producer::session_version(self : Producer) -> (Int, Int) {
-    self.session
-  }
-
-/// Sends a batch; returns (base_offset, record_count).
-pub fn Producer::send(
-    self : Producer,
-    topic : String,
-    records : Array[@protocol.Record],
-  ) -> Result[(Int64, Int), ClientError] {
-    let payload = Buffer::Buffer()
-    let topic_bytes = @utf8.encode(topic[0:topic.length()])
-    payload.write_leb128(topic_bytes.length())
-    payload.write_bytes(topic_bytes[0:topic_bytes.length()])
-    let batch = @protocol.encode_frame(-1L, records)
-    payload.write_bytes(batch[0:batch.length()])
-    let rid = self.next_rid
-    self.next_rid += 1
-    let reply = match request(self.conn, rid, CMD_PRODUCE, payload.to_bytes()) {
-      Ok(reply) => reply
-      Err(e) => return Err(e)
-    }
-    match reply.cmd {
-      CMD_OK => {
-        let reader = @codec.Reader::new(reply.payload)
-        let base = match reader.read_i64_be() {
-          Ok(base) => base
-          Err(_) => return Err(Protocol("bad produce reply"))
-        }
-        let count = match reader.read_u32_be() {
-          Ok(count) => count.reinterpret_as_int()
-          Err(_) => return Err(Protocol("bad produce reply"))
-        }
-        Ok((base, count))
-      }
-      CMD_ERR => {
-        let (code, message) = decode_error(reply.payload)
-        Err(Server(code, message))
-      }
-      _ => Err(Protocol("unexpected reply cmd \{reply.cmd}"))
+  let session = match handshake(conn) {
+    Ok(session) => session
+    Err(e) => {
+      (conn.close)()
+      return Err(e)
     }
   }
-
-/// Closes the session.
-pub fn Producer::close(self : Producer) -> Unit {
-    (self.conn.close)()
+  Ok(Producer::{ conn, next_rid: 1, session })
 }
 
 ///|
+/// Wraps an already-connected pipe (tests, loopback).
+pub fn Producer::from_conn(conn : Conn) -> Result[Producer, ClientError] {
+  let session = match handshake(conn) {
+    Ok(session) => session
+    Err(e) => return Err(e)
+  }
+  Ok(Producer::{ conn, next_rid: 1, session })
+}
+
+///|
+/// The server's advertised protocol version.
+pub fn Producer::session_version(self : Producer) -> (Int, Int) {
+  self.session
+}
+
+///|
+/// Sends a batch; returns (base_offset, record_count).
+pub fn Producer::send(
+  self : Producer,
+  topic : String,
+  records : Array[@protocol.Record],
+) -> Result[(Int64, Int), ClientError] {
+  let payload = Buffer::Buffer()
+  let topic_bytes = @utf8.encode(topic[0:topic.length()])
+  payload.write_leb128(topic_bytes.length())
+  payload.write_bytes(topic_bytes[0:topic_bytes.length()])
+  let batch = @protocol.encode_frame(-1L, records)
+  payload.write_bytes(batch[0:batch.length()])
+  let rid = self.next_rid
+  self.next_rid += 1
+  let reply = match request(self.conn, rid, CMD_PRODUCE, payload.to_bytes()) {
+    Ok(reply) => reply
+    Err(e) => return Err(e)
+  }
+  match reply.cmd {
+    CMD_OK => {
+      let reader = @codec.Reader::new(reply.payload)
+      let base = match reader.read_i64_be() {
+        Ok(base) => base
+        Err(_) => return Err(Protocol("bad produce reply"))
+      }
+      let count = match reader.read_u32_be() {
+        Ok(count) => count.reinterpret_as_int()
+        Err(_) => return Err(Protocol("bad produce reply"))
+      }
+      Ok((base, count))
+    }
+    CMD_ERR => {
+      let (code, message) = decode_error(reply.payload)
+      Err(Server(code, message))
+    }
+    _ => Err(Protocol("unexpected reply cmd \{reply.cmd}"))
+  }
+}
+
+///|
+/// Closes the session.
+pub fn Producer::close(self : Producer) -> Unit {
+  (self.conn.close)()
+}
+
+///|
+
 ///|
 /// Connects a consumer and handshakes with a moonflux server.
-pub fn Consumer::connect(host : String, port : Int) -> Result[Consumer, ClientError] {
-    let conn = match Conn::tcp(host, port) {
-      Ok(conn) => conn
-      Err(e) => return Err(Transport(e))
-    }
-    let session = match handshake(conn) {
-      Ok(session) => session
-      Err(e) => {
-        (conn.close)()
-        return Err(e)
-      }
-    }
-    Ok(Consumer::{ conn, next_rid: 1, session })
+pub fn Consumer::connect(
+  host : String,
+  port : Int,
+) -> Result[Consumer, ClientError] {
+  let conn = match Conn::tcp(host, port) {
+    Ok(conn) => conn
+    Err(e) => return Err(Transport(e))
   }
+  let session = match handshake(conn) {
+    Ok(session) => session
+    Err(e) => {
+      (conn.close)()
+      return Err(e)
+    }
+  }
+  Ok(Consumer::{ conn, next_rid: 1, session })
+}
 
+///|
 /// Wraps an already-connected pipe (tests, loopback).
 pub fn Consumer::from_conn(conn : Conn) -> Result[Consumer, ClientError] {
-    let session = match handshake(conn) {
-      Ok(session) => session
-      Err(e) => return Err(e)
-    }
-    Ok(Consumer::{ conn, next_rid: 1, session })
+  let session = match handshake(conn) {
+    Ok(session) => session
+    Err(e) => return Err(e)
   }
+  Ok(Consumer::{ conn, next_rid: 1, session })
+}
 
+///|
 /// The server's advertised protocol version.
 pub fn Consumer::session_version(self : Consumer) -> (Int, Int) {
-    self.session
-  }
+  self.session
+}
 
+///|
 /// Fetches up to `max` entries from `from`; entries carry offsets.
 pub fn Consumer::fetch(
-    self : Consumer,
-    topic : String,
-    from : Int64,
-    max : Int,
-  ) -> Result[Array[@log.LogEntry], ClientError] {
-    let payload = Buffer::Buffer()
-    let topic_bytes = @utf8.encode(topic[0:topic.length()])
-    payload.write_leb128(topic_bytes.length())
-    payload.write_bytes(topic_bytes[0:topic_bytes.length()])
-    payload.write_int64_be(from)
-    payload.write_uint_be(max.reinterpret_as_uint())
-    let rid = self.next_rid
-    self.next_rid += 1
-    let reply = match request(self.conn, rid, CMD_FETCH, payload.to_bytes()) {
-      Ok(reply) => reply
-      Err(e) => return Err(e)
-    }
-    match reply.cmd {
-      CMD_OK => decode_fetch_reply(reply.payload, from)
-      CMD_ERR => {
-        let (code, message) = decode_error(reply.payload)
-        Err(Server(code, message))
-      }
-      _ => Err(Protocol("unexpected reply cmd \{reply.cmd}"))
-    }
+  self : Consumer,
+  topic : String,
+  from : Int64,
+  max : Int,
+) -> Result[Array[@log.LogEntry], ClientError] {
+  let payload = Buffer::Buffer()
+  let topic_bytes = @utf8.encode(topic[0:topic.length()])
+  payload.write_leb128(topic_bytes.length())
+  payload.write_bytes(topic_bytes[0:topic_bytes.length()])
+  payload.write_int64_be(from)
+  payload.write_uint_be(max.reinterpret_as_uint())
+  let rid = self.next_rid
+  self.next_rid += 1
+  let reply = match request(self.conn, rid, CMD_FETCH, payload.to_bytes()) {
+    Ok(reply) => reply
+    Err(e) => return Err(e)
   }
+  match reply.cmd {
+    CMD_OK => decode_fetch_reply(reply.payload, from)
+    CMD_ERR => {
+      let (code, message) = decode_error(reply.payload)
+      Err(Server(code, message))
+    }
+    _ => Err(Protocol("unexpected reply cmd \{reply.cmd}"))
+  }
+}
 
+///|
 /// Closes the session.
 pub fn Consumer::close(self : Consumer) -> Unit {
-    (self.conn.close)()
+  (self.conn.close)()
 }
 
 ///|

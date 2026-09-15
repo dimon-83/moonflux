@@ -18,4 +18,4 @@
 - 13 P1 门禁验证 + 文档同步（blocked by 10, 11, 12）
 
 **状态**
-- [ ] 09 … [ ] 13（各 ticket 文件内有独立 checklist）
+- [x] 09 … [ ] 13（各 ticket 文件内有独立 checklist）

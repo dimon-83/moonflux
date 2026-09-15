@@ -49,75 +49,63 @@ fn handle_connection(
     @client.Eof => return
     @client.WrongVersion(version) => {
       // a v1-era peer gets a structured rejection, never a silent drop
-      let _ = conn.send_frame(
-        @client.Frame::{
-          cmd: @client.CMD_ERR,
-          rid: 0,
-          payload: @client.encode_error(
-            @client.ERR_UNSUPPORTED_VERSION,
-            "server speaks frame version \{@client.PROTOCOL_VERSION}; peer sent \{version}",
-          ),
-        },
-      )
+      let _ = conn.send_frame(@client.Frame::{
+        cmd: @client.CMD_ERR,
+        rid: 0,
+        payload: @client.encode_error(
+          @client.ERR_UNSUPPORTED_VERSION,
+          "server speaks frame version \{@client.PROTOCOL_VERSION}; peer sent \{version}",
+        ),
+      })
       return
     }
     @client.Garbage(msg) => {
-      let _ = conn.send_frame(
-        @client.Frame::{
-          cmd: @client.CMD_ERR,
-          rid: 0,
-          payload: @client.encode_error(@client.ERR_BAD_PAYLOAD, msg),
-        },
-      )
+      let _ = conn.send_frame(@client.Frame::{
+        cmd: @client.CMD_ERR,
+        rid: 0,
+        payload: @client.encode_error(@client.ERR_BAD_PAYLOAD, msg),
+      })
       return
     }
   }
   if hello.cmd != @client.CMD_HELLO {
-    let _ = conn.send_frame(
-      @client.Frame::{
-        cmd: @client.CMD_ERR,
-        rid: hello.rid,
-        payload: @client.encode_error(
-          @client.ERR_SEQUENCE,
-          "handshake required: send HELLO first",
-        ),
-      },
-    )
+    let _ = conn.send_frame(@client.Frame::{
+      cmd: @client.CMD_ERR,
+      rid: hello.rid,
+      payload: @client.encode_error(
+        @client.ERR_SEQUENCE,
+        "handshake required: send HELLO first",
+      ),
+    })
     return
   }
   let (major, minor) = match @client.decode_hello(hello.payload) {
     Ok(parts) => parts
     Err(e) => {
-      let _ = conn.send_frame(
-        @client.Frame::{
-          cmd: @client.CMD_ERR,
-          rid: hello.rid,
-          payload: @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
-        },
-      )
+      let _ = conn.send_frame(@client.Frame::{
+        cmd: @client.CMD_ERR,
+        rid: hello.rid,
+        payload: @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+      })
       return
     }
   }
   if major != 1 {
-    let _ = conn.send_frame(
-      @client.Frame::{
-        cmd: @client.CMD_ERR,
-        rid: hello.rid,
-        payload: @client.encode_error(
-          @client.ERR_UNSUPPORTED_VERSION,
-          "server speaks major version 1 (frames v2); client sent \{major}",
-        ),
-      },
-    )
+    let _ = conn.send_frame(@client.Frame::{
+      cmd: @client.CMD_ERR,
+      rid: hello.rid,
+      payload: @client.encode_error(
+        @client.ERR_UNSUPPORTED_VERSION,
+        "server speaks major version 1 (frames v2); client sent \{major}",
+      ),
+    })
     return
   }
-  let _ = conn.send_frame(
-    @client.Frame::{
-      cmd: @client.CMD_WELCOME,
-      rid: hello.rid,
-      payload: @client.encode_hello(1, 0),
-    },
-  )
+  let _ = conn.send_frame(@client.Frame::{
+    cmd: @client.CMD_WELCOME,
+    rid: hello.rid,
+    payload: @client.encode_hello(1, 0),
+  })
   let _ = minor
   while true {
     let frame = match conn.recv_frame() {
@@ -132,15 +120,21 @@ fn handle_connection(
         rules.sync(data_dir)
         dispatch_fetch(frame.payload, data_dir, rules)
       }
-      other => (
-        @client.CMD_ERR,
-        @client.encode_error(
-          @client.ERR_UNKNOWN_COMMAND,
-          "unknown command \{other}",
-        ),
-      )
+      other =>
+        (
+          @client.CMD_ERR,
+          @client.encode_error(
+            @client.ERR_UNKNOWN_COMMAND,
+            "unknown command \{other}",
+          ),
+        )
     }
-    match conn.send_frame(@client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1 }) {
+    match
+      conn.send_frame(@client.Frame::{
+        cmd: reply.0,
+        rid: frame.rid,
+        payload: reply.1,
+      }) {
       Ok(_) => ()
       Err(_) => return
     }
@@ -253,5 +247,3 @@ fn read_topic_name(reader : @codec.Reader) -> Result[String, String] {
   }
   Ok(topic)
 }
-
-

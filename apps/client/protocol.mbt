@@ -15,7 +15,6 @@
 //
 // Error payload: u16 code + utf8 message.
 
-
 ///|
 pub const PROTOCOL_VERSION = 2
 
@@ -83,9 +82,7 @@ pub fn encode_frame(frame : Frame) -> Bytes {
 ///|
 /// Parses a frame header (13 bytes). The payload length is validated
 /// against the frame limit but the payload bytes are NOT included.
-pub fn decode_header(
-  header : Bytes,
-) -> Result[(Int, Int, Int), String] {
+pub fn decode_header(header : Bytes) -> Result[(Int, Int, Int), String] {
   if header.length() != 13 {
     return Err("short frame header")
   }

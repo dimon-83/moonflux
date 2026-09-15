@@ -86,7 +86,9 @@ fn persist_applied(
   // the wall clock); the timestamp records when apply compiled+saved.
   let doc_map : Map[String, Json] = {}
   doc_map["pipeline"] = Json::string(name)
-  doc_map["applied_at"] = Json::number(@env.now().reinterpret_as_int64().to_double())
+  doc_map["applied_at"] = Json::number(
+    @env.now().reinterpret_as_int64().to_double(),
+  )
   doc_map["spec"] = spec_json
   let doc = Json::object(doc_map)
   let text = doc.stringify(indent=2)

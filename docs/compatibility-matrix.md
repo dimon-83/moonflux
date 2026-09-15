@@ -17,6 +17,7 @@
 | 9 | **生产确认**：broker 回执分配的 base offset | produce 应答携带 offset | `serve` 逐连接应答 OK(base, count)；producer 打印分配区间 | ✅ 对拍通过 | `scripts/e2e-p0.sh`（offsets 0..5 / 5..10） |
 | 10 | **多分区 / 段滚动 / 索引 / retention** | 分区与段管理（P3 范围） | v1 仅单分区单段，读为全扫（无索引） | ⏳ 未验证（P3 里程碑） | `core/log/log.mbt` 顶部范围说明 |
 | 11 | **消费组 / 提交语义 / leader epoch / 未提交读开关** | Fluvio 消费组缺失等事实先行核查（报告 1.2/2.x） | 完全未实现；设计上无隐式消费组 | ⏳ 未验证（P3 里程碑） | — |
+| 13 | **协议服务化**：版本协商握手 + 请求应答 + 错误码 | 线协议版本化（评估报告 1.2） | 帧 v2（MFS+版本 2+cmd+请求 id）；HELLO/WELCOME 主版本门；错误帧稳定码；旧版本对端收到结构化拒绝 | ✅ 对拍通过 | `apps/client` 单测（version sniffing / rid echo）+ `scripts/e2e-p0.sh` 远程路径 |
 | 12 | **SmartModule 算子沙箱语义** | core-wasm ABI + 预算治理（报告 3.6/5.x） | 未实现（P2）；内核全后端可编译纪律已由双后端测试矩阵保持 | ⏳ 未验证（P2 里程碑） | CI 矩阵（`moon test --target native` / `--target wasm-gc`） |
 
 **图例**：✅ 对拍通过（有可复现脚本/测试）｜⚠️ 部分验证（注明缺口）｜⏳ 未验证（属后续里程碑门禁）。

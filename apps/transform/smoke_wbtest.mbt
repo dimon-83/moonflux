@@ -15,6 +15,9 @@ test "mbel compiles once and evaluates per record (smoke)" {
   let out = expr.eval(ctx)
   assert_true(out is @ast.StrVal("HELLO!"))
   // second eval reuses the cached compiled program
-  let ctx2 = @ast.ObjectVal([("value", @ast.StrVal("again")), ("key", @ast.StrVal(""))])
+  let ctx2 = @ast.ObjectVal([
+    ("value", @ast.StrVal("again")),
+    ("key", @ast.StrVal("")),
+  ])
   assert_true(expr.eval(ctx2) is @ast.StrVal("AGAIN!"))
 }

@@ -56,7 +56,7 @@
 | :--- | :--- | :--- | :--- |
 | **P0**（2–4 周） | **Native 最小闭环** | 内核 codec 子集 + `fs-native` / `net-native` 适配 + 单机最小分区日志 + CLI（produce/consume）+ 文件 Source → topic → stdout Sink 贯通 demo | ✅ 达成（2026-09-15）：`scripts/e2e-p0.sh` 全绿；协议对拍 `scripts/crosscheck-protocol.sh` 全绿 |
 | **P0′**（并行） | 产品化地基 | `PipelineSpec` v1alpha1 + CLI `pipeline apply/plan`（声明式管道编译） | ✅ 达成（2026-09-15）：`scripts/e2e-p0p.sh` 全绿；spec 编译为可运行拓扑 + plan 差异预览 |
-| **P1** | **连接器与外设** | 连接器框架 + HTTP/文件/MQTT/Kafka Source & Sink + mbel 表达式 transforms（Native 内嵌）；协议服务化与客户端 SDK 雏形 | ≥3 个真实数据源接入示例跑通；改规则 = 改配置且秒级生效 |
+| **P1** | **连接器与外设** | 连接器框架 + HTTP/文件/MQTT/Kafka Source & Sink + mbel 表达式 transforms（Native 内嵌）；协议服务化与客户端 SDK 雏形 | ✅ 达成（2026-09-15）：`scripts/e2e-p1-connectors.sh`（file/stdin/http 三源 + stdout/http 双汇）与 `scripts/e2e-p1-rules.sh`（不重启 serve 秒级换规则）全绿；MQTT/Kafka 连接器与多路复用按路线图留待后续 |
 | **P2** | WASM 算子沙箱 | 算子 guest SDK + 沙箱 ABI + 全算子 + WASM×Native 双后端测试矩阵 | 算子语义与参考实现对拍一致 |
 | **P3** | 分布式能力 | 复制（ISR 等价语义）+ 选主 + 元数据调和（本地多进程优先） | 故障注入通过（节点宕机 / 恢复 / 水位一致性） |
 | **P4** | 全平台体验 | 客户端 SDK 完备（native + wasm）、Web 拖拽编辑器、部署形态（**本地单/多进程优先，K8s 可选**） | 端到端：拖拽一条管道 → 运行 → 消费到数据 |
@@ -90,6 +90,9 @@ moonflux/
 7. **PipelineSpec 文档格式用 JSON**（2026-09-15）：MoonBit 内核仅依赖 `moonbitlang/core`（无 YAML 解析器），v1alpha1 以 JSON 为规范文档格式；JSON 是 YAML 子集，纯 JSON 语法书写的 YAML 文档天然兼容。YAML 全量解析视需求另立依赖决策；
 8. **P0 会话协议为内部帧格式**（2026-09-15）：`serve/produce --remote/consume --remote` 使用 10 字节头 `MFS` 帧封装线协议批帧，仅供 P0 demo；完整版本化协议服务化与多路复用按路线图属 P1，届时替换并纳入对拍矩阵；
 9. **P0′ 拓扑的执行形态**（2026-09-15）：`pipeline apply` 持久化 `topology.json`（pipeline 名 + spec 文档），编译为纯函数——重编译即还原拓扑；`pipeline run` 在单进程内顺序执行编译出的拓扑（source→broker→sink）。多进程/远程执行在 P1 协议服务化基础上接管；含 `mbel-p1` 能力标记的拓扑 run 期拒绝执行（可证伪的未实现声明）。
+10. **动态规则作用于消费路径**（2026-09-15，P1）：mbel transforms 在 fetch/回放路径逐条执行（对标 SmartModule 的消费侧流处理语义）——历史数据按当前规则重现，这也是「改规则秒级生效」可证伪的关键；规则资产（表达式）随 spec 版本化，`pipeline apply` 时做发布期静态检查（mbel Compile mode：语法/未知函数/未知变量/类型错误全部拦截），运行期 compile-once + Vm 程序缓存复用到每记录。
+11. **规则热重载机制**（2026-09-15，P1）：`serve` 每个请求前 stat `topology.json`（纳秒 mtime），变更即重编译换入——`apply` 后无需重启；重载失败保留旧规则并告警（绝不静默、绝不空转）。秒级精度不足会漏检测（秒内两次 apply），故 fs 适配器 mtime 用纳秒。
+12. **协议服务化与 SDK 连接抽象**（2026-09-15，P1）：帧协议 v2 = `MFS` magic + 版本 2 + cmd + 请求 id + 长度；会话以 HELLO/WELCOME 握手（主版本不匹配回结构化 `unsupported-version`，v1 时代对端被明确拒绝而非静默断开）；错误帧带稳定错误码。客户端 SDK（`apps/client`）把连接抽象为注入式函数字段（TCP / socketpair），使全流程可进程内单测；多路复用与并发连接仍在后续里程碑（P1 保持顺序会话）。
 
 ## 待办（下一步）
 

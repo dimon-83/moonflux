@@ -3,7 +3,6 @@
 // directly — transports are injected as function fields, so tests run
 // over a socketpair and production runs over TCP.
 
-
 ///|
 /// A bidirectional byte pipe. `recv_exact` must return exactly `n`
 /// bytes or an error (EOF mid-read is an error).
@@ -37,9 +36,7 @@ fn wrap_stream(stream : @net.TcpStream) -> Conn {
       }
       Ok(Bytes::from_fixedarray(buf, len=filled))
     },
-    close: fn() {
-      let _ = stream.close()
-    },
+    close: fn() { let _ = stream.close() },
   }
 }
 

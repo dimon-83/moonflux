@@ -74,9 +74,7 @@ pub fn apply(
     ("timestamp", @ast.NumVal(record.timestamp.to_double())),
     ("headers_count", @ast.NumVal(record.headers.length().to_double())),
   ])
-  let out = t.expr.eval(ctx) catch {
-    e => return Err("eval: \{error_text(e)}")
-  }
+  let out = t.expr.eval(ctx) catch { e => return Err("eval: \{error_text(e)}") }
   match out {
     @ast.StrVal(new_value) =>
       Ok(@protocol.Record::{

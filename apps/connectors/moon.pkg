@@ -4,9 +4,9 @@
 supported_targets = "native"
 
 import {
-  "moonbitlang/core/encoding/utf8" @utf8,
-  "moonbitlang/core/string" @string,
-  "moonflux/core/protocol" @protocol,
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/string",
+  "moonflux/core/protocol",
   "moonflux/adapters/fs-native" @fs,
   "moonflux/adapters/net-native" @net,
 }

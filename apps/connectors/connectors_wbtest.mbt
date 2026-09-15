@@ -24,12 +24,16 @@ test "url parsing: default port, explicit port, path" {
 
 ///|
 test "request building: GET and POST shapes" {
-  let get = @utf8.decode_lossy(parse_view(build_http_request("GET", "h.example", 80, "/x", b"")))
+  let get = @utf8.decode_lossy(
+    parse_view(build_http_request("GET", "h.example", 80, "/x", b"")),
+  )
   assert_true(get.has_prefix("GET /x HTTP/1.1\r\n"))
   assert_true(get.contains("Host: h.example\r\n"))
   assert_true(get.has_suffix("\r\n\r\n"))
   let post = @utf8.decode_lossy(
-    parse_view(build_http_request("POST", "h.example", 8080, "/sink", b"a\nb\n")),
+    parse_view(
+      build_http_request("POST", "h.example", 8080, "/sink", b"a\nb\n"),
+    ),
   )
   assert_true(post.contains("Host: h.example:8080\r\n"))
   assert_true(post.contains("Content-Length: 4\r\n"))
