@@ -1,0 +1,5 @@
+// Blackbox tests for moonflux/core/codec — only the public contract.
+import {
+  "moonbitlang/core/buffer",
+  "moonflux/core/codec",
+}

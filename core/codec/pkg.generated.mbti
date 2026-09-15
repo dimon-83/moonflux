@@ -1,0 +1,53 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/codec"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn crc32(Bytes) -> UInt
+
+pub fn crc32_extend(UInt, Bytes) -> UInt
+
+pub fn crc32_extend_view(UInt, BytesView) -> UInt
+
+pub fn crc32_view(BytesView) -> UInt
+
+pub fn hex_decode(String) -> Result[Bytes, DecodeError]
+
+pub fn hex_encode(Bytes) -> String
+
+// Errors
+pub(all) suberror DecodeError {
+  UnexpectedEof
+  VarintTooLong
+  LengthOutOfRange
+  InvalidHex
+} derive(Eq, @debug.Debug)
+pub impl Show for DecodeError
+
+// Types and methods
+pub struct Reader {
+  bytes : Bytes
+  mut pos : Int
+}
+pub fn Reader::is_empty(Self) -> Bool
+pub fn Reader::new(Bytes) -> Self
+pub fn Reader::peek_byte(Self) -> Result[Byte, DecodeError]
+pub fn Reader::position(Self) -> Int
+pub fn Reader::read_byte(Self) -> Result[Byte, DecodeError]
+pub fn Reader::read_bytes(Self, Int) -> Result[Bytes, DecodeError]
+pub fn Reader::read_i64_be(Self) -> Result[Int64, DecodeError]
+pub fn Reader::read_u16_be(Self) -> Result[UInt16, DecodeError]
+pub fn Reader::read_u32_be(Self) -> Result[UInt, DecodeError]
+pub fn Reader::read_u64_be(Self) -> Result[UInt64, DecodeError]
+pub fn Reader::read_uleb128(Self) -> Result[UInt64, DecodeError]
+pub fn Reader::read_uleb128_len(Self) -> Result[Int, DecodeError]
+pub fn Reader::read_view(Self, Int) -> Result[BytesView, DecodeError]
+pub fn Reader::remaining(Self) -> Int
+
+// Type aliases
+
+// Traits
+

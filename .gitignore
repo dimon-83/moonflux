@@ -1,0 +1,12 @@
+# MoonBit build artifacts
+_build/
+*.mbti.md
+bisect*.log
+.coverage*
+uncovered.log
+
+# macOS
+.DS_Store
+
+# moonflux local runtime data (P0 demo / CLI default data dir)
+.moonflux-data/
