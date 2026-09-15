@@ -1,0 +1,8 @@
+// core/log: single-partition commit log over an injected segment
+// handle. Pure computation; compiles for every target.
+
+import {
+  "moonbitlang/core/buffer",
+  "moonflux/core/codec" @codec,
+  "moonflux/core/protocol" @protocol,
+}
