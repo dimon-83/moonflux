@@ -72,6 +72,9 @@ test "segment file survives reopen with committed prefix intact" {
   let records = fn(value : String) -> @protocol.Record {
     @protocol.Record::{ timestamp: 7L, key: b"", value: @utf8.encode(value[0:value.length()]), headers: [] }
   }
+  let entry = fn(offset : Int64, value : String) -> @log.LogEntry {
+    @log.LogEntry::{ offset, record: records(value) }
+  }
   let first = match open_segment_file(path) {
     Ok(h) => h
     Err(e) => abort("open segment: \{e}")
@@ -97,7 +100,9 @@ test "segment file survives reopen with committed prefix intact" {
   assert_eq(recovered.high_watermark(), 3L)
   assert_eq(
     recovered.read(0, 10),
-    Ok([records("one"), records("two"), records("three")]),
+    Ok([
+      entry(0L, "one"), entry(1L, "two"), entry(2L, "three"),
+    ]),
   )
   let _ = remove_file(path)
 }

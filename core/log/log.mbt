@@ -102,6 +102,14 @@ pub fn MemorySegment::handle(self : MemorySegment) -> SegmentFile {
 }
 
 ///|
+/// One log entry as returned by `read`: the assigned offset plus the
+/// record stored under it.
+pub(all) struct LogEntry {
+  offset : Int64
+  record : @protocol.Record
+} derive(Debug, Eq, Show)
+
+///|
 /// Commit log over one segment: assigns offsets, frames batches with
 /// the wire protocol, and recovers a consistent prefix on open.
 pub struct SegmentedLog {
@@ -190,14 +198,15 @@ pub fn SegmentedLog::append(
 }
 
 ///|
-/// Reads at most `max_records` records starting at absolute offset
-/// `from`. Returns them in offset order. P0 implementation scans
-/// frames from the segment start (no index yet).
+/// Reads at most `max_records` entries starting at absolute offset
+/// `from`. Returns them in offset order, each carrying its assigned
+/// offset. P0 implementation scans frames from the segment start
+/// (no index yet).
 pub fn SegmentedLog::read(
   self : SegmentedLog,
   from : Int64,
   max_records : Int,
-) -> Result[Array[@protocol.Record], LogError] {
+) -> Result[Array[LogEntry], LogError] {
   if from < 0L || from > self.next_offset || max_records < 0 {
     return Err(OffsetOutOfRange)
   }
@@ -209,7 +218,7 @@ pub fn SegmentedLog::read(
     Err(e) => return Err(e)
   }
   let reader = @codec.Reader::new(bytes)
-  let out : Array[@protocol.Record] = []
+  let out : Array[LogEntry] = []
   let mut next = 0L
   while reader.remaining() > 0 && out.length() < max_records {
     match @protocol.decode_frame(reader) {
@@ -228,7 +237,7 @@ pub fn SegmentedLog::read(
           }
           let mut i = skip
           while i < count && out.length() < max_records {
-            out.push(batch.records[i])
+            out.push(LogEntry::{ offset: next + i.to_int64(), record: batch.records[i] })
             i += 1
           }
         }

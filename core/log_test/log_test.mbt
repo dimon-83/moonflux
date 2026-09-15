@@ -7,6 +7,11 @@ fn rec(value : String) -> @protocol.Record {
 }
 
 ///|
+fn entry(offset : Int64, value : String) -> @log.LogEntry {
+  @log.LogEntry::{ offset, record: rec(value) }
+}
+
+///|
 fn encode_ascii(s : String) -> Bytes {
   let arr : Array[Byte] = []
   for i in 0..<s.length() {
@@ -26,10 +31,15 @@ test "append assigns consecutive offsets and read replays them" {
   assert_eq(l.append([rec("a"), rec("b")]), Ok(0L))
   assert_eq(l.append([rec("c"), rec("d"), rec("e")]), Ok(2L))
   assert_eq(l.high_watermark(), 5L)
-  assert_eq(l.read(0, 10), Ok([rec("a"), rec("b"), rec("c"), rec("d"), rec("e")]))
+  assert_eq(
+    l.read(0, 10),
+    Ok([
+      entry(0L, "a"), entry(1L, "b"), entry(2L, "c"), entry(3L, "d"), entry(4L, "e"),
+    ]),
+  )
   // windowed reads: from inside the first batch, exact max
-  assert_eq(l.read(1, 2), Ok([rec("b"), rec("c")]))
-  assert_eq(l.read(4, 100), Ok([rec("e")]))
+  assert_eq(l.read(1, 2), Ok([entry(1L, "b"), entry(2L, "c")]))
+  assert_eq(l.read(4, 100), Ok([entry(4L, "e")]))
   assert_eq(l.read(5, 10), Ok([]))
 }
 
@@ -79,11 +89,14 @@ test "recovery truncates a torn tail and keeps committed records" {
     Err(e) => abort("recovery failed: \{e}")
   }
   assert_eq(recovered.high_watermark(), 3L)
-  assert_eq(recovered.read(0, 10), Ok([rec("a"), rec("b"), rec("c")]))
+  assert_eq(
+    recovered.read(0, 10),
+    Ok([entry(0L, "a"), entry(1L, "b"), entry(2L, "c")]),
+  )
   // the torn tail was truncated; the next append starts clean
   assert_eq((mem.handle().size)(), Ok(committed.length()))
   assert_eq(recovered.append([rec("d")]), Ok(3L))
-  assert_eq(recovered.read(3, 10), Ok([rec("d")]))
+  assert_eq(recovered.read(3, 10), Ok([entry(3L, "d")]))
 }
 
 ///|
