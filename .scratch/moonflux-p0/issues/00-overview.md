@@ -23,4 +23,4 @@
 - 08 pipeline plan/apply/run + P0′ 端到端（blocked by 05, 07）
 
 **状态**
-- [ ] 01 … [ ] 08（各 ticket 文件内有独立 checklist）
+- [x] 01–08 全部完成（2026-09-15）；P0 与 P0′ 门禁全绿

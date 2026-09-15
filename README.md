@@ -54,8 +54,8 @@
 
 | 阶段 | 里程碑 | 交付物 | 门禁（可证伪） |
 | :--- | :--- | :--- | :--- |
-| **P0**（2–4 周） | **Native 最小闭环** | 内核 codec 子集 + `fs-native` / `net-native` 适配 + 单机最小分区日志 + CLI（produce/consume）+ 文件 Source → topic → stdout Sink 贯通 demo | 端到端 demo 可复现；协议样本对拍通过 |
-| **P0′**（并行） | 产品化地基 | `PipelineSpec` v1alpha1 + CLI `pipeline apply/plan`（声明式管道编译） | 一份 spec 可编译为可运行的进程拓扑，plan 输出差异预览 |
+| **P0**（2–4 周） | **Native 最小闭环** | 内核 codec 子集 + `fs-native` / `net-native` 适配 + 单机最小分区日志 + CLI（produce/consume）+ 文件 Source → topic → stdout Sink 贯通 demo | ✅ 达成（2026-09-15）：`scripts/e2e-p0.sh` 全绿；协议对拍 `scripts/crosscheck-protocol.sh` 全绿 |
+| **P0′**（并行） | 产品化地基 | `PipelineSpec` v1alpha1 + CLI `pipeline apply/plan`（声明式管道编译） | ✅ 达成（2026-09-15）：`scripts/e2e-p0p.sh` 全绿；spec 编译为可运行拓扑 + plan 差异预览 |
 | **P1** | **连接器与外设** | 连接器框架 + HTTP/文件/MQTT/Kafka Source & Sink + mbel 表达式 transforms（Native 内嵌）；协议服务化与客户端 SDK 雏形 | ≥3 个真实数据源接入示例跑通；改规则 = 改配置且秒级生效 |
 | **P2** | WASM 算子沙箱 | 算子 guest SDK + 沙箱 ABI + 全算子 + WASM×Native 双后端测试矩阵 | 算子语义与参考实现对拍一致 |
 | **P3** | 分布式能力 | 复制（ISR 等价语义）+ 选主 + 元数据调和（本地多进程优先） | 故障注入通过（节点宕机 / 恢复 / 水位一致性） |
@@ -87,12 +87,16 @@ moonflux/
 4. **动态规则内核选型 mbel**：MoonBit 宿主库内嵌；跨语言/沙箱形态用 core-wasm + 薄 ABI（报告 5.3 / 5.4）；
 5. **编辑器 spec-first**：先立 PipelineSpec 与 CLI 编译器，UI 只是 spec 渲染器（报告 6.3）；
 6. **并行与分布归宿主架构**：计算单元无状态化，"宿主并行 × guest 虚拟"（报告 4.6）。
+7. **PipelineSpec 文档格式用 JSON**（2026-09-15）：MoonBit 内核仅依赖 `moonbitlang/core`（无 YAML 解析器），v1alpha1 以 JSON 为规范文档格式；JSON 是 YAML 子集，纯 JSON 语法书写的 YAML 文档天然兼容。YAML 全量解析视需求另立依赖决策；
+8. **P0 会话协议为内部帧格式**（2026-09-15）：`serve/produce --remote/consume --remote` 使用 10 字节头 `MFS` 帧封装线协议批帧，仅供 P0 demo；完整版本化协议服务化与多路复用按路线图属 P1，届时替换并纳入对拍矩阵；
+9. **P0′ 拓扑的执行形态**（2026-09-15）：`pipeline apply` 持久化 `topology.json`（pipeline 名 + spec 文档），编译为纯函数——重编译即还原拓扑；`pipeline run` 在单进程内顺序执行编译出的拓扑（source→broker→sink）。多进程/远程执行在 P1 协议服务化基础上接管；含 `mbel-p1` 能力标记的拓扑 run 期拒绝执行（可证伪的未实现声明）。
 
 ## 待办（下一步）
 
-- [ ] `git init` 与远端仓库（如需）
-- [ ] P0 启动：内核 codec 子集 + `abi-wasm` 适配包（同时起步）
-- [ ] P0′ 启动：PipelineSpec v1alpha1 草案 + CLI 编译器
+- [x] `git init` 与远端仓库（如需）（远端待配）
+- [x] P0 达成：内核 codec/protocol/log + fs/net-native 适配 + CLI + 端到端 demo（2026-09-15）
+- [x] P0′ 达成：PipelineSpec v1alpha1 + pipeline plan/apply/run（2026-09-15）
+- [ ] P1 启动：mbel 表达式 transforms 接入（含 spec.transforms 执行）、版本化协议服务化（替换 P0 会话帧）、多分区/并发连接
 - [x] 生成项目规约 [`AGENTS.md`](AGENTS.md)（2026-09-15）；随代码结构落地更新其目录与命令章节
 
 ---

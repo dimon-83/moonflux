@@ -4,9 +4,9 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done (2026-09-15)
 
-- [ ] `tools/gen_protocol_vectors.py` 支持 `--check` 模式：重新生成 vectors_gen.mbt 并与检入版本 diff，不一致即非零退出
-- [ ] `scripts/crosscheck-protocol.sh`：运行 --check + 用 CLI `dev encode-hex` 对向量样本重编码比对（native 制品）
-- [ ] `docs/compatibility-matrix.md`：至少覆盖 记录帧格式/varint/CRC 完整性/offset 语义/恢复截断语义/消费重放语义 六条，各注状态与证据
-- [ ] 脚本在本地全绿；E2E（05）失败时矩阵可交叉定位到具体语义条目
+- [x] `tools/gen_protocol_vectors.py` 支持 `--check` 模式：重新生成 vectors_gen.mbt 并与检入版本 diff，不一致即非零退出
+- [x] `scripts/crosscheck-protocol.sh`：运行 --check + 用 CLI `dev encode-hex` 对向量样本重编码比对（native 制品）
+- [x] `docs/compatibility-matrix.md`：至少覆盖 记录帧格式/varint/CRC 完整性/offset 语义/恢复截断语义/消费重放语义 六条，各注状态与证据
+- [x] 脚本在本地全绿；E2E（05）失败时矩阵可交叉定位到具体语义条目

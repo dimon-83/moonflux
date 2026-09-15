@@ -4,9 +4,9 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done (2026-09-15)
 
-- [ ] `core/log` 包：`SegmentFile` 注入接口（read/append/flush/size，Result 返回）；`MemorySegment` 实现（供测试与 wasm 后端复用）
-- [ ] SegmentedLog：append(records)→baseOffset、read(from, maxRecords)→batches、highWatermark；offset 单调性、批量原子性（CRC 校验失败即停，返回已确认水位）
-- [ ] 恢复逻辑（纯计算）：从字节流扫描合法批序列，忽略尾部半批/损坏批（崩溃恢复语义），返回恢复后的 log end offset
-- [ ] 单元测试：顺序写读、随机偏移读、损坏注入、恢复截断；双后端通过
+- [x] `core/log` 包：`SegmentFile` 注入接口（read/append/flush/size，Result 返回）；`MemorySegment` 实现（供测试与 wasm 后端复用）
+- [x] SegmentedLog：append(records)→baseOffset、read(from, maxRecords)→batches、highWatermark；offset 单调性、批量原子性（CRC 校验失败即停，返回已确认水位）
+- [x] 恢复逻辑（纯计算）：从字节流扫描合法批序列，忽略尾部半批/损坏批（崩溃恢复语义），返回恢复后的 log end offset
+- [x] 单元测试：顺序写读、随机偏移读、损坏注入、恢复截断；双后端通过

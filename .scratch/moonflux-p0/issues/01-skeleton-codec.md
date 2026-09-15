@@ -4,10 +4,10 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done (2026-09-15)
 
-- [ ] `moon.mod`（name=moonflux）+ 目录 `core/`、`adapters/`、`apps/` 成立，依赖方向 core ← adapters ← apps（adapters 暂可为空包占位）
-- [ ] `core/codec` 包：ULEB128/ZigZag 读取器（基于 BytesView 游标，越界/超长返回 Result 错误）、CRC32（IEEE，查表实现）、hex 编解码、大端定宽读写助手
-- [ ] 单元测试：每个原语有往返测试 + 边界（截断、最大值、非法输入）用例；内核包在 `--target native` 与 `--target wasm-gc` 双后端 `moon test` 通过
-- [ ] `moon info` 生成 `.mbti` 且提交；`moon fmt` 无 diff
-- [ ] `.gitignore`（_build 等）与首次提交
+- [x] `moon.mod`（name=moonflux）+ 目录 `core/`、`adapters/`、`apps/` 成立，依赖方向 core ← adapters ← apps（adapters 暂可为空包占位）
+- [x] `core/codec` 包：ULEB128/ZigZag 读取器（基于 BytesView 游标，越界/超长返回 Result 错误）、CRC32（IEEE，查表实现）、hex 编解码、大端定宽读写助手
+- [x] 单元测试：每个原语有往返测试 + 边界（截断、最大值、非法输入）用例；内核包在 `--target native` 与 `--target wasm-gc` 双后端 `moon test` 通过
+- [x] `moon info` 生成 `.mbti` 且提交；`moon fmt` 无 diff
+- [x] `.gitignore`（_build 等）与首次提交

@@ -4,11 +4,11 @@
 
 **Blocked by:** 03, 04.
 
-**Status:** ready-for-agent
+**Status:** done (2026-09-15)
 
-- [ ] `apps/cli` 可执行包（native），子命令解析（argparse 或手写薄解析）；`--data-dir` 默认 `./.moonflux-data`
-- [ ] 文件持久化 topic 日志：`data/topics/<t>/partition-0.log` + 写入前 CRC 批帧；重启后经恢复逻辑（03）继续追加（offset 续接）
-- [ ] framed 会话协议（magic+version+cmd+len）：ProduceBatch / FetchRequest / FetchResponse / Ok / Err；serve 为顺序单连接循环（P1 再做多路复用与并发）
-- [ ] consume 输出格式：每记录一行 `offset\ttimestamp\tkey\tvalue`（key 为空输出空串）；`--from` 支持从任意 offset 重放
-- [ ] `scripts/e2p-p0.sh`（命名 e2e-p0.sh）：生成确定性种子 → produce（本地与 remote 两种路径各跑一遍）→ consume → diff 断言；脚本可重复运行（幂等清理）
-- [ ] 集成测试（native）：内存注入句柄跑 append/read 往返（core 白盒已在 03 覆盖）；本 ticket 重点是 CLI 级集成与 E2E
+- [x] `apps/cli` 可执行包（native），子命令解析（argparse 或手写薄解析）；`--data-dir` 默认 `./.moonflux-data`
+- [x] 文件持久化 topic 日志：`data/topics/<t>/partition-0.log` + 写入前 CRC 批帧；重启后经恢复逻辑（03）继续追加（offset 续接）
+- [x] framed 会话协议（magic+version+cmd+len）：ProduceBatch / FetchRequest / FetchResponse / Ok / Err；serve 为顺序单连接循环（P1 再做多路复用与并发）
+- [x] consume 输出格式：每记录一行 `offset\ttimestamp\tkey\tvalue`（key 为空输出空串）；`--from` 支持从任意 offset 重放
+- [x] `scripts/e2p-p0.sh`（命名 e2e-p0.sh）：生成确定性种子 → produce（本地与 remote 两种路径各跑一遍）→ consume → diff 断言；脚本可重复运行（幂等清理）
+- [x] 集成测试（native）：内存注入句柄跑 append/read 往返（core 白盒已在 03 覆盖）；本 ticket 重点是 CLI 级集成与 E2E
