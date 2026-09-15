@@ -170,6 +170,23 @@ pub fn remove_file(path : String) -> Result[Unit, FsError] {
 }
 
 ///|
+/// Last modification time of `path` as nanoseconds since the epoch
+/// (used for rule hot-reload change detection; second granularity
+/// aliases rapid apply+reload cycles).
+pub fn mtime(path : String) -> Result[Int64, FsError] {
+  let bytes = match path_bytes(path) {
+    Ok(bytes) => bytes
+    Err(e) => return Err(e)
+  }
+  let n = fs_mtime(bytes, bytes.length())
+  if n < 0L {
+    Err(Io((-n).to_int(), "stat"))
+  } else {
+    Ok(n)
+  }
+}
+
+///|
 /// True when `path` exists.
 pub fn exists(path : String) -> Result[Bool, FsError] {
   let bytes = match path_bytes(path) {

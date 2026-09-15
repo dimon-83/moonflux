@@ -20,10 +20,11 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   println(
     "moonflux serve listening on \{host}:\{actual} (data dir \{data_dir})",
   )
+  let rules = RuleState::new()
   while true {
     match listener.accept() {
       Ok(stream) => {
-        handle_connection(stream, data_dir)
+        handle_connection(stream, data_dir, rules)
         let _ = stream.close()
       }
       Err(e) => fail("accept: \{e}")
@@ -34,7 +35,11 @@ fn cmd_serve(argv : Array[String]) -> Unit {
 ///|
 /// Handles one connection: sequential request frames until the peer
 /// closes. One reply frame per request.
-fn handle_connection(stream : @net.TcpStream, data_dir : String) -> Unit {
+fn handle_connection(
+  stream : @net.TcpStream,
+  data_dir : String,
+  rules : RuleState,
+) -> Unit {
   while true {
     match recv_session_frame(stream) {
       Ok(None) => return // peer closed
@@ -43,7 +48,9 @@ fn handle_connection(stream : @net.TcpStream, data_dir : String) -> Unit {
         let _ = send_session_frame(stream, reply.0, reply.1)
       }
       Ok(Some((CMD_FETCH, payload))) => {
-        let reply = dispatch_fetch(payload, data_dir)
+        // hot-reload checkpoint: picks up a freshly applied spec here
+        rules.sync(data_dir)
+        let reply = dispatch_fetch(payload, data_dir, rules)
         let _ = send_session_frame(stream, reply.0, reply.1)
       }
       Ok(Some((_, _))) => {
@@ -103,7 +110,11 @@ fn dispatch_produce(payload : Bytes, data_dir : String) -> (Int, Bytes) {
 }
 
 ///|
-fn dispatch_fetch(payload : Bytes, data_dir : String) -> (Int, Bytes) {
+fn dispatch_fetch(
+  payload : Bytes,
+  data_dir : String,
+  rules : RuleState,
+) -> (Int, Bytes) {
   let reader = @codec.Reader::new(payload)
   let topic = match read_topic_name(reader) {
     Ok(topic) => topic
@@ -126,10 +137,14 @@ fn dispatch_fetch(payload : Bytes, data_dir : String) -> (Int, Bytes) {
     Err(e) => return reply(CMD_ERR, error_payload("read: \{e}"))
   }
   // one batch frame carries the whole window; the client derives
-  // per-record offsets from its base offset
+  // per-record offsets from its base offset. The dynamic rule chain
+  // (mbel transforms) runs here, on the consumption path.
   let records : Array[@protocol.Record] = []
   for entry in entries {
-    records.push(entry.record)
+    match @transform.apply_chain(rules.chain, entry.record) {
+      Ok(record) => records.push(record)
+      Err(e) => return reply(CMD_ERR, error_payload("transform: \{e}"))
+    }
   }
   let base : Int64 = if records.length() > 0 { entries[0].offset } else { from }
   let frame = @protocol.encode_frame(base, records)

@@ -75,6 +75,19 @@ int mf_fs_remove(const uint8_t *buf, int len) {
   return unlink(path);
 }
 
+/* Nanosecond mtime for change detection: second granularity aliases
+ * rapid apply+reload cycles. Returns ns since epoch, or -errno. */
+int64_t mf_fs_mtime(const uint8_t *buf, int len) {
+  char path[4096];
+  if (len < 0 || len >= 4096) return -EINVAL;
+  memcpy(path, buf, len);
+  path[len] = 0;
+  struct stat st;
+  if (stat(path, &st) != 0) return -errno;
+  return (int64_t)st.st_mtimespec.tv_sec * 1000000000LL +
+         (int64_t)st.st_mtimespec.tv_nsec;
+}
+
 int mf_fs_truncate(int fd, int new_size) {
   if (ftruncate(fd, (off_t)new_size) != 0) return -errno;
   return 0;

@@ -163,6 +163,17 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
   let (spec, spec_json) = load_spec_doc(spec_path)
   let new_topology = @pipeline.compile(spec)
+  // publish-time static check: every transform must compile before
+  // the topology is persisted (AGENTS §8) — bad rules never apply
+  for t in spec.transforms {
+    let expr = match t {
+      ExprTransform(expr) => expr
+    }
+    match @transform.compile(expr) {
+      Ok(_) => ()
+      Err(e) => fail("transform '\{expr}' rejected: \{e}")
+    }
+  }
   match persist_applied(data_dir, new_topology.pipeline, spec_json) {
     Ok(_) => ()
     Err(e) => fail(e)
