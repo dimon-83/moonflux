@@ -43,7 +43,7 @@ pub(all) struct SegmentFile {
   /// Appends bytes; returns the new total size.
   append : (Bytes) -> Result[Int, LogError]
   /// Current file size in bytes.
-  size : () -> Int
+  size : () -> Result[Int, LogError]
   /// Durably persists appended bytes (may be a no-op for memory).
   flush : () -> Result[Unit, LogError]
   /// Cuts the file to `new_size` bytes (crash recovery truncates
@@ -84,7 +84,7 @@ pub fn MemorySegment::handle(self : MemorySegment) -> SegmentFile {
       Ok(self.data.length())
     },
     size: fn() {
-      self.data.length()
+      Ok(self.data.length())
     },
     flush: fn() {
       Ok(())
@@ -116,7 +116,10 @@ pub struct SegmentedLog {
 /// truncated away, matching crash semantics: an append either fully
 /// survived or is entirely lost.
 pub fn SegmentedLog::open(file : SegmentFile) -> Result[SegmentedLog, LogError] {
-  let size = (file.size)()
+  let size = match (file.size)() {
+    Ok(size) => size
+    Err(e) => return Err(e)
+  }
   let bytes = match (file.read)(0, size) {
     Ok(bytes) => bytes
     Err(e) => return Err(e)

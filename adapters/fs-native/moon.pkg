@@ -1,0 +1,24 @@
+// adapters/fs-native: POSIX file IO for the native target via libc
+// FFI + C shims. Thin by design: every function maps one operation
+// onto one syscall; higher-level logic lives in core or apps.
+//
+// Mode constants are translated inside the C shim so MoonBit never
+// hard-codes platform-specific O_* flag values.
+//
+// This package is pinned to the native target: on any other backend
+// the dependency graph fails fast at compile time (AGENTS 金规则 2).
+
+options(
+  "native-stub": ["fs_shim.c"],
+)
+
+supported_targets = "native"
+
+import {
+  "moonbitlang/core/encoding/utf8" @utf8,
+  "moonflux/core/log" @log,
+}
+
+import {
+  "moonflux/core/protocol" @protocol,
+} for "wbtest"

@@ -1,0 +1,17 @@
+// adapters/net-native: blocking TCP sockets for the native target
+// via libc FFI + C shims. Thin by design: connect/accept/send/recv/
+// close map one-to-one onto syscalls; protocol framing lives in
+// core/protocol, servers live in apps.
+//
+// The C shim owns getaddrinfo and SO_REUSEADDR so MoonBit never
+// hard-codes platform networking details.
+
+options(
+  "native-stub": ["net_shim.c"],
+)
+
+supported_targets = "native"
+
+import {
+  "moonbitlang/core/encoding/utf8" @utf8,
+}

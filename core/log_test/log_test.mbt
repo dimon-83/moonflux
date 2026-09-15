@@ -41,7 +41,7 @@ test "empty append writes nothing" {
     Err(_) => abort("unreachable")
   }
   assert_eq(l.append([]), Ok(0L))
-  assert_eq((mem.handle().size)(), 0)
+  assert_eq((mem.handle().size)(), Ok(0))
   assert_eq(l.high_watermark(), 0L)
 }
 
@@ -72,7 +72,7 @@ test "recovery truncates a torn tail and keeps committed records" {
   let full = @protocol.encode_frame(3L, [rec("x"), rec("y")])
   let torn = full[0:full.length() / 2].to_owned()
   let _ = (crash_handle.append)(torn)
-  assert_true((mem.handle().size)() > committed.length())
+  assert_true((mem.handle().size)() is Ok(size) && size > committed.length())
   // reopen must recover exactly the committed prefix
   let recovered = match @log.SegmentedLog::open(mem.handle()) {
     Ok(l) => l
@@ -81,7 +81,7 @@ test "recovery truncates a torn tail and keeps committed records" {
   assert_eq(recovered.high_watermark(), 3L)
   assert_eq(recovered.read(0, 10), Ok([rec("a"), rec("b"), rec("c")]))
   // the torn tail was truncated; the next append starts clean
-  assert_eq((mem.handle().size)(), committed.length())
+  assert_eq((mem.handle().size)(), Ok(committed.length()))
   assert_eq(recovered.append([rec("d")]), Ok(3L))
   assert_eq(recovered.read(3, 10), Ok([rec("d")]))
 }
