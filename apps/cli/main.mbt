@@ -133,24 +133,23 @@ fn main {
 }
 
 ///|
-/// Topic names are path components: whitelist characters to keep the
-/// data dir traversal-proof.
+/// Topic names are path components. The whitelist lives in core/spec
+/// (single truth, golden rule 7) so CLI-created topics and
+/// spec-validated topics can never diverge; it keeps the data dir
+/// traversal-proof.
 fn valid_topic(topic : String) -> Bool {
-  if topic.length() == 0 || topic.length() > 128 {
-    return false
+  @spec.valid_topic_name(topic)
+}
+
+///|
+/// Splits "host:port" (IPv4/name only for P1).
+fn parse_listen_addr(addr : String) -> (String, Int) {
+  match addr.rev_split_once(":") {
+    Some((host, port)) =>
+      match (try? @string.parse_int(port[0:port.length()])) {
+        Ok(port) => (host.to_owned(), port)
+        Err(_) => fail("bad port in --listen/--remote \{addr}")
+      }
+    None => fail("expected host:port, got \{addr}")
   }
-  let mut ok = true
-  for i in 0..<topic.length() {
-    let c = topic[i]
-    let good = (c >= 48 && c <= 57) ||
-      (c >= 65 && c <= 90) ||
-      (c >= 97 && c <= 122) ||
-      c == 45 ||
-      c == 46 ||
-      c == 95
-    if not(good) {
-      ok = false
-    }
-  }
-  ok
 }

@@ -73,40 +73,17 @@ fn produce_remote(topic : String, file : String, addr : String) -> Unit {
     Err(e) => fail(e)
   }
   let (host, port) = parse_listen_addr(addr)
-  let stream = match @net.TcpStream::connect(host, port) {
-    Ok(stream) => stream
+  let producer = match @client.Producer::connect(host, port) {
+    Ok(producer) => producer
     Err(e) => fail("connect \{host}:\{port}: \{e}")
   }
-  // payload: topic name + batch frame with unassigned base offset
-  let batch = @protocol.encode_frame(-1L, records)
-  let payload = Buffer::Buffer()
-  let topic_bytes = @utf8.encode(topic[0:topic.length()])
-  payload.write_leb128(topic_bytes.length())
-  payload.write_bytes(topic_bytes[0:topic_bytes.length()])
-  payload.write_bytes(batch[0:batch.length()])
-  match send_session_frame(stream, CMD_PRODUCE, payload.to_bytes()) {
-    Ok(_) => ()
-    Err(e) => fail(e)
+  match producer.send(topic, records) {
+    Ok((base, count)) =>
+      println(
+        "produced \{count} records to topic \{topic} at offsets \{base}..\{base + count.to_int64()}",
+      )
+    Err(e) => fail("send: \{e}")
   }
-  let reply = match recv_session_frame(stream) {
-    Ok(Some((CMD_OK, payload))) => payload
-    Ok(Some((CMD_ERR, payload))) =>
-      fail("server: \{@utf8.decode_lossy(payload[0:payload.length()])}")
-    Ok(_) => fail("unexpected reply")
-    Err(e) => fail(e)
-  }
-  let reader = @codec.Reader::new(reply)
-  let base = match reader.read_i64_be() {
-    Ok(base) => base
-    Err(_) => fail("bad produce reply")
-  }
-  let count = match reader.read_u32_be() {
-    Ok(count) => count.reinterpret_as_int()
-    Err(_) => fail("bad produce reply")
-  }
-  println(
-    "produced \{count} records to topic \{topic} at offsets \{base}..\{base + count.to_int64()}",
-  )
-  let _ = stream.close()
+  producer.close()
   cli_exit(0)
 }

@@ -33,43 +33,116 @@ fn cmd_serve(argv : Array[String]) -> Unit {
 }
 
 ///|
-/// Handles one connection: sequential request frames until the peer
-/// closes. One reply frame per request.
+/// Handles one connection: v2 handshake first, then sequential
+/// request frames until the peer closes. One reply frame per request
+/// with the request id echoed.
 fn handle_connection(
   stream : @net.TcpStream,
   data_dir : String,
   rules : RuleState,
 ) -> Unit {
+  let conn = @client.Conn::from_stream(stream)
+  // handshake: HELLO must be the first frame; the major version
+  // decides whether the session may proceed
+  let hello = match conn.recv_first() {
+    @client.Got(frame) => frame
+    @client.Eof => return
+    @client.WrongVersion(version) => {
+      // a v1-era peer gets a structured rejection, never a silent drop
+      let _ = conn.send_frame(
+        @client.Frame::{
+          cmd: @client.CMD_ERR,
+          rid: 0,
+          payload: @client.encode_error(
+            @client.ERR_UNSUPPORTED_VERSION,
+            "server speaks frame version \{@client.PROTOCOL_VERSION}; peer sent \{version}",
+          ),
+        },
+      )
+      return
+    }
+    @client.Garbage(msg) => {
+      let _ = conn.send_frame(
+        @client.Frame::{
+          cmd: @client.CMD_ERR,
+          rid: 0,
+          payload: @client.encode_error(@client.ERR_BAD_PAYLOAD, msg),
+        },
+      )
+      return
+    }
+  }
+  if hello.cmd != @client.CMD_HELLO {
+    let _ = conn.send_frame(
+      @client.Frame::{
+        cmd: @client.CMD_ERR,
+        rid: hello.rid,
+        payload: @client.encode_error(
+          @client.ERR_SEQUENCE,
+          "handshake required: send HELLO first",
+        ),
+      },
+    )
+    return
+  }
+  let (major, minor) = match @client.decode_hello(hello.payload) {
+    Ok(parts) => parts
+    Err(e) => {
+      let _ = conn.send_frame(
+        @client.Frame::{
+          cmd: @client.CMD_ERR,
+          rid: hello.rid,
+          payload: @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+        },
+      )
+      return
+    }
+  }
+  if major != 1 {
+    let _ = conn.send_frame(
+      @client.Frame::{
+        cmd: @client.CMD_ERR,
+        rid: hello.rid,
+        payload: @client.encode_error(
+          @client.ERR_UNSUPPORTED_VERSION,
+          "server speaks major version 1 (frames v2); client sent \{major}",
+        ),
+      },
+    )
+    return
+  }
+  let _ = conn.send_frame(
+    @client.Frame::{
+      cmd: @client.CMD_WELCOME,
+      rid: hello.rid,
+      payload: @client.encode_hello(1, 0),
+    },
+  )
+  let _ = minor
   while true {
-    match recv_session_frame(stream) {
+    let frame = match conn.recv_frame() {
+      Ok(Some(frame)) => frame
       Ok(None) => return // peer closed
-      Ok(Some((CMD_PRODUCE, payload))) => {
-        let reply = dispatch_produce(payload, data_dir)
-        let _ = send_session_frame(stream, reply.0, reply.1)
-      }
-      Ok(Some((CMD_FETCH, payload))) => {
+      Err(_) => return
+    }
+    let reply = match frame.cmd {
+      @client.CMD_PRODUCE => dispatch_produce(frame.payload, data_dir)
+      @client.CMD_FETCH => {
         // hot-reload checkpoint: picks up a freshly applied spec here
         rules.sync(data_dir)
-        let reply = dispatch_fetch(payload, data_dir, rules)
-        let _ = send_session_frame(stream, reply.0, reply.1)
+        dispatch_fetch(frame.payload, data_dir, rules)
       }
-      Ok(Some((_, _))) => {
-        let _ = send_session_frame(
-          stream,
-          CMD_ERR,
-          @utf8.encode("unknown command"[0:14]),
-        )
-        return
-      }
-      Err(e) => {
-        // framed bytes arrived but were unintelligible: report and cut
-        let _ = send_session_frame(
-          stream,
-          CMD_ERR,
-          @utf8.encode(e[0:e.length()]),
-        )
-        return
-      }
+      other => (
+        @client.CMD_ERR,
+        @client.encode_error(
+          @client.ERR_UNKNOWN_COMMAND,
+          "unknown command \{other}",
+        ),
+      )
+    }
+    match conn.send_frame(@client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1 }) {
+      Ok(_) => ()
+      Err(_) => return
     }
   }
 }
@@ -80,33 +153,39 @@ fn reply(cmd : Int, payload : Bytes) -> (Int, Bytes) {
 }
 
 ///|
+/// Structured error reply with a stable code (client-visible).
+fn err_reply(code : Int, msg : String) -> (Int, Bytes) {
+  reply(@client.CMD_ERR, @client.encode_error(code, msg))
+}
+
+///|
 fn dispatch_produce(payload : Bytes, data_dir : String) -> (Int, Bytes) {
   let reader = @codec.Reader::new(payload)
   let topic = match read_topic_name(reader) {
     Ok(topic) => topic
-    Err(e) => return reply(CMD_ERR, error_payload(e))
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
   }
   let rest = reader.remaining()
   let frame = match reader.read_bytes(rest) {
     Ok(frame) => frame
-    Err(_) => return reply(CMD_ERR, error_payload("bad produce payload"))
+    Err(_) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad produce payload")
   }
   let records = match @protocol.decode_frame_strict(frame) {
     Ok(batch) => batch.records
-    Err(e) => return reply(CMD_ERR, error_payload("bad batch: \{e}"))
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad batch: \{e}")
   }
   let log = match open_topic_log(data_dir, topic) {
     Ok(log) => log
-    Err(e) => return reply(CMD_ERR, error_payload(e))
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
   }
   let base = match log.append(records) {
     Ok(base) => base
-    Err(e) => return reply(CMD_ERR, error_payload("append: \{e}"))
+    Err(e) => return err_reply(@client.ERR_STORAGE, "append: \{e}")
   }
   let out = Buffer::Buffer()
   out.write_int64_be(base)
   out.write_uint_be(records.length().reinterpret_as_uint())
-  reply(CMD_OK, out.to_bytes())
+  reply(@client.CMD_OK, out.to_bytes())
 }
 
 ///|
@@ -118,23 +197,23 @@ fn dispatch_fetch(
   let reader = @codec.Reader::new(payload)
   let topic = match read_topic_name(reader) {
     Ok(topic) => topic
-    Err(e) => return reply(CMD_ERR, error_payload(e))
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
   }
   let from = match reader.read_i64_be() {
     Ok(from) => from
-    Err(_) => return reply(CMD_ERR, error_payload("bad fetch payload"))
+    Err(_) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad fetch payload")
   }
   let max = match reader.read_u32_be() {
     Ok(max) => max.reinterpret_as_int()
-    Err(_) => return reply(CMD_ERR, error_payload("bad fetch payload"))
+    Err(_) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad fetch payload")
   }
   let log = match open_topic_log(data_dir, topic) {
     Ok(log) => log
-    Err(e) => return reply(CMD_ERR, error_payload(e))
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
   }
   let entries = match log.read(from, max) {
     Ok(entries) => entries
-    Err(e) => return reply(CMD_ERR, error_payload("read: \{e}"))
+    Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
   }
   // one batch frame carries the whole window; the client derives
   // per-record offsets from its base offset. The dynamic rule chain
@@ -143,7 +222,7 @@ fn dispatch_fetch(
   for entry in entries {
     match @transform.apply_chain(rules.chain, entry.record) {
       Ok(record) => records.push(record)
-      Err(e) => return reply(CMD_ERR, error_payload("transform: \{e}"))
+      Err(e) => return err_reply(@client.ERR_TRANSFORM, "transform: \{e}")
     }
   }
   let base : Int64 = if records.length() > 0 { entries[0].offset } else { from }
@@ -152,7 +231,7 @@ fn dispatch_fetch(
   out.write_uint_be(1U)
   out.write_uint_be(frame.length().reinterpret_as_uint())
   out.write_bytes(frame[0:frame.length()])
-  reply(CMD_OK, out.to_bytes())
+  reply(@client.CMD_OK, out.to_bytes())
 }
 
 ///|
@@ -175,7 +254,4 @@ fn read_topic_name(reader : @codec.Reader) -> Result[String, String] {
   Ok(topic)
 }
 
-///|
-fn error_payload(msg : String) -> Bytes {
-  @utf8.encode(msg[0:msg.length()])
-}
+

@@ -63,53 +63,17 @@ fn consume_local(topic : String, from : Int64, data_dir : String) -> Unit {
 ///|
 fn consume_remote(topic : String, from : Int64, addr : String) -> Unit {
   let (host, port) = parse_listen_addr(addr)
-  let stream = match @net.TcpStream::connect(host, port) {
-    Ok(stream) => stream
+  let consumer = match @client.Consumer::connect(host, port) {
+    Ok(consumer) => consumer
     Err(e) => fail("connect \{host}:\{port}: \{e}")
   }
-  let topic_bytes = @utf8.encode(topic[0:topic.length()])
-  let payload = Buffer::Buffer()
-  payload.write_leb128(topic_bytes.length())
-  payload.write_bytes(topic_bytes[0:topic_bytes.length()])
-  payload.write_int64_be(from)
-  payload.write_uint_be(1000000U)
-  match send_session_frame(stream, CMD_FETCH, payload.to_bytes()) {
-    Ok(_) => ()
-    Err(e) => fail(e)
+  let entries = match consumer.fetch(topic, from, 1000000) {
+    Ok(entries) => entries
+    Err(e) => fail("fetch: \{e}")
   }
-  let reply = match recv_session_frame(stream) {
-    Ok(Some((CMD_OK, payload))) => payload
-    Ok(Some((CMD_ERR, payload))) =>
-      fail("server: \{@utf8.decode_lossy(payload[0:payload.length()])}")
-    Ok(_) => fail("unexpected reply")
-    Err(e) => fail(e)
+  for entry in entries {
+    print_entry(entry)
   }
-  // payload: u32 batch_count + repeat(u32 frame_len + batch frame)
-  let reader = @codec.Reader::new(reply)
-  let batch_count = match reader.read_u32_be() {
-    Ok(count) => count.reinterpret_as_int()
-    Err(_) => fail("bad fetch reply")
-  }
-  for _i in 0..<batch_count {
-    let frame_len = match reader.read_u32_be() {
-      Ok(len) => len.reinterpret_as_int()
-      Err(_) => fail("bad fetch reply")
-    }
-    let frame = match reader.read_bytes(frame_len) {
-      Ok(frame) => frame
-      Err(_) => fail("bad fetch reply")
-    }
-    match @protocol.decode_frame_strict(frame) {
-      Ok(batch) => {
-        let mut offset = batch.base_offset
-        for record in batch.records {
-          print_entry(@log.LogEntry::{ offset, record })
-          offset += 1L
-        }
-      }
-      Err(e) => fail("bad batch in fetch reply: \{e}")
-    }
-  }
-  let _ = stream.close()
+  consumer.close()
   cli_exit(0)
 }

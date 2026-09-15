@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/client: moonflux client SDK (protocol v2, native transport).
+
+supported_targets = "native"
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8" @utf8,
+  "moonflux/core/codec" @codec,
+  "moonflux/core/log" @log,
+  "moonflux/core/protocol" @protocol,
+  "moonflux/adapters/net-native" @net,
+}

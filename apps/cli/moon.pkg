@@ -9,6 +9,7 @@ import {
   "moonflux/core/pipeline",
   "moonflux/core/protocol",
   "moonflux/core/spec",
+  "moonflux/apps/client" @client,
   "moonflux/apps/connectors" @connectors,
   "moonflux/apps/transform" @transform,
   "moonflux/adapters/fs-native" @fs,
