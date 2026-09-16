@@ -1,0 +1,4 @@
+// Blackbox tests for moonflux/core/cluster.
+import {
+  "moonflux/core/cluster",
+}

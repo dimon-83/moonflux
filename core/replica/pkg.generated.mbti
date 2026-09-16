@@ -1,0 +1,95 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/replica"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub const DEFAULT_MAX_LAG : Int64 = 1024
+
+pub fn check_read(OffsetInfo, ReadMode, Int64, Int) -> Result[Unit, ReplicaError]
+
+pub fn elect_candidate(ProgressLedger, LrsPolicy, String) -> String?
+
+pub fn follow(ReplicaState, String) -> ReplicaState
+
+pub fn has_vote(ProgressLedger, LrsPolicy, String) -> Bool
+
+pub fn lag_of(ProgressLedger, String) -> Int64?
+
+pub fn lrs_members(ProgressLedger, LrsPolicy) -> Array[String]
+
+pub fn promote(ReplicaState, Nomination) -> Result[ReplicaState, ReplicaError]
+
+pub fn read_limit(OffsetInfo, ReadMode) -> Int64
+
+pub fn resolve_rejoin(Int64, Int64) -> RejoinPlan
+
+// Errors
+pub(all) suberror ReplicaError {
+  BadReplicaSet(String)
+  BadProgress(String)
+  IllegalTransition(String)
+  OutOfRange(String)
+}
+pub impl Show for ReplicaError
+
+// Types and methods
+pub(all) struct LrsPolicy {
+  max_lag_records : Int64
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct Nomination {
+  partition_leader : String
+  candidate : String
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct OffsetInfo {
+  high_watermark : Int64
+  log_end_offset : Int64
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct ProgressLedger {
+  leader : String
+  replicas : Array[ReplicaProgress]
+} derive(Eq, Show, @debug.Debug)
+pub fn ProgressLedger::advance_leader(Self, Int64) -> Result[Unit, ReplicaError]
+pub fn ProgressLedger::high_watermark(Self) -> Int64
+pub fn ProgressLedger::leader_leo(Self) -> Int64
+pub fn ProgressLedger::new(String, Array[ReplicaProgress]) -> Result[Self, ReplicaError]
+pub fn ProgressLedger::observe(Self, String, Int64) -> Result[Unit, ReplicaError]
+pub fn ProgressLedger::offset_info(Self) -> OffsetInfo
+
+pub(all) enum ReadMode {
+  Committed
+  Uncommitted
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) enum RejoinPlan {
+  CatchUp(Int64)
+  TruncateTo(Int64)
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct ReplicaProgress {
+  spu : String
+  leo : Int64
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct ReplicaState {
+  spu : String
+  role : Role
+  leader : String?
+} derive(Eq, Show, @debug.Debug)
+pub fn ReplicaState::follower(String, String) -> Self
+
+pub(all) enum Role {
+  Follower
+  Candidate
+  Leader
+} derive(Eq, Show, @debug.Debug)
+
+// Type aliases
+
+// Traits
+

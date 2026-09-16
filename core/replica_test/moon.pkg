@@ -1,0 +1,4 @@
+// Blackbox tests for moonflux/core/replica.
+import {
+  "moonflux/core/replica",
+}

@@ -44,9 +44,11 @@
 
 | 资产 | 位置 | 说明 |
 | :--- | :--- | :--- |
-| **项目规约** | [`AGENTS.md`](AGENTS.md) | 项目章程：金规则 7 条 / 内核红线 / 验证流程 / 对标参考使用规则 / 不做清单 |
+| **项目规约** | [`AGENTS.md`](AGENTS.md) | 项目章程：金规则 7 条 / 内核红线 / 验证流程 / 对标参考使用规则 / 不做清单 / 文档规范（§10） |
 | **立项评估报告 v1.6** | [`docs/fluvio-moonbit-evaluation.md`](docs/fluvio-moonbit-evaluation.md) | 七章：Fluvio 全景 / 功能详解 / 分层路径与能力缺口 / Native×WASM 后端 / mbel 评估 / 可视化编辑器 / 结论路线图 |
 | 对标参考工作规约 | [`docs/fluvio-reference-guide.md`](docs/fluvio-reference-guide.md) | 在 Fluvio 参考仓库内作业（研究/对照/互操作测试）时的 agent 硬规则（自 fluvio 仓库迁入） |
+| 兼容性矩阵 | [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) | 每个对标语义的验证状态与证据入口（图例单一真相） |
+| 算子沙箱取证 | [`docs/p2-wasm-host-spike.md`](docs/p2-wasm-host-spike.md) | wasmtime 进程内宿主的探针实证与落地实录（类型镜像尺寸、后台编译 panic） |
 | CLI 命令工具规划 | [`docs/cli-roadmap.md`](docs/cli-roadmap.md) | 命令面现状盘点 + 对标 Fluvio CLI 的分阶段映射（决策 13） |
 | mbel 表达式引擎 | [`../mbel`](../mbel) | v0.3.3；moonflux 动态规则层的候选内核（评估与生产化清单见报告第五章） |
 | mbel-orch 设计文档 | [`../mbel-orch`](../mbel-orch) | 函数管理与分发平台（设计阶段，可作为 moonflux 算子/插件分发体系的设计参考） |
@@ -71,7 +73,7 @@
 ```
 moonflux/
 ├── README.md              # 本文件：项目定义
-├── AGENTS.md              # 项目规约（章程：金规则 / 内核红线 / 验证流程）
+├── AGENTS.md              # 项目规约（章程：金规则 / 内核红线 / 验证流程 / 文档规范）
 ├── docs/                  # 评估报告与设计文档
 ├── core/                  # 内核：codec / protocol / 算子语义 / 存储 / 复制状态机（全后端可编译）
 ├── adapters/              # abi-wasm / net-native / net-js / fs-native（单目标薄适配）
@@ -107,7 +109,7 @@ moonflux/
 - [x] P1 达成：mbel 表达式 transforms 接入消费路径 + 版本化协议服务化 + 连接器框架（2026-09-15）
 - [x] P2 达成：算子 guest SDK + ABI v1 + wasmtime 进程内宿主 + native-vs-wasm 对拍门禁（2026-09-16）
 - [ ] P3 启动：复制（ISR 等价语义）+ 选主 + 元数据调和；多分区 / 并发连接；算子管理 CLI 雏形（见 [`docs/cli-roadmap.md`](docs/cli-roadmap.md)）
-- [x] 生成项目规约 [`AGENTS.md`](AGENTS.md)（2026-09-15）；随代码结构落地更新其目录与命令章节
+- [x] 生成项目规约 [`AGENTS.md`](AGENTS.md)（2026-09-15）；随代码结构落地更新其目录与命令章节（2026-09-16 补 §10 文档规范）
 
 ---
 

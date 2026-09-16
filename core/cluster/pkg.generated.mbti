@@ -1,0 +1,67 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/cluster"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn apply_actions(ClusterState, Array[Action]) -> ClusterState
+
+pub fn canonical_state(ClusterState) -> ClusterState
+
+pub fn place(String, Int, Int, Array[String]) -> Array[String]
+
+pub fn reconcile(ClusterState, ClusterSpec) -> Result[Array[Action], ClusterError]
+
+pub fn validate_spec(ClusterSpec) -> Result[Unit, ClusterError]
+
+// Errors
+pub(all) suberror ClusterError {
+  InvalidSpec(String)
+  InsufficientNodes(String)
+}
+pub impl Show for ClusterError
+
+// Types and methods
+pub(all) enum Action {
+  PlacePartition(PartitionId, Array[String])
+  AssignLeader(PartitionId, String)
+  RemovePartition(PartitionId)
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct ClusterSpec {
+  topics : Array[TopicSpec]
+  spus : Array[SpuSpec]
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct ClusterState {
+  partitions : Array[ReplicaSet]
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct PartitionId {
+  topic : String
+  index : Int
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct ReplicaSet {
+  partition : PartitionId
+  leader : String
+  replicas : Array[String]
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct SpuSpec {
+  id : String
+  address : String
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct TopicSpec {
+  name : String
+  partitions : Int
+  replication_factor : Int
+} derive(Eq, Show, @debug.Debug)
+
+// Type aliases
+
+// Traits
+

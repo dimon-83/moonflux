@@ -1,0 +1,6 @@
+// core/cluster: the control plane's kernel side (P3).
+// Pure computation; compiles for every target.
+
+import {
+  "moonflux/core/spec",
+}

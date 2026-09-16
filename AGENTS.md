@@ -93,7 +93,7 @@ moonflux/
 - [ ] 涉及 codec/算子：golden vectors 对拍通过；涉及执行路径：预算与超时行为测试通过
 - [ ] 生成物一致性：`tools/gen_*.py --check` 全部 up to date（**改数据文件后必须重跑生成器**；生成器按 `moon fmt` 排版输出，故 fmt 对生成文件是 no-op）
 - [ ] 涉及集成（mbel / 参考系统互操作）：附可复现脚本与对照输出
-- [ ] 文档同步：README / 报告章节 / 本文件金规则表（如决策有变更并注明依据）
+- [ ] 文档同步：README / 报告章节 / 本文件金规则表（如决策有变更并注明依据；规范见 §10）
 
 ## 7. 对标参考系统（Fluvio）使用规则
 
@@ -126,7 +126,40 @@ moonflux/
 - ❌ UI 先于 spec（编辑器永远渲染 spec，不反向定义规范）。
 - ❌ 未经对拍就声称"与参考实现一致"；❌ 无门禁数据就推进阶段。
 
-## 10. 资产索引
+## 10. 文档规范（文档资产与写作规则）
+
+> 本规范是 §5（台账）、§6（文档同步）、§7（留痕）在文档面的展开；规则取自仓库既有实践，新增/修改文档一律按此执行。
+
+**文档分层与单一真相**（同一事实只有一个权威位置，其他位置链接引用、不复制）：
+
+| 文档类型 | 位置 | 权威内容 |
+| :--- | :--- | :--- |
+| 项目定义 | [README.md](README.md) | 定位 / 能力对标 / 范围 / 路线图 / **关键决策记录** / 待办 |
+| 工作规约 | 本文件（AGENTS.md） | 金规则 / 内核红线 / 验证流程 / 文档规范等执行纪律（§1–§10） |
+| 立项评估报告 | [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md) | 对标事实：§2 功能实录、§4 后端、§5 mbel、§6 编辑器 |
+| 参考系统作业规则 | [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md) | 在 `~/workspace/fluvio` 内的 agent 硬规则 |
+| 对标语义台账 | [docs/compatibility-matrix.md](docs/compatibility-matrix.md) | 每条对标语义的验证状态与证据入口（状态图例的单一真相） |
+| 规划类 | `docs/*-roadmap.md`（实例 [cli-roadmap.md](docs/cli-roadmap.md)） | 分阶段映射、边界声明、勘误清单 |
+| 实证类 | `docs/*-spike.md`（实例 [p2-wasm-host-spike.md](docs/p2-wasm-host-spike.md)） | 探针命令与输出、选型依据、落地回填 |
+| 工作项（ticket） | `.scratch/moonflux-p{N}/issues/NN-slug.md` | What to build / Blocked by / Status / 勾选清单 |
+
+- **命名与登记**：文档文件名 kebab-case 英文，`docs/` 平铺；ticket 编号 `NN` **跨阶段全局连续**（P0=01–08、P1=09–13、P2=14–18，不按阶段重号）。新增文档必须**同时登记两处资产索引**（README「资产索引」与 §11）：只建文件不登记 = 未完成；文档头部为一级标题 + `>` 引言块（定位 / 规约依据 / 边界声明）。
+- **引用规范**：引用报告用「报告 §x.y」；引用决策用「README 决策 N」；引用规约用「AGENTS.md §N」；引用代码用 `路径:符号名`（如 `apps/cli/main.mbt` 的 `usage()`）。**不引用易漂移的行号**；表格单元格内的 `|` 必须转义为 `\|`；图示用 mermaid 代码块（实例：报告 §4.5.1）。
+- **证据与状态**：论断必须可证伪——附脚本路径（`scripts/e2e-*.sh`）、测试 / golden 向量入口、或探针命令与原始输出；禁用"看起来能跑"式结论（§2）。对标语义状态统一用 ✅ 对拍通过 / ⚠️ 部分验证 / ⏳ 未验证 图例（compatibility-matrix 为单一真相）。日期一律 `YYYY-MM-DD`；报告与规划类文档首部标注日期 / 版本。
+- **留痕与同步**（变更时按表执行）：
+
+| 变更类型 | 必须同步 |
+| :--- | :--- |
+| 语义借鉴 / 架构选型 | README「关键决策记录」（编号 + 日期 + 报告章节依据；§7） |
+| 金规则变更 | README「关键决策记录」+ 本文件 §1（规则表与依据列） |
+| 阶段 / 门禁状态变化 | README 路线图 + §2 阶段表（涉评估结论时同步报告） |
+| 新增 / 变更对标语义 | compatibility-matrix 入表或状态迁移（附证据入口） |
+| 命令面 / 目录结构变化 | §3 目录与包结构；（如涉及 CLI）回填 `docs/cli-roadmap.md` |
+| 新增文档 | 两处资产索引登记 |
+
+- **维护**：文档尾部可带「维护规则」段（实例：compatibility-matrix、cli-roadmap）；发现的缺陷先在所在文档记录（勘误表 / 备注），修复按 ticket 追踪；实证类文档在选型落地后**回填**「落地实录」，保持文档与实现一致（实例：p2-wasm-host-spike.md）。
+
+## 11. 资产索引
 
 | 资产 | 位置 | 说明 |
 | :--- | :--- | :--- |

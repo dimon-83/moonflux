@@ -1,0 +1,2 @@
+// core/replica: replication semantics (LEO/HW/LRS, roles, rejoin).
+// Pure computation; compiles for every target.
