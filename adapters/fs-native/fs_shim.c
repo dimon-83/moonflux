@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <stdio.h>
 #include <fcntl.h>
 #include <string.h>
 #include <stdint.h>
@@ -70,6 +71,28 @@ int mf_fs_mkdirs(const uint8_t *buf, int len) {
     }
   }
   if (mkdir(path, 0755) != 0 && errno != EEXIST) return -errno;
+  return 0;
+}
+
+/*
+ * Atomically replaces `to` with `from`. Callers write a temporary
+ * file and rename it into place, so a reader never observes a
+ * half-written document.
+ */
+int mf_fs_rename(const uint8_t *from, int from_len, const uint8_t *to,
+                 int to_len) {
+  char fromz[1024];
+  char toz[1024];
+  if (from_len < 0 || from_len >= 1024 || to_len < 0 || to_len >= 1024) {
+    return -EINVAL;
+  }
+  memcpy(fromz, from, from_len);
+  fromz[from_len] = 0;
+  memcpy(toz, to, to_len);
+  toz[to_len] = 0;
+  if (rename(fromz, toz) < 0) {
+    return -errno;
+  }
   return 0;
 }
 

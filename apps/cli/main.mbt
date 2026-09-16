@@ -45,7 +45,9 @@ fn usage() -> Unit {
     "  spu      --id A --listen host:port [--data-dir D] [--sc host:port]",
   )
   println("  sc       --listen host:port [--data-dir D]")
+  println("  topic    create|list|delete ...")
   println("  cluster  nodes   --remote host:port")
+  println("  cluster  status  --remote host:port")
   println("  cluster  leader  --topic T --remote host:port")
   println("  cluster  offsets --topic T --remote <leader>")
   cli_exit(1)
@@ -130,7 +132,8 @@ fn main {
     text == "pipeline" ||
     text == "spu" ||
     text == "sc" ||
-    text == "cluster"
+    text == "cluster" ||
+    text == "topic"
   }
 
   let start = if args.length() > 0 && is_command(args[0]) {
@@ -153,6 +156,7 @@ fn main {
     "spu" => cmd_spu(rest)
     "sc" => cmd_sc(rest)
     "cluster" => cmd_cluster(rest)
+    "topic" => cmd_topic(rest)
     _ => usage()
   }
 }

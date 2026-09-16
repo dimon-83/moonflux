@@ -19,9 +19,13 @@ fn cmd_cluster(argv : Array[String]) -> Unit {
   }
   match verb {
     "nodes" => cluster_nodes(rest)
+    "status" => cluster_status(rest)
     "leader" => cluster_leader(rest)
     "offsets" => cluster_offsets(rest)
-    _ => fail("cluster: unknown verb '\{verb}' (known: nodes, leader, offsets)")
+    _ =>
+      fail(
+        "cluster: unknown verb '\{verb}' (known: nodes, status, leader, offsets)",
+      )
   }
 }
 
@@ -99,5 +103,91 @@ fn cluster_offsets(argv : Array[String]) -> Unit {
     Err(e) => fail("cluster offsets: \{e}")
   }
   println("\{hw} \{leo}")
+  cli_exit(0)
+}
+
+///|
+/// `moonflux cluster status --remote <control plane>` — the operator's
+/// one-screen view: the nodes it can see, the topics declared, and who
+/// leads each partition. It asks the control plane for the placement
+/// and each leader for its watermarks, so the numbers are the leaders'
+/// own rather than the control plane's memory of them.
+fn cluster_status(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let remote = flags.require("remote")
+  let nodes_payload = match control_call(remote, @client.CMD_NODES, b"") {
+    Ok(payload) => payload
+    Err(e) => fail("cluster status: \{e}")
+  }
+  let nodes = match @client.decode_nodes(nodes_payload) {
+    Ok(nodes) => nodes
+    Err(e) => fail("cluster status: \{e}")
+  }
+  let topics_payload = match control_call(remote, @client.CMD_TOPIC_LIST, b"") {
+    Ok(payload) => payload
+    Err(e) => fail("cluster status: \{e}")
+  }
+  let topics = match @client.decode_wire_topics(topics_payload) {
+    Ok(topics) => topics
+    Err(e) => fail("cluster status: \{e}")
+  }
+  let online = nodes.length()
+  println("nodes")
+  for node in nodes {
+    println(
+      "  \{node.id}:\{@client.role_name(node.role)}	\{node.address}	leo=\{node.leo}",
+    )
+  }
+  if online == 0 {
+    println("  (none registered)")
+  }
+  println("topics")
+  if topics.length() == 0 {
+    println("  (none declared)")
+  }
+  for topic in topics {
+    println(
+      "  \{topic.name}	partitions=\{topic.partitions}	replication_factor=\{topic.replication_factor}",
+    )
+    // placement and watermarks per partition: what an operator
+    // actually needs to answer "is this topic healthy?"
+    for index in 0..<topic.partitions {
+      let ref = @client.PartitionRef::{ topic: topic.name, partition: index }
+      let view_payload = match
+        control_call(
+          remote,
+          @client.CMD_LEADER,
+          @client.encode_partition_ref(ref),
+        ) {
+        Ok(payload) => payload
+        Err(_) => continue
+      }
+      let view = match @client.decode_partition_view(view_payload) {
+        Ok(view) => view
+        Err(_) => continue
+      }
+      if view.leader.length() == 0 {
+        let pending = if view.nominated.length() > 0 {
+          ", election pending -> \{view.nominated}"
+        } else {
+          ""
+        }
+        println("    [\{index}] no leader\{pending}")
+        continue
+      }
+      let offsets = match
+        control_call(view.leader, @client.CMD_OFFSET_INFO, b"") {
+        Ok(payload) =>
+          match @client.decode_offset_info(payload) {
+            Ok(pair) => "hw=\{pair.0} leo=\{pair.1}"
+            Err(_) => "hw=? leo=?"
+          }
+        Err(_) => "hw=? leo=? (leader unreachable)"
+      }
+      println(
+        "    [\{index}] leader=\{view.leader} replicas=\{view.replicas.length()} \{offsets}",
+      )
+    }
+  }
   cli_exit(0)
 }

@@ -70,15 +70,16 @@ log_of() { # the data dir of a node is $WORK/<id>
 
 # ---- cluster up ----------------------------------------------------------
 mkdir -p "$WORK/sc"
-# two replicas per partition: the leader plus one follower is the
-# smallest cluster that can stall a watermark
-cat > "$WORK/sc/topics.json" <<EOF
-[ { "name": "$TOPIC", "partitions": 1, "replication_factor": 2 } ]
-EOF
-
 "$EXE" sc --listen "127.0.0.1:$SC_PORT" --data-dir "$WORK/sc" > "$WORK/sc.log" 2>&1 &
 SC_PID=$!
 wait_listen "$SC_PORT" || { cat "$WORK/sc.log"; fail "sc did not start"; }
+
+# two replicas per partition: the leader plus one follower is the
+# smallest cluster that can stall a watermark. The topic is declared
+# through the control plane (the metadata store is the source of
+# truth; placement follows on the next reconcile).
+"$EXE" topic create --name "$TOPIC" --partitions 1 --replication-factor 2 \
+  --remote "127.0.0.1:$SC_PORT" > /dev/null || fail "topic create failed"
 
 A_PID="$(start_spu spu-a "$A_PORT" "$WORK/spu-a")"
 B_PID="$(start_spu spu-b "$B_PORT" "$WORK/spu-b")"

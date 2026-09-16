@@ -76,16 +76,27 @@ pub const CMD_SYNC_ACK = 12
 pub const CMD_OFFSET_INFO = 13
 
 ///|
-/// The control plane offering a replica the partition. Authority
-/// arrives by nomination and only by nomination: a node that promotes
-/// itself unprompted is a split brain, not initiative.
-pub const CMD_NOMINATE = 14
+/// A candidate telling the control plane it has taken a partition.
+/// Authority still arrives only by nomination — the control plane
+/// advertises the nomination in its leader reply (see `PartitionView`)
+/// rather than calling out, because a control plane that dials data
+/// nodes can be blocked by a busy one, and no node should be able to
+/// hang the cluster's brain.
+pub const CMD_CONFIRM = 14
 
 ///|
-/// The candidate's answer: it has promoted itself and is now the
-/// leader. Two-phase in the reference (nominate, then promote and
-/// confirm) — the confirmation is this reply.
-pub const CMD_CONFIRM = 15
+/// Metadata verbs: declare a topic, read back what has been declared,
+/// undeclare one. Authors state intent; the control plane turns it
+/// into placement on the next reconcile. There is deliberately no
+/// "create partitions" command — that would be an event, and this
+/// design is level-triggered.
+pub const CMD_TOPIC_CREATE = 15
+
+///|
+pub const CMD_TOPIC_LIST = 16
+
+///|
+pub const CMD_TOPIC_DELETE = 17
 
 // Stable error codes (client-visible contract).
 
@@ -694,4 +705,81 @@ pub fn decode_confirmation(payload : Bytes) -> Result[Confirmation, String] {
     return Err("trailing bytes after confirmation")
   }
   Ok(Confirmation::{ partition: PartitionRef::{ topic, partition }, candidate })
+}
+
+///|
+/// A topic declaration as it travels: the same fields as the metadata
+/// store's, encoded with the protocol's conventions.
+pub(all) struct WireTopic {
+  name : String
+  partitions : Int
+  replication_factor : Int
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_wire_topic(topic : WireTopic) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, topic.name)
+  buf.write_leb128(topic.partitions)
+  buf.write_leb128(topic.replication_factor)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_wire_topic(payload : Bytes) -> Result[WireTopic, String] {
+  let reader = @codec.Reader::new(payload)
+  let name = match read_field(reader) {
+    Ok(name) => name
+    Err(e) => return Err(e)
+  }
+  let partitions = match reader.read_uleb128_len() {
+    Ok(partitions) => partitions
+    Err(_) => return Err("truncated partition count")
+  }
+  let replication_factor = match reader.read_uleb128_len() {
+    Ok(rf) => rf
+    Err(_) => return Err("truncated replication factor")
+  }
+  if !reader.is_empty() {
+    return Err("trailing bytes after topic declaration")
+  }
+  Ok(WireTopic::{ name, partitions, replication_factor })
+}
+
+///|
+/// The topic list reply: uleb128 count, then one declaration each.
+pub fn encode_wire_topics(topics : Array[WireTopic]) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_leb128(topics.length())
+  for topic in topics {
+    let bytes = encode_wire_topic(topic)
+    buf.write_leb128(bytes.length())
+    buf.write_bytes(bytes[0:bytes.length()])
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_wire_topics(payload : Bytes) -> Result[Array[WireTopic], String] {
+  let reader = @codec.Reader::new(payload)
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated topic list")
+  }
+  let out : Array[WireTopic] = []
+  for _ in 0..<count {
+    let len = match reader.read_uleb128_len() {
+      Ok(len) => len
+      Err(_) => return Err("truncated topic list entry")
+    }
+    let bytes = match reader.read_bytes(len) {
+      Ok(bytes) => bytes
+      Err(_) => return Err("truncated topic list entry")
+    }
+    match decode_wire_topic(bytes) {
+      Ok(topic) => out.push(topic)
+      Err(e) => return Err("bad topic declaration: \{e}")
+    }
+  }
+  Ok(out)
 }

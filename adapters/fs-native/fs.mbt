@@ -188,6 +188,27 @@ pub fn mtime(path : String) -> Result[Int64, FsError] {
 
 ///|
 /// True when `path` exists.
+
+///|
+/// Atomically replaces `to` with `from` (same filesystem). A caller
+/// that writes a temp file and renames it into place never leaves a
+/// half-written document behind for a reader.
+pub fn rename(from : String, to : String) -> Result[Unit, FsError] {
+  let from_bytes = @utf8.encode(from[0:from.length()])
+  let to_bytes = @utf8.encode(to[0:to.length()])
+  let r = fs_rename(
+    from_bytes,
+    from_bytes.length(),
+    to_bytes,
+    to_bytes.length(),
+  )
+  if r < 0 {
+    return Err(Io(-r, "rename"))
+  }
+  Ok(())
+}
+
+///|
 pub fn exists(path : String) -> Result[Bool, FsError] {
   let bytes = match path_bytes(path) {
     Ok(bytes) => bytes

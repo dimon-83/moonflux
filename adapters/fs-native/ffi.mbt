@@ -50,3 +50,12 @@ pub extern "C" fn fs_mtime(path : Bytes, len : Int) -> Int64 = "mf_fs_mtime"
 ///|
 #borrow(buf)
 pub extern "C" fn fs_read(fd : Int, buf : FixedArray[Byte], len : Int) -> Int = "mf_fs_read"
+
+///|
+#borrow(from, to)
+pub extern "C" fn fs_rename(
+  from : Bytes,
+  from_len : Int,
+  to : Bytes,
+  to_len : Int,
+) -> Int = "mf_fs_rename"

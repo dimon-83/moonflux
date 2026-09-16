@@ -345,11 +345,12 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     "moonflux sc listening on \{host}:\{actual} (data dir \{data_dir}, liveness timeout \{NODE_TIMEOUT_MS}ms)",
   )
   let table = NodeTable::new(NODE_TIMEOUT_MS)
+  let store = file_metadata_store(data_dir)
   let placement = PlacementState::new(data_dir)
   while true {
     match listener.accept() {
       Ok(stream) => {
-        handle_control_connection(stream, table, placement)
+        handle_control_connection(stream, table, placement, store)
         let _ = stream.close()
       }
       Err(TimedOut) => ()
@@ -534,6 +535,7 @@ fn handle_control_connection(
   stream : @net.TcpStream,
   table : NodeTable,
   placement : PlacementState,
+  store : MetadataStore,
 ) -> Unit {
   let conn = @client.Conn::from_stream(stream)
   let hello = match conn.recv_first() {
@@ -589,6 +591,56 @@ fn handle_control_connection(
           Err(e) => Err((@client.ERR_BAD_PAYLOAD, "bad node record: \{e}"))
         }
       @client.CMD_NODES => Ok(@client.encode_nodes(table.snapshot()))
+      @client.CMD_TOPIC_CREATE =>
+        match @client.decode_wire_topic(frame.payload) {
+          Ok(wire) =>
+            match
+              create_topic(store, ClusterMetadataTopic::{
+                name: wire.name,
+                partitions: wire.partitions,
+                replication_factor: wire.replication_factor,
+              }) {
+              Ok(_) => {
+                note(
+                  "topic \{wire.name} declared (\{wire.partitions} partition(s), \{wire.replication_factor} replica(s))",
+                )
+                // the next reconcile tick turns the declaration into
+                // placement — no further instruction is needed
+                Ok(@client.encode_wire_topic(wire))
+              }
+              Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
+            }
+          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        }
+      @client.CMD_TOPIC_LIST =>
+        match list_topics(store) {
+          Ok(topics) => {
+            let wire : Array[@client.WireTopic] = []
+            for topic in topics {
+              wire.push(@client.WireTopic::{
+                name: topic.name,
+                partitions: topic.partitions,
+                replication_factor: topic.replication_factor,
+              })
+            }
+            Ok(@client.encode_wire_topics(wire))
+          }
+          Err(e) => Err((@client.ERR_STORAGE, "\{e}"))
+        }
+      @client.CMD_TOPIC_DELETE =>
+        match @client.decode_wire_topic(frame.payload) {
+          Ok(wire) =>
+            match delete_topic(store, wire.name) {
+              Ok(_) => {
+                note(
+                  "topic \{wire.name} undeclared; its partitions will be removed",
+                )
+                Ok(b"")
+              }
+              Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
+            }
+          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        }
       @client.CMD_CONFIRM =>
         match @client.decode_confirmation(frame.payload) {
           Ok(confirmation) =>
@@ -1294,68 +1346,6 @@ fn dispatch_data_frame(
 // remembering the resulting state, and answering leader queries.
 
 ///|
-/// A topic declaration as the control plane reads it. This is the
-/// minimal shape T22 needs (which topics exist, how many replicas);
-/// T24 replaces the file with the metadata store and the
-/// `topic create` verb, at which point this struct becomes the
-/// store's on-disk form rather than a second source of truth.
-struct TopicDecl {
-  name : String
-  partitions : Int
-  replication_factor : Int
-}
-
-///|
-/// <sc data-dir>/topics.json — an array of topic declarations. Absent
-/// file means "no topics": the control plane then assigns nothing, and
-/// data nodes stay leaderless rather than guessing.
-fn read_topic_decls(data_dir : String) -> Array[TopicDecl] {
-  let path = "\{data_dir}/topics.json"
-  let bytes = match @fs.read_file(path) {
-    Ok(bytes) => bytes
-    Err(_) => return []
-  }
-  let text = @utf8.decode_lossy(bytes[0:bytes.length()])
-  let json = @json.parse(text[0:text.length()]) catch {
-    e => {
-      note("warning: \{path} is not valid JSON (\{e}); ignoring it")
-      return []
-    }
-  }
-  let items = match json {
-    Array(items) => items
-    _ => {
-      note("warning: \{path} must be a JSON array of topics")
-      return []
-    }
-  }
-  let out : Array[TopicDecl] = []
-  for i, item in items {
-    let obj = match item {
-      Object(obj) => obj
-      _ => {
-        note("warning: \{path}[\{i}] is not an object")
-        continue
-      }
-    }
-    let name = match obj.get("name") {
-      Some(String(name)) => name
-      _ => continue
-    }
-    let partitions = match obj.get("partitions") {
-      Some(Number(n)) => n.to_int()
-      _ => 1
-    }
-    let rf = match obj.get("replication_factor") {
-      Some(Number(n)) => n.to_int()
-      _ => 1
-    }
-    out.push(TopicDecl::{ name, partitions, replication_factor: rf })
-  }
-  out
-}
-
-///|
 /// The control plane's placement memory: the topic declarations it
 /// last saw, and the cluster state core/cluster's reconcile produced
 /// from them. Re-reading the declarations every tick is what makes
@@ -1364,7 +1354,7 @@ fn read_topic_decls(data_dir : String) -> Array[TopicDecl] {
 struct PlacementState {
   data_dir : String
   mut state : @cluster.ClusterState
-  mut declarations : Array[TopicDecl]
+  mut declarations : Array[ClusterMetadataTopic]
   /// addresses this control plane has ever assigned a partition to: an
   /// assigned node that is merely *down* stays in the replica set (it
   /// may come back and catch up), which is the difference between
@@ -1537,7 +1527,16 @@ fn PlacementState::save(self : PlacementState) -> Unit {
 /// whose declarations are unsatisfiable (more replicas than nodes) is
 /// a configuration to fix, not a crash.
 fn PlacementState::tick(self : PlacementState, table : NodeTable) -> Unit {
-  let declarations = read_topic_decls(self.data_dir)
+  // declarations come from the metadata store: the same document the
+  // `topic` verbs write, read fresh every tick, which is what makes an
+  // operator's change take effect without any event
+  let declarations = match list_topics(file_metadata_store(self.data_dir)) {
+    Ok(topics) => topics
+    Err(e) => {
+      note("warning: cannot read topic declarations: \{e}")
+      []
+    }
+  }
   // the pool is "everyone we have ever placed on" plus "everyone
   // present now": a node that goes down keeps its partitions (and so
   // keeps the high watermark honest), while a node that joins becomes

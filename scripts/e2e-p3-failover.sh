@@ -70,8 +70,6 @@ EOF
 
 # ---- cluster up ----------------------------------------------------------
 mkdir -p "$WORK/sc" "$WORK/spu-a" "$WORK/spu-b"
-printf '[ { "name": "%s", "partitions": 1, "replication_factor": 2 } ]\n' "$TOPIC" \
-  > "$WORK/sc/topics.json"
 printf 'one\ntwo\n' > "$WORK/in.txt"
 apply_pipeline "$WORK/spu-a"
 apply_pipeline "$WORK/spu-b"
@@ -79,6 +77,8 @@ apply_pipeline "$WORK/spu-b"
 "$EXE" sc --listen "127.0.0.1:$SC_PORT" --data-dir "$WORK/sc" > "$WORK/sc.log" 2>&1 &
 SC_PID=$!
 wait_listen "$SC_PORT" || { cat "$WORK/sc.log"; fail "sc did not start"; }
+"$EXE" topic create --name "$TOPIC" --partitions 1 --replication-factor 2 \
+  --remote "127.0.0.1:$SC_PORT" > /dev/null || fail "topic create failed"
 A_PID="$(start_spu spu-a "$A_PORT" "$WORK/spu-a")"
 B_PID="$(start_spu spu-b "$B_PORT" "$WORK/spu-b")"
 wait_listen "$A_PORT" || fail "spu-a did not start"
