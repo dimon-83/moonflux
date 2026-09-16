@@ -71,6 +71,23 @@
 - `benchmark`：对标 §2.12（producer 基准先行，consumer 基准参考系统亦未发布）；
 - （远期、未排期）镜像命令族：对标 §2.8.2，依赖多集群能力。
 
+#### 3.3.1 落地回填（2026-09-16，P3 达成）
+
+已交付（命令面与证据）：
+- `topic create --name T [--partitions N] [--replication-factor R] --remote SC` / `topic list` /
+  `topic delete --name T`：声明式主题管理，写元数据 store（`<sc data-dir>/metadata.json`，
+  版本单调、重名与非法名写入前拒绝）；门禁 `scripts/e2e-p3-metadata.sh`。
+- `cluster nodes --remote SC`：在线节点（id:role、地址、LEO）；
+  `cluster status --remote SC`：节点 + 主题 + **每分区 leader/副本数/水位**（水位向 leader 问，
+  不是 SC 的记忆）；`cluster leader --topic T` / `cluster offsets --topic T`：放置与水位查询。
+- `spu --id A --listen host:port [--data-dir D] [--sc SC]` 与 `sc --listen host:port`：
+  节点形态（`serve` 保留为全在一体形态，向后兼容）。
+
+仍未交付（属 P4 或后续）：
+- `partition list`（多分区存储未落地，见 compatibility-matrix #10）、`cluster spu list` 的
+  完整字段（磁盘/主题数等）、`benchmark`、`consumer` 托管偏移（矩阵 #11 另一半）、
+  `profile`（配置档案）、SmartModule/算子管理命令族。
+
 ### 3.4 P4（全平台体验）
 
 - CLI 契约稳定化：与 native + wasm 客户端 SDK 对齐（README 能力对标表"客户端 SDK"行）；
@@ -87,11 +104,11 @@
 
 ## 5. 勘误（本次盘点发现，未修，供后续 ticket）
 
-| # | 发现 | 位置 |
-| :-- | :--- | :--- |
-| 1 | `usage()` 帮助文本仍为 P0 版：缺 `pipeline` 命令 | `apps/cli/main.mbt` 的 `usage()` |
-| 2 | 待办行"P1 启动"未勾选，与路线图"P1 达成"不一致 | `README.md`「待办（下一步）」 |
-| 3 | 生成接口滞后：工作区 `spec.mbt` 已含 `HttpSource`/`StdinSource`/`HttpSink`，`.mbti` 未随 `moon info` 重生成 | `core/spec/pkg.generated.mbti` |
+| # | 发现 | 位置 | 状态（2026-09-16） |
+| :-- | :--- | :--- | :--- |
+| 1 | `usage()` 帮助文本仍为 P0 版：缺 `pipeline` 命令 | `apps/cli/main.mbt` 的 `usage()` | ✅ 已修（并随 P3 补齐 `spu`/`sc`/`cluster`/`topic`） |
+| 2 | 待办行"P1 启动"未勾选，与路线图"P1 达成"不一致 | `README.md`「待办（下一步）」 | ✅ 已修（待办区随 P1/P2/P3 达成逐步更新） |
+| 3 | 生成接口滞后：工作区 `spec.mbt` 已含 `HttpSource`/`StdinSource`/`HttpSink`，`.mbti` 未随 `moon info` 重生成 | `core/spec/pkg.generated.mbti` | ✅ 已修（`moon info` 已重生成并入库） |
 
 ---
 

@@ -47,19 +47,36 @@
 | P0′（并行） | PipelineSpec v1alpha1 + CLI 编译/计划 | 一份 spec 可编译为可运行的进程拓扑 | ✅ 2026-09-15（`scripts/e2e-p0p.sh`） |
 | P1 | **连接器与外设**：Source/Sink 框架 + HTTP/文件/MQ + mbel 表达式 transforms + 客户端 SDK 雏形 | ≥3 个真实数据源接入跑通；改规则秒级生效 | ✅ 2026-09-15（`scripts/e2e-p1-connectors.sh`、`scripts/e2e-p1-rules.sh`；MQTT/Kafka 留后续） |
 | P2 | WASM 算子沙箱：guest SDK + ABI + 全算子 + 双后端测试矩阵 | 算子语义与参考实现对拍一致 | ✅ 2026-09-16（`scripts/crosscheck-operators.sh`：native vs wasm 字节级一致 + trap/拒绝/超预算 fail-closed；`scripts/build-operators.sh` 构建门禁） |
-| P3 | 复制 + 选主 + 元数据调和（本地多进程优先） | 故障注入通过（宕机/恢复/水位一致性） | 未启动 |
+| P3 | 复制 + 选主 + 元数据调和（本地多进程优先） | 故障注入通过（宕机/恢复/水位一致性） | ✅ 2026-09-16（`scripts/e2e-p3-{replication,failover,nodes,metadata}.sh`；`scripts/gates.sh` 含全部 19 步） |
 | P4 | 客户端 SDK 完备 + Web 编辑器 + 部署形态（本地优先，K8s 可选） | 端到端：拖拽一条管道 → 运行 → 消费到数据 | 未启动 |
 
 - 详细路线图与依据见 README「路线图」与报告 3.4 / 4.4 / 6.4。
 - 阶段推进以**门禁**为准；门禁必须可证伪、可复现（对拍脚本 / 基准 / 故障注入），不得以"看起来能跑"代替。
+
+**P3 集群语义纪律（做集群相关改动前先读；决策依据见 README 决策 17–21）**
+
+- **复制方向固定为 follower-pull**：leader 永不 push。改动复制路径时不得反转方向或引入推送状态。
+- **水位只有一个定义**：`HW = 副本集合（含 leader）各 LEO 的最小值`，**只前进不回退**；迟到的低 LEO 报告必须被忽略而不是应用。副本集合 ≠ 在线集合——已分配而离线的节点**留在集合里**（这正是副本死亡时 HW 停滞的原因）。
+- **无 leader epoch，不得引入任期/截断假设**：数据面没有 epoch 是对标事实。分歧按"新 leader 的 LEO 唯一权威"处理，且**截断必须报告丢弃量**（README 决策 18）。
+- **提名与提升是两个动作**：节点只能提升**被许给过自己**的分区（`core/replica.promote` 是唯一裁判）；**控制面不得主动拨号数据节点**（提名是状态，不是调用）——单线程循环互相调用会死锁。节点间调用一律带 deadline。
+- **LRS 是算出来的**：成员资格由滞后阈值现算，不落库；落后只失去投票权，不停止复制。
+- **声明式优先**：主题与放置的真相在元数据（`topic create` 写声明、SC 调和出放置）；**不存在"创建分区"命令**——那是事件，不是状态。
+
 
 ## 3. 目录与包结构（MoonBit 约定）
 
 ```
 moonflux/
 ├── core/        # 内核：不声明 supported_targets（= 全后端）；只依赖 moonbitlang/core
+│   ├── codec protocol log spec pipeline operator   # P0–P2
+│   └── cluster replica                             # P3：控制面模型与调和 / 复制语义
 ├── adapters/    # 薄适配层：每包声明单目标（abi-wasm → "wasm"；net-native → "native"；net-js → "js"）
+│   ├── fs-native net-native                        # P0–P1
+│   └── wasmtime-native                             # P2：算子宿主（dlopen，无链接期依赖）
 └── apps/        # 入口包：is-main，按目标打包（算子模板 / cli / 服务端 / web-client）
+    ├── cli（produce/consume/serve/pipeline/spu/sc/topic/cluster）
+    ├── client connectors transform                 # P1：客户端 SDK / 连接器 / mbel 执行器
+    └── operator-sdk operator-*                     # P2：guest SDK 与算子模块
 ```
 
 - 包依赖只允许 `core ← adapters ← apps` 单向；任何方向的违规会被 `moon build --target X` 的依赖 fail-fast 直接拦截——**不要试图绕过，它是架构纪律的执行者**。
@@ -169,6 +186,7 @@ moonflux/
 | CLI 命令工具规划 | [docs/cli-roadmap.md](docs/cli-roadmap.md) | 命令面分阶段规划（对标 Fluvio CLI；README 决策 13） |
 | 兼容性矩阵 | [docs/compatibility-matrix.md](docs/compatibility-matrix.md) | 每个对标语义的验证状态与证据入口（P2 算子沙箱条目见 #12/#14） |
 | 算子沙箱取证 | [docs/p2-wasm-host-spike.md](docs/p2-wasm-host-spike.md) | wasmtime 进程内宿主的问题取证（类型镜像尺寸、后台编译 panic） |
+| 集群门禁脚本 | `scripts/e2e-p3-{nodes,replication,failover,metadata}.sh` | P3 故障注入门禁（注册/复制/选主/元数据；断言映射见 `.scratch/moonflux-p3/issues/25-failover-gate.md`） |
 | mbel 表达式引擎 | `~/workspace/mbel` | 动态规则层的候选内核 |
 | mbel-orch 设计 | `~/workspace/mbel-orch` | 算子/插件分发体系的设计参考 |
 

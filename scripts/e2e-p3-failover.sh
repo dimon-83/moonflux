@@ -187,6 +187,41 @@ done
 [ "$HW" = "3" ] || fail "hw did not account for the returned replica (hw=$HW leo=$LEO)"
 pass "hw covers both replicas again after the rejoin (hw=$HW leo=$LEO)"
 
+# ---- 3.5 hard kill: no cleanup, no loss --------------------------------
+# SIGTERM lets a process flush and close; SIGKILL does not. The new
+# leader must come up from whatever survived on disk (recovery
+# truncates a torn tail) and still hold every record that was ever
+# produced — data-loss accounting, not just "it kept serving".
+printf 'four\nfive\nsix\n' > "$WORK/batch2.txt"
+"$EXE" produce --topic "$TOPIC" --file "$WORK/batch2.txt" --remote "$NEW_LEADER" > /dev/null \
+  || fail "produce before the hard kill failed"
+for _ in $(seq 1 60); do
+  read -r HW LEO <<< "$(offsets "$NEW_LEADER")"
+  [ "$HW" = "6" ] && break
+  sleep 0.25
+done
+[ "$HW" = "6" ] || fail "the replicas did not settle before the hard kill (hw=$HW leo=$LEO)"
+
+kill -9 "$([ "$OLD_PID_VAR" = A ] && echo "$A_PID" || echo "$B_PID")" 2>/dev/null || true
+wait "$([ "$OLD_PID_VAR" = A ] && echo "$A_PID" || echo "$B_PID")" 2>/dev/null || true
+[ "$OLD_PID_VAR" = A ] && A_PID="" || B_PID=""
+
+SURVIVOR_LEADER=""
+for _ in $(seq 1 120); do
+  SURVIVOR_LEADER="$(leader_of)"
+  [ "$SURVIVOR_LEADER" = "127.0.0.1:$SURVIVOR_PORT" ] && break
+  sleep 0.25
+done
+[ "$SURVIVOR_LEADER" = "127.0.0.1:$SURVIVOR_PORT" ] \
+  || { cat "$WORK/sc.log"; fail "no election after a hard kill (leader=$SURVIVOR_LEADER)"; }
+
+"$EXE" consume --topic "$TOPIC" --remote "$SURVIVOR_LEADER" | cut -f4- > "$WORK/after-kill.txt" \
+  || fail "consume after the hard kill failed"
+printf 'one\ntwo\nthree\nfour\nfive\nsix\n' > "$WORK/want-all.txt"
+diff -u "$WORK/want-all.txt" "$WORK/after-kill.txt" \
+  || { cat "$WORK/after-kill.txt"; fail "records were lost across a hard kill"; }
+pass "a hard kill (SIGKILL) cost no records: all 6 are readable from the new leader"
+
 # ---- 4. an offer is not a leadership -----------------------------------
 # every replica goes silent: the control plane may keep offering the
 # partition to the best survivor it remembers, but nothing is elected,

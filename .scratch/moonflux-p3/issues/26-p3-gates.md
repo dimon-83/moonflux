@@ -4,12 +4,29 @@
 
 **Blocked by:** 25.
 
-**Status:** ready-for-agent
+**Status:** ✅ done (2026-09-16)
 
-- [ ] README 决策记录：follower-pull 语义、HW=min(LEO)、LRS 判定、无 epoch 不变量、
+- [x] README 决策记录：follower-pull 语义、HW=min(LEO)、LRS 判定、无 epoch 不变量、
       **分歧处理（本项目显式定义）**、**并发写的 P3 答案（单 leader）**、元数据存储可插拔
-- [ ] 兼容性矩阵：#8 提交原子性（多写者 → 单 leader 语义）、#10 多分区（若落地）、
+- [x] 兼容性矩阵：#8 提交原子性（多写者 → 单 leader 语义）、#10 多分区（若落地）、
       #11 读钳制开关（Committed/Uncommitted）状态更新，附证据入口
-- [ ] AGENTS：P3 门禁状态；必要的执行纪律（如有）
-- [ ] `docs/compatibility-matrix.md` 与 README 路线图的 P3 行标记达成 + 证据
-- [ ] tickets 19–26 关闭；`scripts/gates.sh` 全绿（含 P3 门禁）
+- [x] AGENTS：P3 门禁状态；必要的执行纪律（如有）
+- [x] `docs/compatibility-matrix.md` 与 README 路线图的 P3 行标记达成 + 证据
+- [x] tickets 19–26 关闭；`scripts/gates.sh` 全绿（含 P3 门禁）
+
+## 落地记录
+
+- **README 决策 17–21**：复制语义（follower-pull / HW=min(LEO) / LRS 现算 / 无 epoch / 读钳制
+  在 core 就绪但未接线）；分歧处理（参考系统未定义 → 本项目定义"新 leader LEO 唯一权威"+
+  必报告）；副本集合 ≠ 在线集合（含与对标系统"不做存量再平衡"的差异留痕）；控制面纪律
+  （SC 不拨号数据节点、提名是状态、调用带 deadline、元数据可插拔但只一个真后端、单 SC 假设）；
+  节点形态与可观测性（含三个真实工程坑）。
+- **路线图 P3 行**：✅ 达成 + 四个门禁脚本 + 故障注入结论。
+- **AGENTS**：§2 阶段表 P3 ✅；新增「P3 集群语义纪律」六条（改集群代码前必读）；§3 目录结构
+  补 `core/cluster`、`core/replica`、四个子命令与算子包；资产索引补 P3 门禁脚本条目。
+- **兼容性矩阵**：#8 并发写（单 leader 是答案）、#10 多分区（控制面就绪/存储未跟上，⚠️）、
+  #11 读钳制（语义与暴露就绪、客户端接线待做，⚠️）、新增 #15 复制语义 ✅、#16 选主与故障转移 ✅。
+- **CLI 规划**：§3.3.1 落地回填（已交付命令 + 未交付清单），§5 勘误三条全部标记已修。
+- 全量回归：`scripts/gates.sh` **19 步全绿**（含 4 个 P3 门禁）；native 148/148、wasm-gc 103/103；
+  四后端编译矩阵 0 error；生成物 `--check` 全 up to date。
+- tickets 19–26 全部关闭；概览状态更新。
