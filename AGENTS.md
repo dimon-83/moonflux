@@ -62,6 +62,14 @@
 - **LRS 是算出来的**：成员资格由滞后阈值现算，不落库；落后只失去投票权，不停止复制。
 - **声明式优先**：主题与放置的真相在元数据（`topic create` 写声明、SC 调和出放置）；**不存在"创建分区"命令**——那是事件，不是状态。
 
+**P4 浏览器与编辑器纪律（改 Web/编辑器相关代码前先读；决策依据见 README 决策 22–24）**
+
+- **编辑器渲染 spec，绝不反向定义**：图 → spec 只发生在 `apps/editor-kernel` 的 `build_spec`；页面（`web/editor/`）不得自行拼装或校验 spec，也不得解析协议字节——校验走 `core/spec`、拓扑走 `core/pipeline`、应答走 `core/client` 的编解码。
+- **传输不是 API**：WebSocket 网关只搬运字节，WS 帧里装的仍是 `MFS`；不得为浏览器新增第二套命令语义或第二个端口。非 upgrade 的 HTTP 必须得到带原因的 400。
+- **跨语言边界处的类型事实**：js 目标里 `Int64` 是 **BigInt**（传 number 会在内核里抛异常）、`Bytes` 是 `Uint8Array`；页面里任何动作都要 `guard()`（异常进日志）——**静默无响应的按钮是最坏结果**。
+- **内核包的再导出边界**（实测）：`pub using` 只能在源码里（不能进 moon.pkg）、可再导出类型与函数但**不可**再导出枚举构造器、**不可**为外部类型定义方法；需要构造器的调用方直接 import 内核包。
+- **已知缺口（最高优先级）**：`serve` 单连接串行（P1 遗留）——浏览器的长连接会饿死 CLI 与其它客户端；多路复用是下一步首位。
+
 
 ## 3. 目录与包结构（MoonBit 约定）
 
@@ -69,14 +77,16 @@
 moonflux/
 ├── core/        # 内核：不声明 supported_targets（= 全后端）；只依赖 moonbitlang/core
 │   ├── codec protocol log spec pipeline operator   # P0–P2
-│   └── cluster replica                             # P3：控制面模型与调和 / 复制语义
+│   ├── cluster replica                             # P3：控制面模型与调和 / 复制语义
+│   └── client                                      # P4：客户端内核（帧编解码 + 会话，全后端可编译）
 ├── adapters/    # 薄适配层：每包声明单目标（abi-wasm → "wasm"；net-native → "native"；net-js → "js"）
 │   ├── fs-native net-native                        # P0–P1
 │   └── wasmtime-native                             # P2：算子宿主（dlopen，无链接期依赖）
 └── apps/        # 入口包：is-main，按目标打包（算子模板 / cli / 服务端 / web-client）
     ├── cli（produce/consume/serve/pipeline/spu/sc/topic/cluster）
     ├── client connectors transform                 # P1：客户端 SDK / 连接器 / mbel 执行器
-    └── operator-sdk operator-*                     # P2：guest SDK 与算子模块
+    ├── operator-sdk operator-*                     # P2：guest SDK 与算子模块
+    └── editor-kernel                               # P4：Web 编辑器的内核侧（js 目标）
 ```
 
 - 包依赖只允许 `core ← adapters ← apps` 单向；任何方向的违规会被 `moon build --target X` 的依赖 fail-fast 直接拦截——**不要试图绕过，它是架构纪律的执行者**。
@@ -187,6 +197,8 @@ moonflux/
 | 兼容性矩阵 | [docs/compatibility-matrix.md](docs/compatibility-matrix.md) | 每个对标语义的验证状态与证据入口（P2 算子沙箱条目见 #12/#14） |
 | 算子沙箱取证 | [docs/p2-wasm-host-spike.md](docs/p2-wasm-host-spike.md) | wasmtime 进程内宿主的问题取证（类型镜像尺寸、后台编译 panic） |
 | 集群门禁脚本 | `scripts/e2e-p3-{nodes,replication,failover,metadata}.sh` | P3 故障注入门禁（注册/复制/选主/元数据；断言映射见 `.scratch/moonflux-p3/issues/25-failover-gate.md`） |
+| Web 编辑器与页面 | `web/editor/` + `apps/editor-kernel` | spec 的渲染器（拖拽 → 部署 → 运行 → 消费）；门禁 `scripts/e2e-p4-editor.sh` |
+| 段文件记录解码器 | `tools/decode_log_frames.py` | 直接读段文件（段文件即协议流）验证记录，不需要连接 |
 | mbel 表达式引擎 | `~/workspace/mbel` | 动态规则层的候选内核 |
 | mbel-orch 设计 | `~/workspace/mbel-orch` | 算子/插件分发体系的设计参考 |
 

@@ -51,6 +51,14 @@ step "moon test --target wasm-gc" moon test --target wasm-gc
 step "build-operators.sh" scripts/build-operators.sh
 
 # 4. gates
+#
+# Not in this list: scripts/e2e-p4-editor.sh. Its first half is
+# mechanical (build, start the broker, assert on the segment file), but
+# the milestone's gate is "a browser composes a pipeline and consumes
+# data", and no shell script can press a button. Run it as:
+#   scripts/e2e-p4-editor.sh setup    # prints the editor URL
+#   … drive the page (agent or human) …
+#   scripts/e2e-p4-editor.sh verify
 step "crosscheck-protocol.sh" scripts/crosscheck-protocol.sh
 if [ "$MODE" != "fast" ]; then
   step "e2e-p0.sh" scripts/e2e-p0.sh

@@ -179,12 +179,11 @@ fn handle_connection(
         rules.sync(data_dir)
         dispatch_fetch(frame.payload, data_dir, rules)
       }
-      @client.CMD_APPLY_PIPELINE => {
+      @client.CMD_APPLY_PIPELINE =>
         match dispatch_apply(frame.payload, data_dir) {
           Ok(summary) => reply(@client.CMD_OK, summary)
           Err((code, message)) => err_reply(code, message)
         }
-      }
       @client.CMD_FETCH_COMMITTED => {
         rules.sync(data_dir)
         // a standalone broker has one replica, so its committed prefix

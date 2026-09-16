@@ -327,9 +327,9 @@ pub fn mf_editor_feed(reply : Bytes) -> String {
   }
   let cmd = head[4].to_int()
   let rid = ((head[5].to_uint() << 24) |
-    (head[6].to_uint() << 16) |
-    (head[7].to_uint() << 8) |
-    head[8].to_uint()).to_int()
+  (head[6].to_uint() << 16) |
+  (head[7].to_uint() << 8) |
+  head[8].to_uint()).to_int()
   let payload = reply[13:reply.length()].to_owned()
   let root : Map[String, Json] = {}
   root["cmd"] = Json::number(cmd.to_double())
@@ -350,7 +350,7 @@ pub fn mf_editor_feed(reply : Bytes) -> String {
       root["code"] = Json::number(code.to_double())
       root["message"] = Json::string(message)
     }
-    @client.CMD_OK => {
+    @client.CMD_OK =>
       // an OK carries either records (fetch) or an applied-pipeline
       // summary; decide by what the payload decodes to
       match decode_records(payload) {
@@ -369,10 +369,7 @@ pub fn mf_editor_feed(reply : Bytes) -> String {
           }
         }
       }
-    }
-    _ => {
-      root["kind"] = Json::string("unknown")
-    }
+    _ => root["kind"] = Json::string("unknown")
   }
   json_bytes(root)
 }

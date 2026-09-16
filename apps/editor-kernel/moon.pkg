@@ -10,6 +10,17 @@
 // browser-native calling convention for the same source; the kernel is
 // unchanged, and wasm-gc coverage still comes from the build matrix.)
 
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonflux/core/client",
+  "moonflux/core/codec",
+  "moonflux/core/pipeline",
+  "moonflux/core/protocol",
+  "moonflux/core/spec",
+}
+
 options(
   "is-main": true,
   link: {
@@ -28,14 +39,3 @@ options(
     },
   },
 )
-
-import {
-  "moonbitlang/core/buffer",
-  "moonbitlang/core/encoding/utf8",
-  "moonbitlang/core/json",
-  "moonflux/core/client" @client,
-  "moonflux/core/codec",
-  "moonflux/core/pipeline",
-  "moonflux/core/protocol",
-  "moonflux/core/spec",
-}
