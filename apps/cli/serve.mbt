@@ -20,15 +20,75 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   println(
     "moonflux serve listening on \{host}:\{actual} (data dir \{data_dir})",
   )
+  let ws = flags.get("ws") is Some(_)
+  if ws {
+    note(
+      "websocket upgrade accepted on this port: a browser sends HTTP, a CLI sends MFS",
+    )
+  }
   let rules = RuleState::new()
   while true {
     match listener.accept() {
       Ok(stream) => {
-        handle_connection(stream, data_dir, rules)
-        let _ = stream.close()
+        let conn = @native.from_stream(stream)
+        // One port, two transports. A browser speaks HTTP; the CLI
+        // speaks the frame protocol directly. The sniff happens here
+        // (it consumes four bytes, which are handed back to the frame
+        // path), so neither client needs a second port or a flag.
+        if ws {
+          match serve_websocket_connection(conn, data_dir, rules) {
+            Ok(_) => ()
+            Err(e) => warn("websocket connection ended: \{e}")
+          }
+        } else {
+          handle_connection(conn, data_dir, rules)
+        }
+        (conn.close)()
       }
       Err(e) => fail("accept: \{e}")
     }
+  }
+}
+
+///|
+/// Sniffs the start of a connection: an HTTP request becomes a
+/// WebSocket session, anything else goes to the frame handler with its
+/// first bytes restored.
+fn serve_websocket_connection(
+  conn : @client.Conn,
+  data_dir : String,
+  rules : RuleState,
+) -> Result[Unit, String] {
+  let head = match (conn.recv_exact)(4) {
+    Ok(head) => head
+    Err(e) => return Err(e)
+  }
+  if looks_like_http(head) {
+    match ws_handshake(conn) {
+      Ok(_) => ()
+      Err(e) => {
+        // an HTTP client deserves an HTTP answer: silently dropping
+        // a request that reached the right port is the kind of
+        // behavior that costs an operator an afternoon
+        let body = "not a websocket upgrade: " + e + "\n"
+        let response = "HTTP/1.1 400 Bad Request\r\n" +
+          "Content-Type: text/plain\r\n" +
+          "Content-Length: " +
+          body.length().to_string() +
+          "\r\n" +
+          "Connection: close\r\n\r\n" +
+          body
+        let bytes = @utf8.encode(response[0:response.length()])
+        let _ = (conn.send)(bytes)
+        return Err(e)
+      }
+    }
+    let transport = ws_transport(conn)
+    handle_connection(transport, data_dir, rules)
+    Ok(())
+  } else {
+    handle_connection(prefixed_transport(head, conn), data_dir, rules)
+    Ok(())
   }
 }
 
@@ -37,11 +97,10 @@ fn cmd_serve(argv : Array[String]) -> Unit {
 /// request frames until the peer closes. One reply frame per request
 /// with the request id echoed.
 fn handle_connection(
-  stream : @net.TcpStream,
+  conn : @client.Conn,
   data_dir : String,
   rules : RuleState,
 ) -> Unit {
-  let conn = @native.from_stream(stream)
   // handshake: HELLO must be the first frame; the major version
   // decides whether the session may proceed
   let hello = match conn.recv_first() {
