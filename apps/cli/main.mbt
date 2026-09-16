@@ -16,13 +16,30 @@ extern "C" fn cli_exit(code : Int) -> Unit = "exit"
 /// Prints and exits; typed as `T` so call sites may use it in
 /// position of any expected value (exit never returns).
 fn[T] fail(msg : String) -> T {
-  println("error: \{msg}")
+  // diagnostics belong on stderr: stdout carries data (records,
+  // listings) that callers parse, and mixing the two is how a report
+  // about a failure ends up looking like a record
+  let bytes = @utf8.encode("error: \{msg}")
+  cli_eprint(bytes, bytes.length())
   cli_exit(1)
   abort("unreachable")
 }
 
 ///|
 extern "C" fn flush_streams() -> Unit = "mf_cli_flush"
+
+///|
+#borrow(buf)
+extern "C" fn cli_eprint(buf : Bytes, len : Int) -> Unit = "mf_cli_eprint"
+
+///|
+/// Writes one diagnostic line to stderr, flushed. Stdout carries data
+/// (records) in the CLI's streaming commands and is parsed by column,
+/// so anything explanatory must not land there.
+fn warn(msg : String) -> Unit {
+  let bytes = @utf8.encode(msg[0:msg.length()])
+  cli_eprint(bytes, bytes.length())
+}
 
 ///|
 /// Prints one operator-facing line and flushes it. Used by the

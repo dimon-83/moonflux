@@ -61,6 +61,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p3-replication.sh" scripts/e2e-p3-replication.sh
   step "e2e-p3-failover.sh" scripts/e2e-p3-failover.sh
   step "e2e-p3-metadata.sh" scripts/e2e-p3-metadata.sh
+  step "e2e-p4-readmodes.sh" scripts/e2e-p4-readmodes.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

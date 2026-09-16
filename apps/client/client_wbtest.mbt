@@ -417,3 +417,85 @@ test "partition views carry the leader and the replica set" {
   assert_eq(decode_offset_info(encode_offset_info(3L, 5L)), Ok((3L, 5L)))
   assert_true(decode_offset_info(b"\x00") is Err(_))
 }
+
+///|
+test "a committed fetch reply carries watermarks and frames" {
+  // the server's reply shape for CMD_FETCH_COMMITTED is the sync
+  // response, so the consumer can tell what bounded its window
+  let (server, client) = match Conn::socketpair() {
+    Ok(pair) => pair
+    Err(e) => abort("socketpair: \{e}")
+  }
+  // the handshake happens inside from_conn, so its reply must be
+  // waiting in the socketpair buffer first
+  seed_welcome(server)
+  let consumer = match Consumer::from_conn(client) {
+    Ok(consumer) => consumer
+    Err(e) => abort("consumer: \{e}")
+  }
+  let frame = @protocol.encode_frame(2L, [rec("two"), rec("three")])
+  let response = SyncResponse::{
+    base_offset: 2L,
+    record_count: 2,
+    high_watermark: 4L,
+    log_end_offset: 6L,
+    frames: frame,
+  }
+  match
+    server.send_frame(Frame::{
+      cmd: CMD_OK,
+      rid: 1,
+      payload: encode_sync_response(response),
+    }) {
+    Ok(_) => ()
+    Err(e) => abort("seed reply: \{e}")
+  }
+  match consumer.fetch_committed("events", 2L, 100) {
+    Ok((entries, hw, leo)) => {
+      assert_eq(entries.length(), 2)
+      // offsets come from the frames' base, not from the request
+      assert_eq(entries[0].offset, 2L)
+      assert_eq(entries[1].offset, 3L)
+      assert_eq(hw, 4L)
+      assert_eq(leo, 6L)
+    }
+    Err(e) => abort("fetch_committed: \{e}")
+  }
+  consumer.close()
+}
+
+///|
+test "a committed fetch surfaces the server's refusal" {
+  let (server, client) = match Conn::socketpair() {
+    Ok(pair) => pair
+    Err(e) => abort("socketpair: \{e}")
+  }
+  seed_welcome(server)
+  let consumer = match Consumer::from_conn(client) {
+    Ok(consumer) => consumer
+    Err(e) => abort("consumer: \{e}")
+  }
+  // reading past the watermark is refused by the server; the client
+  // must report that as a server error, not as an empty read
+  match
+    server.send_frame(Frame::{
+      cmd: CMD_ERR,
+      rid: 1,
+      payload: encode_error(
+        ERR_BAD_PAYLOAD,
+        "read at 9 exceeds Committed limit 4",
+      ),
+    }) {
+    Ok(_) => ()
+    Err(e) => abort("seed error: \{e}")
+  }
+  match consumer.fetch_committed("events", 9L, 10) {
+    Err(Server(code, msg)) => {
+      assert_eq(code, ERR_BAD_PAYLOAD)
+      assert_true(msg.contains("exceeds"))
+    }
+    Err(e) => abort("expected a server error, got \{e}")
+    Ok(_) => abort("expected the read to be refused")
+  }
+  consumer.close()
+}

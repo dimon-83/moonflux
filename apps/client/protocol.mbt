@@ -98,6 +98,15 @@ pub const CMD_TOPIC_LIST = 16
 ///|
 pub const CMD_TOPIC_DELETE = 17
 
+///|
+/// A read that stops at the high watermark: the same request shape as
+/// FETCH, but the reply also carries the watermarks that bounded it.
+/// Additive on purpose — `FETCH` keeps its exact reply shape, so this
+/// closes the read-mode gap without a protocol version bump (the frame
+/// version gates *incompatible* changes, and nobody's parser needed to
+/// change to keep working).
+pub const CMD_FETCH_COMMITTED = 18
+
 // Stable error codes (client-visible contract).
 
 ///|

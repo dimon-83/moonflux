@@ -15,8 +15,9 @@ fn cmd_consume(argv : Array[String]) -> Unit {
       }
     None => 0L
   }
+  let committed = flags.get("committed") is Some(_)
   match flags.get("remote") {
-    Some(addr) => consume_remote(topic, from, addr)
+    Some(addr) => consume_remote(topic, from, addr, committed)
     None => {
       let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
       consume_local(topic, from, data_dir)
@@ -61,18 +62,40 @@ fn consume_local(topic : String, from : Int64, data_dir : String) -> Unit {
 }
 
 ///|
-fn consume_remote(topic : String, from : Int64, addr : String) -> Unit {
+fn consume_remote(
+  topic : String,
+  from : Int64,
+  addr : String,
+  committed : Bool,
+) -> Unit {
   let (host, port) = parse_listen_addr(addr)
   let consumer = match @client.Consumer::connect(host, port) {
     Ok(consumer) => consumer
     Err(e) => fail("connect \{host}:\{port}: \{e}")
   }
-  let entries = match consumer.fetch(topic, from, 1000000) {
-    Ok(entries) => entries
-    Err(e) => fail("fetch: \{e}")
-  }
-  for entry in entries {
-    print_entry(entry)
+  if committed {
+    // the committed read reports the watermarks it used on stderr, so
+    // a caller can see *why* a record was withheld while stdout stays
+    // a clean record stream
+    match consumer.fetch_committed(topic, from, 1000000) {
+      Ok((entries, hw, leo)) => {
+        warn(
+          "committed read: hw=\{hw} leo=\{leo} (records beyond the watermark are withheld)",
+        )
+        for entry in entries {
+          print_entry(entry)
+        }
+      }
+      Err(e) => fail("committed fetch: \{e}")
+    }
+  } else {
+    let entries = match consumer.fetch(topic, from, 1000000) {
+      Ok(entries) => entries
+      Err(e) => fail("fetch: \{e}")
+    }
+    for entry in entries {
+      print_entry(entry)
+    }
   }
   consumer.close()
   cli_exit(0)

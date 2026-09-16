@@ -246,9 +246,79 @@ pub fn Consumer::fetch(
 }
 
 ///|
+/// A committed read: like `fetch`, but the server answers only up to
+/// the partition's high watermark (the prefix every replica holds) and
+/// reports the watermarks it used. A consumer that cares about
+/// durability asks this way; one that wants everything the leader has
+/// keeps using `fetch` (Uncommitted, the reference's default).
+pub fn Consumer::fetch_committed(
+  self : Consumer,
+  topic : String,
+  from : Int64,
+  max : Int,
+) -> Result[(Array[@log.LogEntry], Int64, Int64), ClientError] {
+  let payload = Buffer::Buffer()
+  let topic_bytes = @utf8.encode(topic[0:topic.length()])
+  payload.write_leb128(topic_bytes.length())
+  payload.write_bytes(topic_bytes[0:topic_bytes.length()])
+  payload.write_int64_be(from)
+  payload.write_uint_be(max.reinterpret_as_uint())
+  let rid = self.next_rid
+  self.next_rid += 1
+  let reply = match
+    request(self.conn, rid, CMD_FETCH_COMMITTED, payload.to_bytes()) {
+    Ok(reply) => reply
+    Err(e) => return Err(e)
+  }
+  match reply.cmd {
+    CMD_OK => {
+      let response = match decode_sync_response(reply.payload) {
+        Ok(response) => response
+        Err(e) => return Err(Protocol("bad committed fetch reply: \{e}"))
+      }
+      let entries = match decode_frames(response.frames, response.base_offset) {
+        Ok(entries) => entries
+        Err(e) => return Err(e)
+      }
+      Ok((entries, response.high_watermark, response.log_end_offset))
+    }
+    CMD_ERR => {
+      let (code, message) = decode_error(reply.payload)
+      Err(Server(code, message))
+    }
+    _ => Err(Protocol("unexpected reply cmd \{reply.cmd}"))
+  }
+}
+
+///|
 /// Closes the session.
 pub fn Consumer::close(self : Consumer) -> Unit {
   (self.conn.close)()
+}
+
+///|
+/// Decodes a concatenation of batch frames into offset-carrying
+/// entries (shared by the committed reply path).
+fn decode_frames(
+  frames : Bytes,
+  base_offset : Int64,
+) -> Result[Array[@log.LogEntry], ClientError] {
+  let _ = base_offset
+  let reader = @codec.Reader::new(frames)
+  let entries : Array[@log.LogEntry] = []
+  while reader.remaining() > 0 {
+    match @protocol.decode_frame(reader) {
+      Ok(batch) => {
+        let mut offset = batch.base_offset
+        for record in batch.records {
+          entries.push(@log.LogEntry::{ offset, record })
+          offset += 1L
+        }
+      }
+      Err(e) => return Err(Protocol("bad replicated frame: \{e}"))
+    }
+  }
+  Ok(entries)
 }
 
 ///|

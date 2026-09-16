@@ -120,6 +120,17 @@ fn handle_connection(
         rules.sync(data_dir)
         dispatch_fetch(frame.payload, data_dir, rules)
       }
+      @client.CMD_FETCH_COMMITTED => {
+        rules.sync(data_dir)
+        // a standalone broker has one replica, so its committed prefix
+        // is its whole log; the topic is parsed inside the handler, so
+        // the watermarks are read from the request's topic here
+        match committed_watermarks_for(frame.payload, data_dir) {
+          Ok((hw, leo)) =>
+            dispatch_fetch_committed(frame.payload, data_dir, rules, hw, leo)
+          Err(e) => err_reply(@client.ERR_BAD_PAYLOAD, e)
+        }
+      }
       other =>
         (
           @client.CMD_ERR,
@@ -229,6 +240,114 @@ fn dispatch_fetch(
   out.write_uint_be(frame.length().reinterpret_as_uint())
   out.write_bytes(frame[0:frame.length()])
   reply(@client.CMD_OK, out.to_bytes())
+}
+
+///|
+/// Reads the topic out of a fetch payload (used to look up watermarks
+/// before dispatching). Kept separate so the dispatch functions can
+/// stay symmetric.
+fn committed_watermarks_for(
+  payload : Bytes,
+  data_dir : String,
+) -> Result[(Int64, Int64), String] {
+  let reader = @codec.Reader::new(payload)
+  let topic = match read_topic_name(reader) {
+    Ok(topic) => topic
+    Err(e) => return Err(e)
+  }
+  single_node_watermarks(data_dir, topic)
+}
+
+///|
+/// A committed read: the same window, but bounded by the partition's
+/// high watermark instead of the log end, and the reply carries the
+/// watermarks that bounded it. Reading at exactly the watermark is
+/// legal and empty (the caller is caught up); reading past it is a
+/// structured refusal, because "not replicated yet" must never be
+/// mistaken for "no data" (core/replica.check_read owns that rule).
+fn dispatch_fetch_committed(
+  payload : Bytes,
+  data_dir : String,
+  rules : RuleState,
+  high_watermark : Int64,
+  log_end_offset : Int64,
+) -> (Int, Bytes) {
+  let reader = @codec.Reader::new(payload)
+  let topic = match read_topic_name(reader) {
+    Ok(topic) => topic
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  let from = match reader.read_i64_be() {
+    Ok(from) => from
+    Err(_) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad fetch payload")
+  }
+  let max = match reader.read_u32_be() {
+    Ok(max) => max.reinterpret_as_int()
+    Err(_) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad fetch payload")
+  }
+  let info = @replica.OffsetInfo::{ high_watermark, log_end_offset }
+  match @replica.check_read(info, Committed, from, max) {
+    Ok(_) => ()
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, "\{e}")
+  }
+  let log = match open_topic_log(data_dir, topic) {
+    Ok(log) => log
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  // the window itself is clamped by the watermark: the leader may hold
+  // more, and the committed reader must not see it
+  let window_end = if high_watermark < log.high_watermark() {
+    high_watermark
+  } else {
+    log.high_watermark()
+  }
+  let available = if from >= window_end {
+    0
+  } else {
+    (window_end - from).to_int()
+  }
+  let take = if max < available { max } else { available }
+  let entries = match log.read(from, take) {
+    Ok(entries) => entries
+    Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
+  }
+  let records : Array[@protocol.Record] = []
+  for entry in entries {
+    match apply_nodes(rules.chain, [entry.record]) {
+      Ok(out_one) =>
+        for r in out_one {
+          records.push(r)
+        }
+      Err(e) => return err_reply(@client.ERR_TRANSFORM, "transform: \{e}")
+    }
+  }
+  let base : Int64 = if records.length() > 0 { entries[0].offset } else { from }
+  let frame = @protocol.encode_frame(base, records)
+  let response = @client.SyncResponse::{
+    base_offset: base,
+    record_count: records.length(),
+    high_watermark,
+    log_end_offset,
+    frames: frame,
+  }
+  reply(@client.CMD_OK, @client.encode_sync_response(response))
+}
+
+///|
+/// The watermark pair a plain (single-node) broker serves: with one
+/// replica the committed prefix IS the log end — the partition is
+/// trivially replicated the moment it is written, which is why a
+/// standalone `serve` answers both modes identically.
+fn single_node_watermarks(
+  data_dir : String,
+  topic : String,
+) -> Result[(Int64, Int64), String] {
+  let log = match open_topic_log(data_dir, topic) {
+    Ok(log) => log
+    Err(e) => return Err(e)
+  }
+  let leo = log.high_watermark()
+  Ok((leo, leo))
 }
 
 ///|

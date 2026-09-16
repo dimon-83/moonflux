@@ -1235,6 +1235,29 @@ fn dispatch_data_frame(
       rules.sync(data_dir)
       dispatch_fetch(frame.payload, data_dir, rules)
     }
+    @client.CMD_FETCH_COMMITTED => {
+      // a committed read is a question for the leader: only it knows
+      // how far the replicas have confirmed
+      if !partition.is_leader() {
+        return (
+          @client.CMD_ERR,
+          @client.encode_error(
+            @client.ERR_WRONG_ROLE,
+            "committed reads must go to the leader (\{partition.leader_addr})",
+          ),
+        )
+      }
+      rules.sync(data_dir)
+      partition.sync_leader_leo()
+      let (hw, leo) = match partition.ledger {
+        Some(ledger) => {
+          let info = ledger.offset_info()
+          (info.high_watermark, info.log_end_offset)
+        }
+        None => (0L, partition.leo())
+      }
+      dispatch_fetch_committed(frame.payload, data_dir, rules, hw, leo)
+    }
     @client.CMD_SYNC_FETCH => {
       let request = match @client.decode_sync_request(frame.payload) {
         Ok(request) => request
