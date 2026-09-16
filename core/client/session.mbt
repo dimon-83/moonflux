@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// apps/client: the client SDK — Producer / Consumer with the v2
-// handshake and request-id echoing. Both hold one connection and
-// speak sequentially (P1 scope; multiplexing arrives with the
-// concurrency milestone).
+// Producer / Consumer: request framing, request-id echo enforcement,
+// and the typed command calls. Transport-agnostic.
 
 ///|
 /// A connected producer session.
@@ -96,26 +94,6 @@ fn request(
 }
 
 ///|
-/// Connects a producer and handshakes with a moonflux server.
-pub fn Producer::connect(
-  host : String,
-  port : Int,
-) -> Result[Producer, ClientError] {
-  let conn = match Conn::tcp(host, port) {
-    Ok(conn) => conn
-    Err(e) => return Err(Transport(e))
-  }
-  let session = match handshake(conn) {
-    Ok(session) => session
-    Err(e) => {
-      (conn.close)()
-      return Err(e)
-    }
-  }
-  Ok(Producer::{ conn, next_rid: 1, session })
-}
-
-///|
 /// Wraps an already-connected pipe (tests, loopback).
 pub fn Producer::from_conn(conn : Conn) -> Result[Producer, ClientError] {
   let session = match handshake(conn) {
@@ -178,26 +156,6 @@ pub fn Producer::close(self : Producer) -> Unit {
 }
 
 ///|
-
-///|
-/// Connects a consumer and handshakes with a moonflux server.
-pub fn Consumer::connect(
-  host : String,
-  port : Int,
-) -> Result[Consumer, ClientError] {
-  let conn = match Conn::tcp(host, port) {
-    Ok(conn) => conn
-    Err(e) => return Err(Transport(e))
-  }
-  let session = match handshake(conn) {
-    Ok(session) => session
-    Err(e) => {
-      (conn.close)()
-      return Err(e)
-    }
-  }
-  Ok(Consumer::{ conn, next_rid: 1, session })
-}
 
 ///|
 /// Wraps an already-connected pipe (tests, loopback).

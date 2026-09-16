@@ -41,7 +41,7 @@ fn handle_connection(
   data_dir : String,
   rules : RuleState,
 ) -> Unit {
-  let conn = @client.Conn::from_stream(stream)
+  let conn = @native.from_stream(stream)
   // handshake: HELLO must be the first frame; the major version
   // decides whether the session may proceed
   let hello = match conn.recv_first() {

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-// Whitebox tests for apps/client — protocol codec plus full SDK flows
-// over an in-process socketpair. The scripted server pre-seeds replies
-// into the socketpair buffer, so request/response sequences run
-// without threads.
+// Whitebox tests for core/client — protocol codec plus full session
+// flows over the in-memory transport pair. The scripted server
+// pre-seeds replies, so request/response sequences run without
+// threads — and, because the transport is memory rather than sockets,
+// the same tests run on every backend the kernel compiles for.
 
 ///|
 fn rec(value : String) -> @protocol.Record {
@@ -51,11 +52,8 @@ test "frame codec round trip" {
 }
 
 ///|
-test "producer handshake and send over socketpair" {
-  let (client_conn, server_conn) = match Conn::socketpair() {
-    Ok(pair) => pair
-    Err(e) => abort("socketpair: \{e}")
-  }
+test "producer handshake and send over the in-memory transport" {
+  let (client_conn, server_conn) = Conn::memory_pair()
   // pre-seed the replies the client will read
   seed_welcome(server_conn)
   let producer = match Producer::from_conn(client_conn) {
@@ -121,10 +119,7 @@ test "producer handshake and send over socketpair" {
 
 ///|
 test "handshake rejection surfaces the server error code" {
-  let (client_conn, server_conn) = match Conn::socketpair() {
-    Ok(pair) => pair
-    Err(e) => abort("socketpair: \{e}")
-  }
+  let (client_conn, server_conn) = Conn::memory_pair()
   // server rejects an old client: major version mismatch
   match
     server_conn.send_frame(Frame::{
@@ -147,10 +142,7 @@ test "handshake rejection surfaces the server error code" {
 
 ///|
 test "request id echo is enforced" {
-  let (client_conn, server_conn) = match Conn::socketpair() {
-    Ok(pair) => pair
-    Err(e) => abort("socketpair: \{e}")
-  }
+  let (client_conn, server_conn) = Conn::memory_pair()
   seed_welcome(server_conn)
   let producer = match Producer::from_conn(client_conn) {
     Ok(producer) => producer
@@ -171,10 +163,7 @@ test "request id echo is enforced" {
 
 ///|
 test "consumer fetch decodes offsets from batch frames" {
-  let (client_conn, server_conn) = match Conn::socketpair() {
-    Ok(pair) => pair
-    Err(e) => abort("socketpair: \{e}")
-  }
+  let (client_conn, server_conn) = Conn::memory_pair()
   seed_welcome(server_conn)
   let consumer = match Consumer::from_conn(client_conn) {
     Ok(consumer) => consumer
@@ -210,10 +199,7 @@ test "consumer fetch decodes offsets from batch frames" {
 
 ///|
 test "server-side first read distinguishes v1 peers and garbage" {
-  let (peer_conn, server_conn) = match Conn::socketpair() {
-    Ok(pair) => pair
-    Err(e) => abort("socketpair: \{e}")
-  }
+  let (peer_conn, server_conn) = Conn::memory_pair()
   // a v1-shaped header (correct magic, old version byte)
   let v1_header = b"MFS\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00"
   match (peer_conn.send)(v1_header) {
@@ -225,10 +211,7 @@ test "server-side first read distinguishes v1 peers and garbage" {
     _ => abort("expected WrongVersion(1)")
   }
   // garbage that is not even the right magic
-  let (peer2, server2) = match Conn::socketpair() {
-    Ok(pair) => pair
-    Err(e) => abort("socketpair: \{e}")
-  }
+  let (peer2, server2) = Conn::memory_pair()
   match (peer2.send)(b"NOISE............") {
     Ok(_) => ()
     Err(e) => abort("send: \{e}")
@@ -238,10 +221,7 @@ test "server-side first read distinguishes v1 peers and garbage" {
     _ => abort("expected Garbage")
   }
   // a proper v2 frame passes through untouched
-  let (peer3, server3) = match Conn::socketpair() {
-    Ok(pair) => pair
-    Err(e) => abort("socketpair: \{e}")
-  }
+  let (peer3, server3) = Conn::memory_pair()
   match
     peer3.send_frame(Frame::{
       cmd: CMD_HELLO,
@@ -422,12 +402,9 @@ test "partition views carry the leader and the replica set" {
 test "a committed fetch reply carries watermarks and frames" {
   // the server's reply shape for CMD_FETCH_COMMITTED is the sync
   // response, so the consumer can tell what bounded its window
-  let (server, client) = match Conn::socketpair() {
-    Ok(pair) => pair
-    Err(e) => abort("socketpair: \{e}")
-  }
+  let (server, client) = Conn::memory_pair()
   // the handshake happens inside from_conn, so its reply must be
-  // waiting in the socketpair buffer first
+  // waiting in the transport buffer first
   seed_welcome(server)
   let consumer = match Consumer::from_conn(client) {
     Ok(consumer) => consumer
@@ -466,10 +443,7 @@ test "a committed fetch reply carries watermarks and frames" {
 
 ///|
 test "a committed fetch surfaces the server's refusal" {
-  let (server, client) = match Conn::socketpair() {
-    Ok(pair) => pair
-    Err(e) => abort("socketpair: \{e}")
-  }
+  let (server, client) = Conn::memory_pair()
   seed_welcome(server)
   let consumer = match Consumer::from_conn(client) {
     Ok(consumer) => consumer

@@ -69,7 +69,7 @@ fn consume_remote(
   committed : Bool,
 ) -> Unit {
   let (host, port) = parse_listen_addr(addr)
-  let consumer = match @client.Consumer::connect(host, port) {
+  let consumer = match @native.connect_consumer(host, port) {
     Ok(consumer) => consumer
     Err(e) => fail("connect \{host}:\{port}: \{e}")
   }

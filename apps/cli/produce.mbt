@@ -59,7 +59,7 @@ fn produce_remote(topic : String, file : String, addr : String) -> Unit {
     Err(e) => fail(e)
   }
   let (host, port) = parse_listen_addr(addr)
-  let producer = match @client.Producer::connect(host, port) {
+  let producer = match @native.connect_producer(host, port) {
     Ok(producer) => producer
     Err(e) => fail("connect \{host}:\{port}: \{e}")
   }

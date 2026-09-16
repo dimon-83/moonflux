@@ -1,0 +1,235 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/client"
+
+import {
+  "moonbitlang/core/debug",
+  "moonflux/core/log",
+  "moonflux/core/protocol",
+}
+
+// Values
+pub const CMD_CONFIRM : Int = 14
+
+pub const CMD_ERR : Int = 6
+
+pub const CMD_FETCH : Int = 4
+
+pub const CMD_FETCH_COMMITTED : Int = 18
+
+pub const CMD_HEARTBEAT : Int = 8
+
+pub const CMD_HELLO : Int = 1
+
+pub const CMD_LEADER : Int = 10
+
+pub const CMD_NODES : Int = 9
+
+pub const CMD_OFFSET_INFO : Int = 13
+
+pub const CMD_OK : Int = 5
+
+pub const CMD_PRODUCE : Int = 3
+
+pub const CMD_REGISTER : Int = 7
+
+pub const CMD_SYNC_ACK : Int = 12
+
+pub const CMD_SYNC_FETCH : Int = 11
+
+pub const CMD_TOPIC_CREATE : Int = 15
+
+pub const CMD_TOPIC_DELETE : Int = 17
+
+pub const CMD_TOPIC_LIST : Int = 16
+
+pub const CMD_WELCOME : Int = 2
+
+pub const ERR_BAD_PAYLOAD : Int = 3
+
+pub const ERR_SEQUENCE : Int = 6
+
+pub const ERR_STORAGE : Int = 4
+
+pub const ERR_TRANSFORM : Int = 5
+
+pub const ERR_UNKNOWN_COMMAND : Int = 2
+
+pub const ERR_UNSUPPORTED_VERSION : Int = 1
+
+pub const ERR_WRONG_ROLE : Int = 7
+
+pub const MAX_FRAME_PAYLOAD : Int = 33554432
+
+pub const PROTOCOL_VERSION : Int = 2
+
+pub fn decode_confirmation(Bytes) -> Result[Confirmation, String]
+
+pub fn decode_error(Bytes) -> (Int, String)
+
+pub fn decode_header(Bytes) -> Result[(Int, Int, Int), String]
+
+pub fn decode_hello(Bytes) -> Result[(Int, Int), String]
+
+pub fn decode_node(Bytes) -> Result[NodeRecord, String]
+
+pub fn decode_nodes(Bytes) -> Result[Array[NodeRecord], String]
+
+pub fn decode_offset_info(Bytes) -> Result[(Int64, Int64), String]
+
+pub fn decode_partition_ref(Bytes) -> Result[PartitionRef, String]
+
+pub fn decode_partition_view(Bytes) -> Result[PartitionView, String]
+
+pub fn decode_sync_ack(Bytes) -> Result[SyncAck, String]
+
+pub fn decode_sync_request(Bytes) -> Result[SyncRequest, String]
+
+pub fn decode_sync_response(Bytes) -> Result[SyncResponse, String]
+
+pub fn decode_wire_topic(Bytes) -> Result[WireTopic, String]
+
+pub fn decode_wire_topics(Bytes) -> Result[Array[WireTopic], String]
+
+pub fn encode_confirmation(Confirmation) -> Bytes
+
+pub fn encode_error(Int, String) -> Bytes
+
+pub fn encode_frame(Frame) -> Bytes
+
+pub fn encode_hello(Int, Int) -> Bytes
+
+pub fn encode_node(NodeRecord) -> Bytes
+
+pub fn encode_nodes(Array[NodeRecord]) -> Bytes
+
+pub fn encode_offset_info(Int64, Int64) -> Bytes
+
+pub fn encode_partition_ref(PartitionRef) -> Bytes
+
+pub fn encode_partition_view(PartitionView) -> Bytes
+
+pub fn encode_sync_ack(SyncAck) -> Bytes
+
+pub fn encode_sync_request(SyncRequest) -> Bytes
+
+pub fn encode_sync_response(SyncResponse) -> Bytes
+
+pub fn encode_wire_topic(WireTopic) -> Bytes
+
+pub fn encode_wire_topics(Array[WireTopic]) -> Bytes
+
+pub fn parse_node_role(String) -> Result[NodeRole, String]
+
+pub fn role_name(NodeRole) -> String
+
+// Errors
+pub(all) suberror ClientError {
+  Transport(String)
+  Server(Int, String)
+  Protocol(String)
+} derive(Eq, @debug.Debug)
+pub impl Show for ClientError
+
+// Types and methods
+pub(all) struct Confirmation {
+  partition : PartitionRef
+  candidate : String
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct Conn {
+  send : (Bytes) -> Result[Unit, String]
+  recv_exact : (Int) -> Result[Bytes, String]
+  close : () -> Unit
+}
+pub fn Conn::memory_pair() -> (Self, Self)
+pub fn Conn::recv_first(Self) -> FirstRead
+pub fn Conn::recv_frame(Self) -> Result[Frame?, String]
+pub fn Conn::send_frame(Self, Frame) -> Result[Unit, String]
+
+pub struct Consumer {
+  conn : Conn
+  mut next_rid : Int
+  session : (Int, Int)
+}
+pub fn Consumer::close(Self) -> Unit
+pub fn Consumer::fetch(Self, String, Int64, Int) -> Result[Array[@log.LogEntry], ClientError]
+pub fn Consumer::fetch_committed(Self, String, Int64, Int) -> Result[(Array[@log.LogEntry], Int64, Int64), ClientError]
+pub fn Consumer::from_conn(Conn) -> Result[Self, ClientError]
+pub fn Consumer::session_version(Self) -> (Int, Int)
+
+pub(all) enum FirstRead {
+  Got(Frame)
+  Eof
+  WrongVersion(Int)
+  Garbage(String)
+}
+
+pub(all) struct Frame {
+  cmd : Int
+  rid : Int
+  payload : Bytes
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct NodeRecord {
+  id : String
+  role : NodeRole
+  address : String
+  leo : Int64
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) enum NodeRole {
+  Sc
+  Spu
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct PartitionRef {
+  topic : String
+  partition : Int
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct PartitionView {
+  leader : String
+  replicas : Array[String]
+  nominated : String
+} derive(Eq, Show, @debug.Debug)
+
+pub struct Producer {
+  conn : Conn
+  mut next_rid : Int
+  session : (Int, Int)
+}
+pub fn Producer::close(Self) -> Unit
+pub fn Producer::from_conn(Conn) -> Result[Self, ClientError]
+pub fn Producer::send(Self, String, Array[@protocol.Record]) -> Result[(Int64, Int), ClientError]
+pub fn Producer::session_version(Self) -> (Int, Int)
+
+pub(all) struct SyncAck {
+  partition : PartitionRef
+  from : String
+  leo : Int64
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct SyncRequest {
+  partition : PartitionRef
+  from : Int64
+  max_records : Int
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct SyncResponse {
+  base_offset : Int64
+  record_count : Int
+  high_watermark : Int64
+  log_end_offset : Int64
+  frames : Bytes
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct WireTopic {
+  name : String
+  partitions : Int
+  replication_factor : Int
+} derive(Eq, Show, @debug.Debug)
+
+// Type aliases
+
+// Traits
+

@@ -1,0 +1,11 @@
+// core/client: client kernel side (frame codec + session logic).
+// Pure computation; compiles for every target.
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/core/codec",
+  "moonflux/core/log",
+  "moonflux/core/protocol",
+  "moonflux/core/spec",
+}

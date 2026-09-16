@@ -103,7 +103,7 @@ fn control_call(
   // a busy peer must fail this call rather than block this node's
   // whole tick
   let conn = match
-    @client.Conn::tcp_with_timeout(host, port, CONTROL_CALL_TIMEOUT_MS) {
+    @native.tcp_with_timeout(host, port, CONTROL_CALL_TIMEOUT_MS) {
     Ok(conn) => conn
     Err(e) => return Err("connect \{sc_addr}: \{e}")
   }
@@ -537,7 +537,7 @@ fn handle_control_connection(
   placement : PlacementState,
   store : MetadataStore,
 ) -> Unit {
-  let conn = @client.Conn::from_stream(stream)
+  let conn = @native.from_stream(stream)
   let hello = match conn.recv_first() {
     @client.Got(frame) => frame
     @client.Eof => return
@@ -1160,7 +1160,7 @@ fn handle_data_connection(
   rules : RuleState,
   partition : PartitionHost,
 ) -> Unit {
-  let conn = @client.Conn::from_stream(stream)
+  let conn = @native.from_stream(stream)
   let hello = match conn.recv_first() {
     @client.Got(frame) => frame
     @client.Eof => return

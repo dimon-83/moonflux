@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
-// apps/client: protocol v2 frames — shared by the SDK and `serve`.
+// core/client: the client's kernel side - frame codec, session state
+// machine, and the command semantics, with **transport injected**.
 //
-// Frame layout (all integers big-endian):
-//   0   3  magic "MFS"
-//   3   1  version = 0x02
-//   4   1  cmd
-//   5   4  request_id (echoed by the reply; enables future multiplexing)
-//   9   4  payload_len
-//  13   N  payload
+// This lives in the kernel rather than in apps/ for one reason: the
+// browser editor needs the same client logic the CLI uses, and a
+// browser cannot open a TCP socket. Keeping it here means one
+// implementation of the protocol runs over native TCP, over a
+// WebSocket, and over a socketpair in tests (AGENTS §1 rule 2). It is
+// pure computation - no IO, no clock, no platform dependency - so it
+// compiles for every backend including wasm-gc.
 //
-// Handshake: a session starts with HELLO{major,minor}; the server
-// answers WELCOME (same major) or ERR(unsupported-version). Any other
-// command before HELLO is ERR(sequence).
-//
-// Error payload: u16 code + utf8 message.
+// The transport contract is `Conn`: a bidirectional, ordered,
+// reliable byte pipe. Whoever owns a socket provides one.
 
 ///|
 pub const PROTOCOL_VERSION = 2
