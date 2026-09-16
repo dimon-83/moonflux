@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<!--
+  moonflux editor (P4): a renderer for PipelineSpec.
+
+  The page owns the pixels and the socket; the kernel owns the spec,
+  the validation, the topology and the protocol. Every action below
+  calls into the module built from apps/editor-kernel — there is no
+  second implementation of the spec format or of the frame protocol in
+  JavaScript, and that is the point (AGENTS §1 rule 7: the editor
+  renders the spec, it never defines one).
+
+  Transport: a WebSocket to `moonflux serve --ws`. A browser cannot
+  open a TCP socket, so the broker accepts HTTP upgrades on the same
+  port its CLI clients use; the frames inside are the same MFS frames.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>moonflux editor</title>
+<style>
+  :root { --fg:#12161c; --dim:#5b6676; --line:#d7dde5; --accent:#2f6fd0; --bg:#fbfcfd; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         color:var(--fg); background:var(--bg); }
+  header { padding:10px 18px; border-bottom:1px solid var(--line); display:flex;
+           gap:16px; align-items:baseline; }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  .status { color:var(--dim); font-size:13px; }
+  main { display:grid; grid-template-columns: 1fr 1fr; height:calc(100vh - 46px); }
+  section { padding:14px 18px; overflow:auto; }
+  section + section { border-left:1px solid var(--line); }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.05em;
+       color:var(--dim); margin:14px 0 8px; }
+  h2:first-child { margin-top:0; }
+  .lane { min-height:58px; border:1.5px dashed var(--line); border-radius:8px;
+          padding:8px; display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }
+  .lane.over { border-color:var(--accent); background:#eef4fd; }
+  .lane::before { content:attr(data-hint); color:var(--dim); font-size:12px;
+                  position:absolute; }
+  .lane:not(:empty)::before { content:""; }
+  .node { border:1px solid var(--line); border-radius:6px; background:#fff; padding:6px 8px;
+          display:grid; gap:4px; min-width:190px; box-shadow:0 1px 0 rgba(18,22,28,.04); }
+  .node.dragging { opacity:.4; }
+  .node .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .node .kind { font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--dim); }
+  .node .grip { cursor:grab; color:var(--dim); font-size:12px; }
+  .node .remove { border:0; background:none; color:var(--dim); cursor:pointer; }
+  .node input, .node select { font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+      padding:3px 5px; border:1px solid var(--line); border-radius:4px; width:100%; }
+  .palette { display:flex; gap:8px; flex-wrap:wrap; }
+  button.act { font:inherit; padding:6px 11px; border-radius:6px; border:1px solid var(--line);
+               background:#fff; cursor:pointer; }
+  button.act.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.act:disabled { opacity:.45; cursor:default; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  label.f { display:block; font-size:12px; color:var(--dim); margin:8px 0 2px; }
+  input.f { width:100%; padding:6px 8px; border:1px solid var(--line);
+            border-radius:6px; font:inherit; background:#fff; }
+  pre { background:#0f141b; color:#dbe4ef; padding:10px 12px; border-radius:8px;
+        overflow:auto; font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+        margin:0 0 10px; max-height:230px; }
+  #report.bad { background:#3a1414; color:#ffd7d7; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:500; font-size:12px; }
+  td.num { font:12px ui-monospace,Menlo,monospace; color:var(--dim); }
+  .pill { font-size:11px; padding:1px 6px; border-radius:10px; border:1px solid var(--line);
+          color:var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>moonflux editor</h1>
+  <span class="status" id="kernel">kernel…</span>
+  <span class="status" id="conn">socket…</span>
+</header>
+
+<main>
+  <section id="builder">
+    <h2>palette</h2>
+    <div class="palette">
+      <button class="act" data-add="source">source</button>
+      <button class="act" data-add="expr">transform: expr</button>
+      <button class="act" data-add="wasm">transform: wasm</button>
+      <button class="act" data-add="sink">sink</button>
+    </div>
+
+    <h2>source</h2>
+    <div class="lane" id="lane-source" data-lane="source" data-hint="drag a source here"></div>
+    <h2>transforms <span class="status">(the chain runs in this order)</span></h2>
+    <div class="lane" id="lane-transforms" data-lane="transforms" data-hint="drag transforms here"></div>
+    <h2>sink</h2>
+    <div class="lane" id="lane-sink" data-lane="sink" data-hint="drag a sink here"></div>
+
+    <div class="grid2">
+      <div><label class="f" for="name">pipeline name</label>
+           <input class="f" id="name" value="editor-demo"></div>
+      <div><label class="f" for="topic">topic</label>
+           <input class="f" id="topic" value="editor-events"></div>
+    </div>
+    <label class="f" for="records">records to produce, one per line (the editor is the source)</label>
+    <input class="f" id="records" value="hello world,Second line,UPPER already">
+
+    <h2>actions</h2>
+    <div class="palette">
+      <button class="act primary" id="btn-deploy" disabled>deploy</button>
+      <button class="act" id="btn-run" disabled>run</button>
+      <button class="act" id="btn-consume" disabled>consume</button>
+    </div>
+  </section>
+
+  <section id="inspector">
+    <h2>spec (built by the kernel)</h2>
+    <pre id="spec">…</pre>
+    <h2>validation &amp; topology</h2>
+    <pre id="report">…</pre>
+    <h2>records</h2>
+    <table><thead><tr><th>offset</th><th>key</th><th>value</th></tr></thead>
+           <tbody id="rows"></tbody></table>
+    <h2>log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script type="module">
+import * as kernel from "./editor-kernel.js";
+
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+const say = (line) => {
+  logEl.textContent += line + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+};
+
+// ---- the graph the UI renders -----------------------------------------
+// This is *not* the spec: it is the editor's own shape, and the kernel
+// turns it into a spec document. Fields exist so every node is editable
+// in place.
+let graph = {
+  name: "editor-demo",
+  topic: "editor-events",
+  source: null,
+  transforms: [],
+  sink: null,
+};
+
+$("kernel").textContent = "kernel ABI " + kernel.mf_editor_abi_version();
+
+// ---- rendering --------------------------------------------------------
+function field(label, value, oninput) {
+  const wrap = document.createElement("div");
+  const l = document.createElement("div");
+  l.className = "kind";
+  l.textContent = label;
+  const input = document.createElement("input");
+  input.value = value ?? "";
+  input.addEventListener("input", () => { oninput(input.value); refresh(); });
+  wrap.append(l, input);
+  return wrap;
+}
+
+function nodeEl(kindLabel, path, body) {
+  const el = document.createElement("div");
+  el.className = "node";
+  el.draggable = true;
+  el.dataset.path = path;
+  const top = document.createElement("div");
+  top.className = "top";
+  const kind = document.createElement("span");
+  kind.className = "kind";
+  kind.textContent = kindLabel;
+  const right = document.createElement("span");
+  const remove = document.createElement("button");
+  remove.className = "remove";
+  remove.textContent = "✕";
+  remove.addEventListener("click", () => {
+    if (path === "source") graph.source = null;
+    else if (path === "sink") graph.sink = null;
+    else graph.transforms.splice(Number(path), 1);
+    refresh();
+  });
+  const grip = document.createElement("span");
+  grip.className = "grip";
+  grip.textContent = "⠿";
+  right.append(grip, remove);
+  top.append(kind, right);
+  el.append(top, ...body);
+  el.addEventListener("dragstart", (ev) => {
+    ev.dataTransfer.setData("text/plain", path);
+    ev.dataTransfer.effectAllowed = "move";
+    el.classList.add("dragging");
+  });
+  el.addEventListener("dragend", () => el.classList.remove("dragging"));
+  return el;
+}
+
+function render() {
+  const sourceLane = $("lane-source");
+  const transformLane = $("lane-transforms");
+  const sinkLane = $("lane-sink");
+  sourceLane.innerHTML = "";
+  transformLane.innerHTML = "";
+  sinkLane.innerHTML = "";
+
+  if (graph.source) {
+    const s = graph.source;
+    const body = [field("type", s.type, (v) => { s.type = v; })];
+    if (s.type === "file") body.push(field("path", s.path, (v) => { s.path = v; }));
+    if (s.type === "http") body.push(field("url", s.url, (v) => { s.url = v; }));
+    sourceLane.append(nodeEl("source", "source", body));
+  }
+  graph.transforms.forEach((t, i) => {
+    const body = [field("kind", t.kind, (v) => { t.kind = v; })];
+    if (t.kind === "expr") body.push(field("expr", t.expr, (v) => { t.expr = v; }));
+    if (t.kind === "wasm") body.push(field("module", t.module, (v) => { t.module = v; }));
+    transformLane.append(nodeEl("transform", String(i), body));
+  });
+  if (graph.sink) {
+    const k = graph.sink;
+    const body = [field("type", k.type, (v) => { k.type = v; })];
+    if (k.type === "http") body.push(field("url", k.url, (v) => { k.url = v; }));
+    sinkLane.append(nodeEl("sink", "sink", body));
+  }
+}
+
+function laneDrop(lane, path) {
+  lane.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+    lane.classList.add("over");
+  });
+  lane.addEventListener("dragleave", () => lane.classList.remove("over"));
+  lane.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    lane.classList.remove("over");
+    moveNode(ev.dataTransfer.getData("text/plain"), path);
+  });
+}
+
+// Moving a node between lanes *is* the edit: the graph is the model and
+// the spec is derived, never the other way round.
+function moveNode(from, to) {
+  if (!from) return;
+  const take = (p) => {
+    if (p === "source") { const v = graph.source; graph.source = null; return v; }
+    if (p === "sink") { const v = graph.sink; graph.sink = null; return v; }
+    return graph.transforms.splice(Number(p), 1)[0];
+  };
+  const value = take(from);
+  if (!value) return;
+  if (to === "source") graph.source = value;
+  else if (to === "sink") graph.sink = value;
+  else graph.transforms.push(value);
+  refresh();
+}
+
+laneDrop($("lane-source"), "source");
+laneDrop($("lane-transforms"), "transforms");
+laneDrop($("lane-sink"), "sink");
+
+document.querySelectorAll("[data-add]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const kind = button.dataset.add;
+    if (kind === "source" && !graph.source) graph.source = { type: "file", path: "/tmp/moonflux-editor.txt" };
+    if (kind === "sink" && !graph.sink) graph.sink = { type: "stdout" };
+    if (kind === "expr") graph.transforms.push({ kind: "expr", expr: "upper(value)" });
+    if (kind === "wasm") graph.transforms.push({ kind: "wasm", module: "ops/upper.wasm" });
+    refresh();
+  });
+});
+
+// ---- the kernel is the single source of truth for the spec ----------
+let specText = "";
+function refresh() {
+  // one entry point for every change: re-render the graph *and*
+  // re-derive the spec, so the lanes can never disagree with the model
+  // (the first cut only re-derived, and nodes added from the palette
+  // never appeared)
+  render();
+  const built = kernel.mf_editor_build_spec(JSON.stringify(graph));
+  const parsed = JSON.parse(built);
+  if (parsed.ok === false) {
+    specText = "";
+    $("spec").textContent = built;
+    $("report").className = "bad";
+    $("report").textContent = parsed.error;
+    updateButtons();
+    return;
+  }
+  specText = built;
+  $("spec").textContent = built;
+  const report = JSON.parse(kernel.mf_editor_validate(built));
+  $("report").className = report.ok ? "" : "bad";
+  if (report.ok) {
+    const lines = [`ok — pipeline "${report.pipeline}", runnable=${report.runnable}`];
+    for (const p of report.processes) lines.push(`  ${p.name}\t${p.role}\t${p.capability}\t${p.detail}`);
+    $("report").textContent = lines.join("\n");
+  } else {
+    $("report").textContent = report.errors
+      .map((e) => `${e.path}: ${e.message} (${e.code})`).join("\n");
+  }
+  // availability follows the graph, not the page load order
+  updateButtons();
+}
+
+$("name").addEventListener("input", (ev) => { graph.name = ev.target.value; refresh(); });
+$("topic").addEventListener("input", (ev) => { graph.topic = ev.target.value; refresh(); });
+
+// ---- transport: a WebSocket the page owns, a session the kernel owns -
+let socket = null;
+let socketReady = false;
+const pending = [];
+
+function connect() {
+  // the broker and the page are served from different ports, so the
+  // broker port travels in the query string (`?broker=NNNN`)
+  const params = new URLSearchParams(location.search);
+  const brokerPort = params.get("broker") || location.port;
+  socket = new WebSocket(`ws://${location.hostname}:${brokerPort}`);
+  socket.binaryType = "arraybuffer";
+  socket.onopen = () => {
+    socketReady = true;
+    $("conn").textContent = "socket connected";
+    kernel.mf_editor_session_reset();
+    socket.send(kernel.mf_editor_hello());
+  };
+  socket.onclose = () => {
+    socketReady = false;
+    $("conn").textContent = "socket closed";
+    updateButtons();
+    setTimeout(connect, 1000);
+  };
+  socket.onerror = () => { $("conn").textContent = "socket error"; };
+  socket.onmessage = (ev) => {
+    guard("reply", () => {
+      const reply = new Uint8Array(ev.data);
+      const decoded = JSON.parse(kernel.mf_editor_feed(reply));
+      handle(decoded);
+    });
+  };
+}
+
+function handle(decoded) {
+  if (decoded.kind === "welcome") {
+    say(`hello accepted (server v${decoded.major}.${decoded.minor})`);
+    updateButtons();
+  } else if (decoded.kind === "ok") {
+    if (decoded.pipeline) say(`deployed pipeline "${decoded.pipeline}" (${decoded.processes} processes)`);
+    else say("ok");
+  } else if (decoded.kind === "error") {
+    say(`error ${decoded.code}: ${decoded.message}`);
+  } else if (decoded.kind === "records") {
+    const rows = $("rows");
+    rows.innerHTML = "";
+    for (const r of decoded.records) {
+      const tr = document.createElement("tr");
+      const off = document.createElement("td");
+      off.className = "num";
+      off.textContent = r.offset;
+      const key = document.createElement("td");
+      key.textContent = r.key;
+      const value = document.createElement("td");
+      value.textContent = r.value;
+      tr.append(off, key, value);
+      rows.append(tr);
+    }
+    say(`consumed ${decoded.records.length} record(s)`);
+  } else {
+    say(`reply: ${JSON.stringify(decoded)}`);
+  }
+  pending.shift();
+  updateButtons();
+}
+
+function updateButtons() {
+  const ready = socketReady && specText.length > 0;
+  $("btn-deploy").disabled = !ready;
+  $("btn-run").disabled = !ready;
+  $("btn-consume").disabled = !ready;
+}
+
+function send(bytes) {
+  if (!socketReady) return say("socket is not connected yet");
+  socket.send(bytes);
+}
+
+/// Runs an action, turning any exception into a log line: a button that
+/// does nothing and says nothing is the worst possible outcome.
+function guard(label, fn) {
+  try {
+    fn();
+  } catch (e) {
+    say(`${label} failed: ${e}`);
+  }
+}
+
+$("btn-deploy").addEventListener("click", () => {
+  say("deploying " + graph.name + "…");
+  guard("deploy", () => { send(kernel.mf_editor_apply(specText)); });
+});
+
+$("btn-run").addEventListener("click", () => {
+  const lines = $("records").value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  const records = lines.map((value) => ({ key: "", value }));
+  say(`producing ${records.length} record(s) to ${graph.topic}…`);
+  guard("run", () => { send(kernel.mf_editor_produce(graph.topic, JSON.stringify(records))); });
+});
+
+$("btn-consume").addEventListener("click", () => {
+  say(`consuming ${graph.topic}…`);
+  // MoonBit's Int64 is a BigInt on this target: passing a plain number
+  // throws *inside* the kernel, so the offset is written as a BigInt
+  guard("consume", () => { send(kernel.mf_editor_fetch(graph.topic, 0n, 1000)); });
+});
+
+render();
+refresh();
+connect();
+
+// the page's own state is available for the gate to assert on
+window.moonfluxEditor = {
+  state: () => ({ graph, spec: specText, socketReady }),
+  deploy: () => $("btn-deploy").click(),
+  run: () => $("btn-run").click(),
+  consume: () => $("btn-consume").click(),
+  log: () => logEl.textContent,
+  records: () => Array.from(document.querySelectorAll("#rows tr")).map((tr) =>
+    Array.from(tr.children).map((td) => td.textContent)),
+};
+</script>
+</body>
+</html>

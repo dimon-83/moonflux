@@ -179,6 +179,12 @@ fn handle_connection(
         rules.sync(data_dir)
         dispatch_fetch(frame.payload, data_dir, rules)
       }
+      @client.CMD_APPLY_PIPELINE => {
+        match dispatch_apply(frame.payload, data_dir) {
+          Ok(summary) => reply(@client.CMD_OK, summary)
+          Err((code, message)) => err_reply(code, message)
+        }
+      }
       @client.CMD_FETCH_COMMITTED => {
         rules.sync(data_dir)
         // a standalone broker has one replica, so its committed prefix
@@ -390,6 +396,53 @@ fn dispatch_fetch_committed(
     frames: frame,
   }
   reply(@client.CMD_OK, @client.encode_sync_response(response))
+}
+
+///|
+/// Deploys a pipeline document: parse, validate, compile (the same
+/// publish-time static check `pipeline apply` performs, so a bad rule
+/// never reaches the log path), then persist. The running server picks
+/// it up on its next request through the hot-reload path it already
+/// has — the editor gets a live pipeline without a restart.
+fn dispatch_apply(
+  payload : Bytes,
+  data_dir : String,
+) -> Result[Bytes, (Int, String)] {
+  let text = @utf8.decode_lossy(payload[0:payload.length()])
+  let json = @json.parse(text[0:text.length()]) catch {
+    e => return Err((@client.ERR_BAD_PAYLOAD, "spec is not valid JSON: \{e}"))
+  }
+  let spec = match @spec.parse_spec(text) {
+    Ok(spec) => spec
+    Err(errors) => {
+      let sb = StringBuilder::new()
+      for i, error in errors {
+        if i > 0 {
+          sb.write_string("; ")
+        }
+        sb.write_string("\{error.path}: \{error.message}")
+      }
+      return Err((@client.ERR_BAD_PAYLOAD, "invalid spec: \{sb.to_string()}"))
+    }
+  }
+  // publish-time static check: every transform must compile
+  for t in spec.transforms {
+    match compile_node(t) {
+      Ok(_) => ()
+      Err(e) => return Err((@client.ERR_TRANSFORM, e))
+    }
+  }
+  let topology = @pipeline.compile(spec)
+  match persist_applied(data_dir, topology.pipeline, json) {
+    Ok(_) => ()
+    Err(e) => return Err((@client.ERR_STORAGE, e))
+  }
+  let out = @buffer.Buffer::Buffer()
+  let name = @utf8.encode(topology.pipeline[0:topology.pipeline.length()])
+  out.write_leb128(name.length())
+  out.write_bytes(name[0:name.length()])
+  out.write_leb128(topology.processes.length())
+  Ok(out.to_bytes())
 }
 
 ///|

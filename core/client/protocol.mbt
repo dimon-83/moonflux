@@ -105,6 +105,14 @@ pub const CMD_TOPIC_DELETE = 17
 /// change to keep working).
 pub const CMD_FETCH_COMMITTED = 18
 
+///|
+/// Deploys a pipeline document to the broker: the same work
+/// `pipeline apply` does locally (validate, compile, persist), so the
+/// editor can close its loop - drag a pipeline, deploy it, produce,
+/// consume - without shelling out. Validation and compilation stay in
+/// the kernel; this command only carries the document.
+pub const CMD_APPLY_PIPELINE = 19
+
 // Stable error codes (client-visible contract).
 
 ///|

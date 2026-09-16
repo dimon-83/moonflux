@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/editor-kernel: the Web editor's kernel side.
+//
+// A library rather than a main package, and built for the `js` target:
+// the page imports it as a module and calls the functions below with
+// ordinary JS strings. (wasm-gc was the first attempt; a wasm-gc module
+// passes Bytes/String as *GC references* inside its own heap, with no
+// linear memory and no glue to convert them, so JS cannot call it
+// without the toolchain's own host bindings. The js target is the
+// browser-native calling convention for the same source; the kernel is
+// unchanged, and wasm-gc coverage still comes from the build matrix.)
+
+options(
+  "is-main": true,
+  link: {
+    "js": {
+      "exports": [
+        "mf_editor_abi_version",
+        "mf_editor_build_spec",
+        "mf_editor_validate",
+        "mf_editor_session_reset",
+        "mf_editor_hello",
+        "mf_editor_apply",
+        "mf_editor_produce",
+        "mf_editor_fetch",
+        "mf_editor_feed",
+      ],
+    },
+  },
+)
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonflux/core/client" @client,
+  "moonflux/core/codec",
+  "moonflux/core/pipeline",
+  "moonflux/core/protocol",
+  "moonflux/core/spec",
+}
