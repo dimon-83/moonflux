@@ -99,7 +99,11 @@ fn control_call(
   payload : Bytes,
 ) -> Result[Bytes, String] {
   let (host, port) = parse_listen_addr(sc_addr)
-  let conn = match @client.Conn::tcp(host, port) {
+  // a deadline, not a wait: every node is a single-threaded loop, so
+  // a busy peer must fail this call rather than block this node's
+  // whole tick
+  let conn = match
+    @client.Conn::tcp_with_timeout(host, port, CONTROL_CALL_TIMEOUT_MS) {
     Ok(conn) => conn
     Err(e) => return Err("connect \{sc_addr}: \{e}")
   }
@@ -276,7 +280,30 @@ fn cmd_spu(argv : Array[String]) -> Unit {
               note("now hosting topic \{partition.topic}")
             }
             match ask_leader(sc_addr, partition.topic) {
-              Ok(view) => partition.adopt_view(view)
+              Ok(view) => {
+                partition.adopt_view(view)
+                // the control plane offers leadership by naming a
+                // candidate; accepting means promoting ourselves and
+                // then telling it (the reference's two-phase
+                // election: nominating and confirming are different
+                // acts, and neither alone makes a leader)
+                if view.nominated == partition.address && !partition.is_leader() {
+                  match partition.take_nomination(view) {
+                    Ok(_) =>
+                      match
+                        confirm_leadership(
+                          sc_addr,
+                          partition.topic,
+                          partition.address,
+                        ) {
+                        Ok(_) => ()
+                        Err(e) =>
+                          note("warning: could not confirm leadership: \{e}")
+                      }
+                    Err(e) => note("warning: refused a nomination: \{e}")
+                  }
+                }
+              }
               Err(e) =>
                 if partition.leader_addr.length() > 0 {
                   note("warning: cannot refresh placement: \{e}")
@@ -335,6 +362,13 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     placement.tick(table)
   }
 }
+
+///|
+/// How long a node-to-node control call may take. Comfortably longer
+/// than a healthy round trip (sub-millisecond on loopback) and
+/// comfortably shorter than the liveness timeout, so a stuck peer
+/// costs one tick instead of the whole cluster.
+const CONTROL_CALL_TIMEOUT_MS : Int = 1000
 
 ///|
 /// How often a node does housekeeping (its accept timeout, and the
@@ -409,6 +443,20 @@ struct NodeTable {
 ///|
 fn NodeTable::new(timeout_ms : Int) -> NodeTable {
   NodeTable::{ entries: [], timeout_ms }
+}
+
+///|
+/// Looks a node up by the address it advertises. Placement and
+/// elections speak in addresses (that is what peers dial), while the
+/// table is keyed by node id — this is the one translation between
+/// the two, kept next to the table it reads.
+fn NodeTable::find_address(self : NodeTable, address : String) -> NodeEntry? {
+  for entry in self.entries {
+    if entry.record.address == address {
+      return Some(entry)
+    }
+  }
+  None
 }
 
 ///|
@@ -541,6 +589,20 @@ fn handle_control_connection(
           Err(e) => Err((@client.ERR_BAD_PAYLOAD, "bad node record: \{e}"))
         }
       @client.CMD_NODES => Ok(@client.encode_nodes(table.snapshot()))
+      @client.CMD_CONFIRM =>
+        match @client.decode_confirmation(frame.payload) {
+          Ok(confirmation) =>
+            match
+              placement.confirm(
+                confirmation.partition.topic,
+                confirmation.partition.partition,
+                confirmation.candidate,
+              ) {
+              Ok(_) => Ok(b"")
+              Err(e) => Err((@client.ERR_SEQUENCE, e))
+            }
+          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        }
       @client.CMD_LEADER =>
         match @client.decode_partition_ref(frame.payload) {
           Ok(ref) =>
@@ -951,6 +1013,90 @@ fn applied_topic(data_dir : String) -> String {
 }
 
 ///|
+/// Takes a partition the control plane has offered this node:
+/// promotes itself, so the confirmation it sends back reports
+/// something that already happened rather than asking permission.
+/// That ordering is the reference's — the candidate decides it is
+/// ready, and the control plane learns.
+///
+/// `core/replica.promote` owns the judgement about whether this node
+/// may lead (it was offered the partition, it is not already leading),
+/// so "no self-promotion without a nomination" has exactly one
+/// implementation.
+fn PartitionHost::take_nomination(
+  self : PartitionHost,
+  view : @client.PartitionView,
+) -> Result[Unit, String] {
+  if view.nominated != self.address {
+    return Err(
+      "the control plane offered \{view.nominated}, not \{self.address}",
+    )
+  }
+  if self.address == view.leader {
+    return Err("this node already leads the partition")
+  }
+  let state = @replica.ReplicaState::follower(self.address, view.leader)
+  let nomination = @replica.Nomination::{
+    partition_leader: view.leader,
+    candidate: view.nominated,
+  }
+  let promoted = match @replica.promote(state, nomination) {
+    Ok(promoted) => promoted
+    Err(e) => return Err("\{e}")
+  }
+  if !(promoted.role is @replica.Leader) {
+    return Err("promotion did not produce a leader")
+  }
+  self.leader_addr = self.address
+  self.replicas = view.replicas
+  self.caught_up = true
+  // seed the ledger with every replica at zero except this node: the
+  // others report their real positions within a heartbeat, and until
+  // they do, a low watermark is the honest answer
+  let progress : Array[@replica.ReplicaProgress] = []
+  let replicas = if view.replicas.length() > 0 {
+    view.replicas
+  } else {
+    [self.address]
+  }
+  for replica in replicas {
+    let leo = if replica == self.address { self.leo() } else { 0L }
+    progress.push(@replica.ReplicaProgress::{ spu: replica, leo })
+  }
+  match @replica.ProgressLedger::new(self.address, progress) {
+    Ok(ledger) => self.ledger = Some(ledger)
+    Err(e) => return Err("cannot track replica progress: \{e}")
+  }
+  note(
+    "promoted: this node now leads \{self.topic} (the control plane offered it, this node accepted)",
+  )
+  Ok(())
+}
+
+///|
+/// Reports a self-promotion to the control plane, which accepts it
+/// only if this node was the one it offered the partition to.
+fn confirm_leadership(
+  sc_addr : String,
+  topic : String,
+  candidate : String,
+) -> Result[Unit, String] {
+  let confirmation = @client.Confirmation::{
+    partition: @client.PartitionRef::{ topic, partition: 0 },
+    candidate,
+  }
+  match
+    control_call(
+      sc_addr,
+      @client.CMD_CONFIRM,
+      @client.encode_confirmation(confirmation),
+    ) {
+    Ok(_) => Ok(())
+    Err(e) => Err(e)
+  }
+}
+
+///|
 /// The data-node connection handler: `serve`'s protocol plus the
 /// replication commands. Kept beside `handle_connection` rather than
 /// folded into it so that `serve` (a single process that owns its
@@ -1219,14 +1365,168 @@ struct PlacementState {
   data_dir : String
   mut state : @cluster.ClusterState
   mut declarations : Array[TopicDecl]
+  /// addresses this control plane has ever assigned a partition to: an
+  /// assigned node that is merely *down* stays in the replica set (it
+  /// may come back and catch up), which is the difference between
+  /// "the cluster lost a node" and "the cluster rebalanced"
+  assigned : Array[String]
+  /// pending elections: partition label -> the replica offered it. A
+  /// nomination is a *state* here rather than a call, because the
+  /// control plane must never dial a data node: both sides are
+  /// single-threaded loops, and mutual calls let a busy node hang the
+  /// cluster's brain. The candidate learns of its offer in the leader
+  /// reply and confirms once it has taken the partition.
+  mut nominated : Array[(String, String)]
+  /// partitions already reported as having no eligible leader, so the
+  /// condition is stated once rather than every tick
+  mut reported_offline : Array[String]
+  /// data nodes seen online at the last tick. The view consults it so
+  /// that a leader which has gone silent is reported as *nobody*
+  /// leading rather than as the address that used to
+  mut online : Array[String]
+}
+
+///|
+fn cluster_state_path(data_dir : String) -> String {
+  "\{data_dir}/cluster-state.json"
 }
 
 ///|
 fn PlacementState::new(data_dir : String) -> PlacementState {
-  PlacementState::{
+  let empty = PlacementState::{
     data_dir,
     state: @cluster.ClusterState::{ partitions: [] },
     declarations: [],
+    assigned: [],
+    nominated: [],
+    reported_offline: [],
+    online: [],
+  }
+  // assignments outlive the process: a control-plane restart must not
+  // forget where partitions live, or a restart would look like a
+  // rebalance and move replicas that were perfectly fine
+  let bytes = match @fs.read_file(cluster_state_path(data_dir)) {
+    Ok(bytes) => bytes
+    Err(_) => return empty
+  }
+  let text = @utf8.decode_lossy(bytes[0:bytes.length()])
+  let json = @json.parse(text[0:text.length()]) catch {
+    _ => {
+      note(
+        "warning: \{cluster_state_path(data_dir)} is unreadable; starting from an empty placement",
+      )
+      return empty
+    }
+  }
+  let obj = match json {
+    Object(obj) => obj
+    _ => {
+      note("warning: cluster state must be a JSON object; ignoring it")
+      return empty
+    }
+  }
+  let partitions : Array[@cluster.ReplicaSet] = []
+  match obj.get("partitions") {
+    Some(Array(items)) =>
+      for item in items {
+        match parse_replica_set(item) {
+          Some(rs) => partitions.push(rs)
+          None => ()
+        }
+      }
+    _ => ()
+  }
+  let state = @cluster.ClusterState::{ partitions, }
+  let assigned : Array[String] = []
+  for rs in state.partitions {
+    for replica in rs.replicas {
+      if !assigned.contains(replica) {
+        assigned.push(replica)
+      }
+    }
+  }
+  PlacementState::{
+    data_dir,
+    state,
+    declarations: [],
+    assigned,
+    nominated: [],
+    reported_offline: [],
+    online: [],
+  }
+}
+
+///|
+fn parse_replica_set(json : Json) -> @cluster.ReplicaSet? {
+  let obj = match json {
+    Object(obj) => obj
+    _ => return None
+  }
+  let topic = match obj.get("topic") {
+    Some(String(topic)) => topic
+    _ => return None
+  }
+  let index = match obj.get("partition") {
+    Some(Number(n)) => n.to_int()
+    _ => return None
+  }
+  let leader = match obj.get("leader") {
+    Some(String(leader)) => leader
+    _ => ""
+  }
+  let replicas : Array[String] = []
+  match obj.get("replicas") {
+    Some(Array(items)) =>
+      for item in items {
+        match item {
+          String(address) => replicas.push(address)
+          _ => ()
+        }
+      }
+    _ => return None
+  }
+  if replicas.length() == 0 {
+    return None
+  }
+  Some(@cluster.ReplicaSet::{
+    partition: @cluster.PartitionId::{ topic, index },
+    leader,
+    replicas,
+  })
+}
+
+///|
+/// Writes the placement to disk. Best-effort but never silent: a
+/// control plane that cannot persist its decisions says so, because
+/// the next restart would otherwise quietly forget them.
+fn PlacementState::save(self : PlacementState) -> Unit {
+  let items : Array[Json] = []
+  for rs in self.state.partitions {
+    let replicas : Array[Json] = []
+    for replica in rs.replicas {
+      replicas.push(Json::string(replica))
+    }
+    let doc_map : Map[String, Json] = {}
+    doc_map["topic"] = Json::string(rs.partition.topic)
+    doc_map["partition"] = Json::number(rs.partition.index.to_double())
+    doc_map["leader"] = Json::string(rs.leader)
+    doc_map["replicas"] = Json::array(replicas)
+    items.push(Json::object(doc_map))
+  }
+  let root_map : Map[String, Json] = {}
+  root_map["partitions"] = Json::array(items)
+  let text = Json::object(root_map).stringify(indent=2)
+  let path = cluster_state_path(self.data_dir)
+  match @fs.mkdirs(self.data_dir) {
+    Ok(_) => ()
+    Err(e) => {
+      note("warning: cannot create \{self.data_dir}: \{e}")
+      return
+    }
+  }
+  match @fs.write_file(path, @utf8.encode(text[0:text.length()])) {
+    Ok(_) => ()
+    Err(e) => note("warning: cannot persist placement to \{path}: \{e}")
   }
 }
 
@@ -1238,11 +1538,22 @@ fn PlacementState::new(data_dir : String) -> PlacementState {
 /// a configuration to fix, not a crash.
 fn PlacementState::tick(self : PlacementState, table : NodeTable) -> Unit {
   let declarations = read_topic_decls(self.data_dir)
-  let spus : Array[@cluster.SpuSpec] = []
+  // the pool is "everyone we have ever placed on" plus "everyone
+  // present now": a node that goes down keeps its partitions (and so
+  // keeps the high watermark honest), while a node that joins becomes
+  // eligible to receive one
+  let pool : Array[String] = []
+  for address in self.assigned {
+    pool.push(address)
+  }
   for node in table.snapshot() {
-    if node.role is Spu {
-      spus.push(@cluster.SpuSpec::{ id: node.address, address: node.address })
+    if node.role is Spu && !pool.contains(node.address) {
+      pool.push(node.address)
     }
+  }
+  let spus : Array[@cluster.SpuSpec] = []
+  for address in pool {
+    spus.push(@cluster.SpuSpec::{ id: address, address })
   }
   let topics : Array[@cluster.TopicSpec] = []
   for decl in declarations {
@@ -1265,10 +1576,16 @@ fn PlacementState::tick(self : PlacementState, table : NodeTable) -> Unit {
         self.state = @cluster.apply_actions(self.state, actions)
         for action in actions {
           match action {
-            @cluster.PlacePartition(partition, replicas) =>
+            @cluster.PlacePartition(partition, replicas) => {
+              for replica in replicas {
+                if !self.assigned.contains(replica) {
+                  self.assigned.push(replica)
+                }
+              }
               note(
                 "placed \{partition.topic}[\{partition.index}] on \{replicas.length()} replica(s): \{format_addresses(replicas)}",
               )
+            }
             @cluster.AssignLeader(partition, leader) =>
               note(
                 "assigned leader of \{partition.topic}[\{partition.index}]: \{leader}",
@@ -1277,24 +1594,219 @@ fn PlacementState::tick(self : PlacementState, table : NodeTable) -> Unit {
               note("removed \{partition.topic}[\{partition.index}]")
           }
         }
+        self.save()
       }
   }
   self.declarations = declarations
+  // placement is settled; now the availability question: does every
+  // partition still have a living leader?
+  self.elect_fallen_leaders(table)
 }
 
 ///|
-/// The view of one partition: who leads it and who holds it.
+/// Decides who should take a partition whose leader is gone, and
+/// offers it to them.
+///
+/// Who deserves it: the **least lagging eligible replica**
+/// (core/replica's `elect_candidate`, which knows the LRS rule and
+/// excludes the vanished leader). Eligibility comes from each node's
+/// reported LEO — the same numbers the leader used for its watermark,
+/// so the election cannot disagree with replication about who was
+/// furthest along. When nobody is eligible the partition has no
+/// leader, and that steady state is reported once rather than every
+/// tick.
+///
+/// The offer is recorded, not sent: the candidate reads it from the
+/// leader reply and confirms after promoting itself. A control plane
+/// that dialed data nodes could be blocked by a busy one.
+fn PlacementState::elect_fallen_leaders(
+  self : PlacementState,
+  table : NodeTable,
+) -> Unit {
+  let online : Array[String] = []
+  for node in table.snapshot() {
+    if node.role is Spu {
+      online.push(node.address)
+    }
+  }
+  self.online = online
+  for rs in self.state.partitions {
+    let label = "\{rs.partition.topic}[\{rs.partition.index}]"
+    if rs.leader.length() > 0 && online.contains(rs.leader) {
+      continue // the leader is alive: nothing to decide
+    }
+    // build the ledger from what the nodes themselves reported, so
+    // the election reads exactly the facts replication does
+    let progress : Array[@replica.ReplicaProgress] = []
+    for replica in rs.replicas {
+      let leo = match table.find_address(replica) {
+        Some(entry) => entry.record.leo
+        None => 0L
+      }
+      progress.push(@replica.ReplicaProgress::{ spu: replica, leo })
+    }
+    // the yardstick is the best *surviving* copy, not the vanished
+    // leader's last number: measuring "too far behind" against a node
+    // that no longer exists would call every survivor caught up
+    let mut yardstick = rs.leader
+    let mut best : Int64 = -1L
+    for p in progress {
+      if p.leo > best {
+        best = p.leo
+        yardstick = p.spu
+      }
+    }
+    let ledger = match @replica.ProgressLedger::new(yardstick, progress) {
+      Ok(ledger) => ledger
+      Err(e) => {
+        note("warning: cannot weigh candidates for \{label}: \{e}")
+        continue
+      }
+    }
+    let policy = @replica.LrsPolicy::{
+      max_lag_records: @replica.DEFAULT_MAX_LAG,
+    }
+    match @replica.elect_candidate(ledger, policy, rs.leader) {
+      Some(candidate) =>
+        if online.contains(candidate) {
+          let already = match self.nomination_of(label) {
+            Some(current) => current == candidate
+            None => false
+          }
+          if !already {
+            self.set_nomination(label, candidate)
+            note(
+              "offering \{label} to \{candidate} (least lagging eligible replica; previous leader \{rs.leader} is gone)",
+            )
+          }
+        }
+      None =>
+        if !self.reported_offline.contains(label) {
+          self.reported_offline.push(label)
+          note(
+            "no eligible replica for \{label}: partition is offline (a replica too far behind has no vote)",
+          )
+        }
+    }
+  }
+}
+
+///|
+fn PlacementState::nomination_of(
+  self : PlacementState,
+  label : String,
+) -> String? {
+  for pair in self.nominated {
+    if pair.0 == label {
+      return Some(pair.1)
+    }
+  }
+  None
+}
+
+///|
+fn PlacementState::set_nomination(
+  self : PlacementState,
+  label : String,
+  candidate : String,
+) -> Unit {
+  let kept : Array[(String, String)] = []
+  for pair in self.nominated {
+    if pair.0 != label {
+      kept.push(pair)
+    }
+  }
+  kept.push((label, candidate))
+  self.nominated = kept
+}
+
+///|
+fn PlacementState::clear_nomination(
+  self : PlacementState,
+  label : String,
+) -> Unit {
+  let kept : Array[(String, String)] = []
+  for pair in self.nominated {
+    if pair.0 != label {
+      kept.push(pair)
+    }
+  }
+  self.nominated = kept
+}
+
+///|
+/// Accepts a candidate's claim to a partition — but only if this
+/// control plane was the one that offered it. That check is what
+/// keeps "promotion requires a nomination" true end to end: a node
+/// cannot talk its way into leadership, it can only report a
+/// promotion that was already authorized.
+fn PlacementState::confirm(
+  self : PlacementState,
+  topic : String,
+  partition : Int,
+  candidate : String,
+) -> Result[Unit, String] {
+  let label = "\{topic}[\{partition}]"
+  match self.nomination_of(label) {
+    None =>
+      return Err(
+        "no election was pending for \{label}; \{candidate} promoted itself without a nomination",
+      )
+    Some(expected) =>
+      if expected != candidate {
+        return Err("\{label} was offered to \{expected}, not \{candidate}")
+      }
+  }
+  let updated : Array[@cluster.ReplicaSet] = []
+  for rs in self.state.partitions {
+    if rs.partition.topic == topic && rs.partition.index == partition {
+      updated.push(@cluster.ReplicaSet::{
+        partition: rs.partition,
+        leader: candidate,
+        replicas: rs.replicas,
+      })
+    } else {
+      updated.push(rs)
+    }
+  }
+  self.state = @cluster.ClusterState::{ partitions: updated }
+  self.clear_nomination(label)
+  let kept : Array[String] = []
+  for seen in self.reported_offline {
+    if seen != label {
+      kept.push(seen)
+    }
+  }
+  self.reported_offline = kept
+  self.save()
+  note("elected \{candidate} leader of \{label}")
+  Ok(())
+}
+
+///|
+/// The view of one partition: who leads it, who holds it, and who is
+/// being offered it. The offer rides along because the candidate has
+/// to learn about its nomination somehow, and this is the one reply
+/// every data node already asks for on every tick.
 fn PlacementState::view(
   self : PlacementState,
   topic : String,
   partition : Int,
 ) -> @client.PartitionView {
+  let label = "\{topic}[\{partition}]"
+  let nominated = match self.nomination_of(label) {
+    Some(candidate) => candidate
+    None => ""
+  }
   for rs in self.state.partitions {
     if rs.partition.topic == topic && rs.partition.index == partition {
-      return @client.PartitionView::{ leader: rs.leader, replicas: rs.replicas }
+      // a leader that has gone silent leads nothing: report nobody
+      // (the nomination still travels, so a candidate can take over)
+      let leader = if self.online.contains(rs.leader) { rs.leader } else { "" }
+      return @client.PartitionView::{ leader, replicas: rs.replicas, nominated }
     }
   }
-  @client.PartitionView::{ leader: "", replicas: [] }
+  @client.PartitionView::{ leader: "", replicas: [], nominated }
 }
 
 ///|

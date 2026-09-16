@@ -391,6 +391,7 @@ test "partition views carry the leader and the replica set" {
   let view = PartitionView::{
     leader: "127.0.0.1:1",
     replicas: ["127.0.0.1:1", "127.0.0.1:2"],
+    nominated: "",
   }
   match decode_partition_view(encode_partition_view(view)) {
     Ok(decoded) => assert_eq(decoded, view)
@@ -398,11 +399,17 @@ test "partition views carry the leader and the replica set" {
   }
   // "no leader yet" is a state, not an error: the replica set may
   // still be known
-  let unassigned = PartitionView::{ leader: "", replicas: ["127.0.0.1:1"] }
+  let unassigned = PartitionView::{
+    leader: "",
+    replicas: ["127.0.0.1:1"],
+    nominated: "127.0.0.1:1",
+  }
   match decode_partition_view(encode_partition_view(unassigned)) {
     Ok(decoded) => {
       assert_eq(decoded.leader, "")
       assert_eq(decoded.replicas.length(), 1)
+      // an offer without a leader is exactly the election state
+      assert_eq(decoded.nominated, "127.0.0.1:1")
     }
     Err(e) => abort("unassigned view: \{e}")
   }

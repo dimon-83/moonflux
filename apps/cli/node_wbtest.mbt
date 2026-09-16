@@ -67,3 +67,64 @@ test "the snapshot lists online nodes, id-sorted" {
   assert_eq(table.snapshot().length(), 0)
   assert_eq(table.entries.length(), 3)
 }
+
+///|
+test "placement state remembers assignments and pending offers" {
+  let state = PlacementState::new("/tmp/moonflux-placement-test-nonexistent")
+  assert_eq(state.state.partitions.length(), 0)
+  // a fresh control plane knows nothing; the view answers "nobody
+  // leads" rather than inventing a leader
+  let view = state.view("events", 0)
+  assert_eq(view.leader, "")
+  assert_eq(view.replicas.length(), 0)
+  assert_eq(view.nominated, "")
+}
+
+///|
+test "a promotion without a nomination is refused" {
+  let state = PlacementState::new("/tmp/moonflux-placement-test-nonexistent")
+  // no election was ever offered: a node claiming the partition is
+  // promoting itself, which is exactly what must not be accepted
+  match state.confirm("events", 0, "127.0.0.1:2") {
+    Err(msg) => assert_true(msg.contains("without a nomination"))
+    Ok(_) => abort("an unrequested promotion must be refused")
+  }
+}
+
+///|
+test "a nomination offered to one node cannot be claimed by another" {
+  let state = PlacementState::new("/tmp/moonflux-placement-test-nonexistent")
+  state.set_nomination("events[0]", "127.0.0.1:2")
+  assert_eq(state.nomination_of("events[0]"), Some("127.0.0.1:2"))
+  match state.confirm("events", 0, "127.0.0.1:3") {
+    Err(msg) => assert_true(msg.contains("was offered to"))
+    Ok(_) => abort("a stranger must not claim the offer")
+  }
+  // the right node is accepted, and the offer is consumed
+  match state.confirm("events", 0, "127.0.0.1:2") {
+    Ok(_) => ()
+    Err(e) => abort("the nominated node should be accepted: \{e}")
+  }
+  assert_eq(state.nomination_of("events[0]"), None)
+}
+
+///|
+test "the ledger yardstick is the best surviving copy" {
+  // this mirrors what elect_fallen_leaders does: measure lag against
+  // the furthest-along replica, not against the vanished leader
+  let progress : Array[@replica.ReplicaProgress] = [
+    @replica.ReplicaProgress::{ spu: "a", leo: 3L },
+    @replica.ReplicaProgress::{ spu: "b", leo: 1200L },
+  ]
+  let ledger = match @replica.ProgressLedger::new("b", progress) {
+    Ok(ledger) => ledger
+    Err(e) => abort("ledger: \{e}")
+  }
+  let policy = @replica.LrsPolicy::{ max_lag_records: @replica.DEFAULT_MAX_LAG }
+  // asking with a as the reference would call b "caught up" and
+  // measure nothing; with b as the yardstick, a is far behind
+  assert_eq(@replica.lag_of(ledger, "a"), Some(1197L))
+  assert_true(!@replica.has_vote(ledger, policy, "a"))
+  // and b — the yardstick itself — is eligible by definition
+  assert_true(@replica.has_vote(ledger, policy, "b"))
+}

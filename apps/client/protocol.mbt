@@ -75,6 +75,18 @@ pub const CMD_SYNC_ACK = 12
 /// Reads a partition's watermark pair (HW/LEO) from its leader.
 pub const CMD_OFFSET_INFO = 13
 
+///|
+/// The control plane offering a replica the partition. Authority
+/// arrives by nomination and only by nomination: a node that promotes
+/// itself unprompted is a split brain, not initiative.
+pub const CMD_NOMINATE = 14
+
+///|
+/// The candidate's answer: it has promoted itself and is now the
+/// leader. Two-phase in the reference (nominate, then promote and
+/// confirm) — the confirmation is this reply.
+pub const CMD_CONFIRM = 15
+
 // Stable error codes (client-visible contract).
 
 ///|
@@ -569,6 +581,10 @@ pub(all) struct PartitionView {
   leader : String
   /// addresses of every replica, leader included when assigned
   replicas : Array[String]
+  /// the replica the control plane is offering this partition to, or
+  /// "" when no election is pending. A node that finds itself here
+  /// promotes itself and confirms.
+  nominated : String
 } derive(Debug, Eq, Show)
 
 ///|
@@ -579,6 +595,7 @@ pub fn encode_partition_view(view : PartitionView) -> Bytes {
   for replica in view.replicas {
     write_field(buf, replica)
   }
+  write_field(buf, view.nominated)
   buf.to_bytes()
 }
 
@@ -600,10 +617,14 @@ pub fn decode_partition_view(payload : Bytes) -> Result[PartitionView, String] {
       Err(e) => return Err(e)
     }
   }
+  let nominated = match read_field(reader) {
+    Ok(nominated) => nominated
+    Err(e) => return Err(e)
+  }
   if !reader.is_empty() {
     return Err("trailing bytes after partition view")
   }
-  Ok(PartitionView::{ leader, replicas })
+  Ok(PartitionView::{ leader, replicas, nominated })
 }
 
 ///|
@@ -630,4 +651,47 @@ pub fn decode_offset_info(payload : Bytes) -> Result[(Int64, Int64), String] {
     Err(_) => return Err("truncated log end offset")
   }
   Ok((hw, leo))
+}
+
+///|
+/// A confirmation: which partition, and who took it. The control
+/// plane accepts it only from the node it offered the partition to,
+/// so a confirmation cannot create leadership — only report the one
+/// it authorized.
+pub(all) struct Confirmation {
+  partition : PartitionRef
+  candidate : String
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_confirmation(confirmation : Confirmation) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, confirmation.partition.topic)
+  buf.write_leb128(confirmation.partition.partition)
+  write_field(buf, confirmation.candidate)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_confirmation(payload : Bytes) -> Result[Confirmation, String] {
+  let reader = @codec.Reader::new(payload)
+  let topic = match read_field(reader) {
+    Ok(topic) => topic
+    Err(e) => return Err(e)
+  }
+  let partition = match reader.read_uleb128_len() {
+    Ok(partition) => partition
+    Err(_) => return Err("truncated partition index")
+  }
+  let candidate = match read_field(reader) {
+    Ok(candidate) => candidate
+    Err(e) => return Err(e)
+  }
+  if candidate.length() == 0 {
+    return Err("a confirmation needs a candidate")
+  }
+  if !reader.is_empty() {
+    return Err("trailing bytes after confirmation")
+  }
+  Ok(Confirmation::{ partition: PartitionRef::{ topic, partition }, candidate })
 }

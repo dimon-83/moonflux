@@ -56,6 +56,33 @@ pub fn Conn::tcp(host : String, port : Int) -> Result[Conn, String] {
 }
 
 ///|
+/// Opens a connection whose reads give up after `timeout_ms`.
+///
+/// Node-to-node calls need this. Both peers are single-threaded
+/// loops that alternately serve requests and do housekeeping, so two
+/// nodes can end up each waiting on the other — the control plane
+/// nominating a replica while that replica is asking the control
+/// plane who leads. A deadline converts that deadlock into a failed
+/// call that the next tick simply retries, which is the only sane
+/// outcome for a liveness protocol: no node should be able to hang
+/// another by being busy.
+pub fn Conn::tcp_with_timeout(
+  host : String,
+  port : Int,
+  timeout_ms : Int,
+) -> Result[Conn, String] {
+  let stream = match @net.TcpStream::connect(host, port) {
+    Ok(stream) => stream
+    Err(e) => return Err("connect \{host}:\{port}: \{e}")
+  }
+  match stream.set_recv_timeout_ms(timeout_ms) {
+    Ok(_) => ()
+    Err(e) => return Err("set timeout: \{e}")
+  }
+  Ok(wrap_stream(stream))
+}
+
+///|
 /// Creates a connected in-process pair (AF_UNIX socketpair) for tests
 /// and loopback tooling.
 pub fn Conn::socketpair() -> Result[(Conn, Conn), String] {
