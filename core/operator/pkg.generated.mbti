@@ -1,0 +1,76 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/operator"
+
+import {
+  "moonbitlang/core/debug",
+  "moonflux/core/protocol",
+}
+
+// Values
+pub const ABI_VERSION : Int = 1
+
+pub const ENVELOPE_BASE_OFFSET : Int64 = -1
+
+pub const EXPORT_ABI_VERSION : String = "mf_op_abi_version"
+
+pub const EXPORT_INIT : String = "mf_op_init"
+
+pub const EXPORT_PROCESS : String = "mf_op_process"
+
+pub fn call_timeout_hint_ms(BudgetTier) -> Int
+
+pub fn check_budget(BudgetTier, Int) -> Result[Unit, OperatorError]
+
+pub fn decode_process_payload(Bytes) -> Result[Array[@protocol.Record], OperatorError]
+
+pub fn encode_process_payload(Array[@protocol.Record]) -> Bytes
+
+pub fn fn_engine((Array[@protocol.Record]) -> Array[@protocol.Record]) -> OperatorEngine
+
+pub fn fuel_per_call(BudgetTier) -> Int64
+
+pub fn max_records_per_call(BudgetTier) -> Int
+
+pub fn passthrough_engine() -> OperatorEngine
+
+pub fn validate_abi_version(Int) -> Result[Unit, OperatorError]
+
+// Errors
+pub(all) suberror OperatorError {
+  InvalidSpec(String)
+  AbiVersionMismatch(Int)
+  BudgetExceeded(String)
+  GuestTrap(String)
+  BadEnvelope(String)
+} derive(Eq, @debug.Debug)
+pub impl Show for OperatorError
+
+// Types and methods
+pub(all) enum BudgetTier {
+  Internal
+  User
+  Tenant
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct OperatorEngine {
+  instantiate : (OperatorSpec) -> Result[OperatorInstance, OperatorError]
+}
+
+pub(all) struct OperatorInstance {
+  abi_version : Int
+  process : (Array[@protocol.Record]) -> Result[Array[@protocol.Record], OperatorError]
+  close : () -> Unit
+}
+
+pub(all) struct OperatorSpec {
+  name : String
+  module_path : String
+  budget : BudgetTier
+  config : String
+} derive(Eq, Show, @debug.Debug)
+pub fn OperatorSpec::validate(Self) -> Result[Unit, OperatorError]
+
+// Type aliases
+
+// Traits
+

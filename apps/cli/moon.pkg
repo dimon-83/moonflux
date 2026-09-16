@@ -6,6 +6,7 @@ import {
   "moonbitlang/core/string",
   "moonflux/core/codec",
   "moonflux/core/log",
+  "moonflux/core/operator",
   "moonflux/core/pipeline",
   "moonflux/core/protocol",
   "moonflux/core/spec",
@@ -14,6 +15,7 @@ import {
   "moonflux/apps/transform",
   "moonflux/adapters/fs-native" @fs,
   "moonflux/adapters/net-native" @net,
+  "moonflux/adapters/wasmtime-native" @wasmtime,
 }
 
 options(

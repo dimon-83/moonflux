@@ -27,10 +27,13 @@ pub(all) struct PipelineSpec {
 
 pub(all) enum SinkSpec {
   StdoutSink
+  HttpSink(String)
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) enum SourceSpec {
   FileSource(String)
+  HttpSource(String)
+  StdinSource
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct SpecError {
@@ -45,6 +48,7 @@ pub(all) struct TopicSpec {
 
 pub(all) enum TransformSpec {
   ExprTransform(String)
+  WasmTransform(String, String)
 } derive(Eq, Show, @debug.Debug)
 
 // Type aliases

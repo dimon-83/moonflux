@@ -123,6 +123,7 @@ moonflux/
 | 项目定义 | [README.md](README.md) | 定位 / 能力对标表 / 范围 / 路线图 / 决策记录 |
 | 立项评估报告 | [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md) | 架构与选型的全部证据（7 章） |
 | 对标参考工作规约 | [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md) | 在 Fluvio 参考仓库作业时的硬规则 |
+| CLI 命令工具规划 | [docs/cli-roadmap.md](docs/cli-roadmap.md) | 命令面分阶段规划（对标 Fluvio CLI；README 决策 13） |
 | mbel 表达式引擎 | `~/workspace/mbel` | 动态规则层的候选内核 |
 | mbel-orch 设计 | `~/workspace/mbel-orch` | 算子/插件分发体系的设计参考 |
 

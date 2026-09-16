@@ -7,6 +7,8 @@ import {
 }
 
 // Values
+pub fn capability_runnable(String) -> Bool
+
 pub fn compile(@spec.PipelineSpec) -> Topology
 
 pub fn diff(Topology?, Topology) -> Array[DiffOp]

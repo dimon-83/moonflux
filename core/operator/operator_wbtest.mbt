@@ -14,7 +14,12 @@ fn rec(value : String) -> @protocol.Record {
 
 ///|
 fn spec(budget : BudgetTier) -> OperatorSpec {
-  OperatorSpec::{ name: "op", module_path: "operators/identity.wasm", budget }
+  OperatorSpec::{
+    name: "op",
+    module_path: "operators/identity.wasm",
+    budget,
+    config: "{}",
+  }
 }
 
 ///|
@@ -61,6 +66,16 @@ test "budget tiers cap record counts" {
 }
 
 ///|
+test "fuel budgets scale with the tier and stay positive" {
+  assert_eq(fuel_per_call(Internal), 50000000L)
+  assert_eq(fuel_per_call(User), 10000000L)
+  assert_eq(fuel_per_call(Tenant), 2000000L)
+  assert_true(fuel_per_call(Internal) > fuel_per_call(User))
+  assert_true(fuel_per_call(User) > fuel_per_call(Tenant))
+  assert_true(fuel_per_call(Tenant) > 0L)
+}
+
+///|
 test "passthrough engine round trips through the envelope" {
   let engine = passthrough_engine()
   let instance = match (engine.instantiate)(spec(Internal)) {
@@ -80,7 +95,12 @@ test "passthrough engine round trips through the envelope" {
 test "engines enforce spec validation and budget" {
   let engine = passthrough_engine()
   // invalid spec refused at instantiate
-  let bad = OperatorSpec::{ name: "", module_path: "x.wasm", budget: Internal }
+  let bad = OperatorSpec::{
+    name: "",
+    module_path: "x.wasm",
+    budget: Internal,
+    config: "{}",
+  }
   assert_true((engine.instantiate)(bad) is Err(_))
   // budget enforced inside process
   let engine2 = fn_engine(fn(records) { records })

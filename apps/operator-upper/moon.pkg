@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // apps/operator-upper: the uppercase operator module (wasm guest).
 
+import {
+  "moonflux/apps/operator-sdk" @sdk,
+}
+
 options(
   "is-main": true,
   link: {
@@ -17,7 +21,3 @@ options(
     },
   },
 )
-
-import {
-  "moonflux/apps/operator-sdk" @sdk,
-}

@@ -47,13 +47,13 @@ test "identity operator runs through wasmtime" {
       Err(e) => Err("\{e}")
     }
   })
-  let instance = match (engine.instantiate)(
-    @operator.OperatorSpec::{
+  let instance = match
+    (engine.instantiate)(@operator.OperatorSpec::{
       name: "identity",
       module_path: path,
       budget: Internal,
-    },
-  ) {
+      config: "{}",
+    }) {
     Ok(instance) => instance
     Err(e) => abort("instantiate: \{e}")
   }
@@ -82,13 +82,13 @@ test "uppercase operator transforms through wasmtime" {
       Err(e) => Err("\{e}")
     }
   })
-  let instance = match (engine.instantiate)(
-    @operator.OperatorSpec::{
+  let instance = match
+    (engine.instantiate)(@operator.OperatorSpec::{
       name: "upper",
       module_path: path,
       budget: Internal,
-    },
-  ) {
+      config: "{}",
+    }) {
     Ok(instance) => instance
     Err(e) => abort("instantiate: \{e}")
   }
@@ -110,15 +110,101 @@ test "missing module fails as InvalidSpec" {
       Err(e) => Err("\{e}")
     }
   })
-  match (engine.instantiate)(
-    @operator.OperatorSpec::{
+  match
+    (engine.instantiate)(@operator.OperatorSpec::{
       name: "gone",
       module_path: "/tmp/definitely-not-here.wasm",
       budget: Internal,
-    },
-  ) {
+      config: "{}",
+    }) {
     Err(@operator.InvalidSpec(_)) => ()
     Err(e) => abort("expected InvalidSpec, got \{e}")
     Ok(_) => abort("expected failure")
+  }
+}
+
+///|
+/// Instantiates the fixture operator with the given config text.
+fn fixture_instance(config : String) -> @operator.OperatorInstance {
+  let path = match locate_module("operator-fixture") {
+    Some(path) => path
+    None => abort("operator module missing: run scripts/build-operators.sh")
+  }
+  let engine = operator_engine(fn(path) {
+    match @fs.read_file(path) {
+      Ok(bytes) => Ok(bytes)
+      Err(e) => Err("\{e}")
+    }
+  })
+  match
+    (engine.instantiate)(@operator.OperatorSpec::{
+      name: "fixture",
+      module_path: path,
+      budget: Internal,
+      config,
+    }) {
+    Ok(instance) => instance
+    Err(e) => abort("instantiate fixture (\{config}): \{e}")
+  }
+}
+
+///|
+test "guest refusal surfaces as GuestTrap with its message" {
+  let instance = fixture_instance("{\"mode\":\"refuse\"}")
+  match (instance.process)([rec("hello")]) {
+    Err(@operator.GuestTrap(msg)) =>
+      assert_true(msg.contains("fixture refused this batch on purpose"))
+    Err(e) => abort("expected GuestTrap, got \{e}")
+    Ok(_) => abort("expected the guest to refuse the batch")
+  }
+  (instance.close)()
+}
+
+///|
+test "guest trap surfaces as a structured error" {
+  let instance = fixture_instance("{\"mode\":\"trap\"}")
+  match (instance.process)([rec("hello")]) {
+    Err(@operator.GuestTrap(msg)) => assert_true(msg.contains("unreachable"))
+    Err(e) => abort("expected GuestTrap, got \{e}")
+    Ok(_) => abort("expected the guest to trap")
+  }
+  (instance.close)()
+}
+
+///|
+test "runaway guest is stopped by the fuel budget" {
+  let instance = fixture_instance("{\"mode\":\"spin\"}")
+  match (instance.process)([rec("hello")]) {
+    Err(@operator.BudgetExceeded(msg)) =>
+      assert_true(msg.contains("fuel budget"))
+    Err(e) => abort("expected BudgetExceeded, got \{e}")
+    Ok(_) => abort("expected the guest to run out of fuel")
+  }
+  (instance.close)()
+}
+
+///|
+test "operator-rejected config fails at instantiate" {
+  let path = match locate_module("operator-fixture") {
+    Some(path) => path
+    None => abort("operator module missing: run scripts/build-operators.sh")
+  }
+  let engine = operator_engine(fn(path) {
+    match @fs.read_file(path) {
+      Ok(bytes) => Ok(bytes)
+      Err(e) => Err("\{e}")
+    }
+  })
+  match
+    (engine.instantiate)(@operator.OperatorSpec::{
+      name: "fixture",
+      module_path: path,
+      budget: Internal,
+      config: "{\"mode\":\"nonsense\"}",
+    }) {
+    Err(@operator.InvalidSpec(msg)) =>
+      assert_true(msg.contains("rejected its config"))
+    Err(e) => abort("expected InvalidSpec, got \{e}")
+    Ok(_) => abort("expected the config to be rejected")
   }
 }

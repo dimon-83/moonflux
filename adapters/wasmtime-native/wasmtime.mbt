@@ -50,7 +50,8 @@ pub fn operator_engine(
       }
       let wasm = match load_module(spec.module_path) {
         Ok(wasm) => wasm
-        Err(e) => return Err(@operator.InvalidSpec("load \{spec.module_path}: \{e}"))
+        Err(e) =>
+          return Err(@operator.InvalidSpec("load \{spec.module_path}: \{e}"))
       }
       let err : FixedArray[Byte] = FixedArray::make(1024, b'\x00')
       let handle = we_session_new(wasm, wasm.length(), err, err.length())
@@ -71,15 +72,25 @@ pub fn operator_engine(
         }
         Ok(_) => ()
       }
-      // init with the empty-object config (v1 operators take none)
-      let empty = alloc_buffer(session, 2)
+      // init with the spec's config payload (guest-defined JSON)
+      let config = session.spec.config
+      let cfg_bytes = @utf8.encode(config)
+      let empty = alloc_buffer(session, cfg_bytes.length())
       match empty {
         Err(e) => {
           we_session_free(session.handle)
           return Err(e)
         }
         Ok(ptr) => {
-          if we_mem_write(session.handle, ptr, b"{}", 2, err, err.length()) != 0 {
+          if we_mem_write(
+              session.handle,
+              ptr,
+              cfg_bytes,
+              cfg_bytes.length(),
+              err,
+              err.length(),
+            ) !=
+            0 {
             we_session_free(session.handle)
             return Err(call_err(err))
           }
@@ -90,18 +101,16 @@ pub fn operator_engine(
           }
           if init_out[0] != 0 {
             we_session_free(session.handle)
-            return Err(@operator.InvalidSpec("operator rejected the config"))
+            return Err(
+              @operator.InvalidSpec("operator rejected its config: \{config}"),
+            )
           }
         }
       }
       Ok(@operator.OperatorInstance::{
         abi_version: out[0],
-        process: fn(records) {
-          process_batch(session, records)
-        },
-        close: fn() {
-          we_session_free(session.handle)
-        },
+        process: fn(records) { process_batch(session, records) },
+        close: fn() { we_session_free(session.handle) },
       })
     },
   }
@@ -137,12 +146,40 @@ fn process_batch(
     Ok(ptr) => ptr
     Err(e) => return Err(e)
   }
-  if we_mem_write(session.handle, ptr, payload, payload.length(), err, err.length()) != 0 {
+  if we_mem_write(
+      session.handle,
+      ptr,
+      payload,
+      payload.length(),
+      err,
+      err.length(),
+    ) !=
+    0 {
     return Err(call_err(err))
   }
-  // 2. run the operator over the buffer
+  // 2. install the tier's instruction budget, then run the operator
+  // over the buffer. Fuel is a deterministic meter: a guest that runs
+  // away hits it and we report a budget error, never a generic trap.
+  let fuel_out : FixedArray[Int64] = FixedArray::make(1, 0L)
+  if we_set_fuel(
+      session.handle,
+      @operator.fuel_per_call(session.spec.budget),
+      err,
+      err.length(),
+    ) !=
+    0 {
+    return Err(call_err(err))
+  }
   let out : FixedArray[Int] = FixedArray::make(1, 0)
   if we_process(session.handle, ptr, out, err, err.length()) != 0 {
+    if we_fuel_left(session.handle, fuel_out, err, err.length()) == 0 &&
+      fuel_out[0] <= 0L {
+      return Err(
+        @operator.BudgetExceeded(
+          "operator exhausted its fuel budget (\{@operator.fuel_per_call(session.spec.budget)} instructions) before returning",
+        ),
+      )
+    }
     return Err(call_err(err))
   }
   let out_ptr = out[0]

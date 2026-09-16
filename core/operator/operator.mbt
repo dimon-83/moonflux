@@ -69,6 +69,19 @@ pub fn call_timeout_hint_ms(tier : BudgetTier) -> Int {
 }
 
 ///|
+/// Instruction budget for one process call, by tier. Runtimes with a
+/// deterministic fuel meter (wasmtime) install this before each call;
+/// exhaustion is a BudgetExceeded, not a trap. Fuel — unlike a clock —
+/// is reproducible, so a replayed batch fails the same way.
+pub fn fuel_per_call(tier : BudgetTier) -> Int64 {
+  match tier {
+    Internal => 50000000L
+    User => 10000000L
+    Tenant => 2000000L
+  }
+}
+
+///|
 /// Operator sandbox failure modes. Closed set: adapters map their
 /// platform errors onto these (AGENTS §5).
 pub(all) suberror OperatorError {
@@ -98,11 +111,15 @@ pub impl Show for OperatorError with fn output(self, logger) {
 
 ///|
 /// One operator declaration inside a pipeline: which module, which
-/// budget. The export names are fixed by ABI v1 (not configurable).
+/// budget, and the guest's own config payload. The export names are
+/// fixed by ABI v1 (not configurable); the config is opaque to the
+/// kernel and handed to mf_op_init verbatim.
 pub(all) struct OperatorSpec {
   name : String
   module_path : String
   budget : BudgetTier
+  /// compact JSON text ("{}" = no config)
+  config : String
 } derive(Debug, Eq, Show)
 
 ///|

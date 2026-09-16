@@ -38,12 +38,13 @@ test "compile is deterministic" {
 }
 
 ///|
-test "transform compiles to a p1-tagged runner that refuses to run" {
+test "transform compiles to an mbel-tagged runner" {
   let t = compile(spec(SPEC_T))
   assert_eq(t.processes.length(), 4)
   assert_eq(t.processes[2].name, "transform-0")
-  assert_eq(t.processes[2].capability, "mbel-p1")
-  assert_false(runnable(t))
+  assert_eq(t.processes[2].capability, "mbel")
+  assert_eq(t.processes[2].detail, "expr transform: upper()")
+  assert_true(runnable(t))
 }
 
 ///|
@@ -62,6 +63,36 @@ test "diff: full create, no-op, update" {
     update[0]
     is Update("source-runner", "file source: a.txt", "file source: b.txt"),
   )
+}
+
+///|
+const SPEC_W : String = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"file-to-stdout\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"a.txt\"},\"transforms\":[{\"type\":\"wasm\",\"module\":\"operators/upper.wasm\"}],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}"
+
+///|
+const SPEC_W_CFG : String = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"file-to-stdout\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"a.txt\"},\"transforms\":[{\"type\":\"wasm\",\"module\":\"operators/upper.wasm\",\"config\":{\"mode\":\"identity\"}}],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}"
+
+///|
+test "wasm transform compiles with wasm capability" {
+  let t = compile(spec(SPEC_W))
+  assert_eq(t.processes.length(), 4)
+  assert_eq(t.processes[2].name, "transform-0")
+  assert_eq(t.processes[2].capability, "wasm")
+  assert_eq(
+    t.processes[2].detail,
+    "wasm operator: operators/upper.wasm config={}",
+  )
+  assert_true(runnable(t))
+}
+
+///|
+test "wasm transform carries its operator config into the plan" {
+  let t = compile(spec(SPEC_W_CFG))
+  assert_eq(t.processes[2].capability, "wasm")
+  assert_eq(
+    t.processes[2].detail,
+    "wasm operator: operators/upper.wasm config={\"mode\":\"identity\"}",
+  )
+  assert_true(runnable(t))
 }
 
 ///|

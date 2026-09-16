@@ -127,10 +127,7 @@ pub fn last_error_text() -> String {
 /// Runs a guest operator over one process-call payload: decode ->
 /// apply -> encode. The ABI function bodies in each operator package
 /// are three lines around this.
-pub fn run_call(
-  op : GuestOperator,
-  input : Bytes,
-) -> Result[Bytes, String] {
+pub fn run_call(op : GuestOperator, input : Bytes) -> Result[Bytes, String] {
   let records = match decode_input(input) {
     Ok(records) => records
     Err(e) => return Err(e)
@@ -157,14 +154,19 @@ pub fn parse_config(config : Bytes) -> Result[Map[String, Json], String] {
 }
 
 ///|
+/// Reads a string-valued config key, so operators that only need
+/// scalars don't have to import the JSON package themselves.
+pub fn config_string(config : Map[String, Json], key : String) -> String? {
+  match config.get(key) {
+    Some(String(s)) => Some(s)
+    _ => None
+  }
+}
+
+///|
 /// Identity operator: records pass through unchanged.
 pub fn identity() -> GuestOperator {
-  GuestOperator::{
-    name: "identity",
-    process: fn(records) {
-      Ok(records)
-    },
-  }
+  GuestOperator::{ name: "identity", process: fn(records) { Ok(records) } }
 }
 
 ///|
@@ -177,14 +179,12 @@ pub fn uppercase() -> GuestOperator {
       let out : Array[@protocol.Record] = []
       for r in records {
         let value = @utf8.decode_lossy(r.value[0:r.value.length()])
-        out.push(
-          @protocol.Record::{
-            timestamp: r.timestamp,
-            key: r.key,
-            value: @utf8.encode(value.to_upper()[0:value.length()]),
-            headers: r.headers,
-          },
-        )
+        out.push(@protocol.Record::{
+          timestamp: r.timestamp,
+          key: r.key,
+          value: @utf8.encode(value.to_upper()[0:value.length()]),
+          headers: r.headers,
+        })
       }
       Ok(out)
     },

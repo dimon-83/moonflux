@@ -35,11 +35,14 @@ pub(all) enum SourceSpec {
 } derive(Debug, Eq, Show)
 
 ///|
-/// v1alpha1 accepts expression transforms in the document (they are
-/// validated for shape) but execution requires the P1 mbel
-/// integration; the compiler tags them so runners can refuse.
+/// v1alpha1 transform nodes. `expr` runs the mbel expression engine
+/// (per record); `wasm` runs a compiled operator module through the
+/// sandbox ABI (per batch, P2) with the operator's own JSON config.
+/// Both execute on the consumption path.
 pub(all) enum TransformSpec {
   ExprTransform(String)
+  /// module path + operator config (compact JSON text, "{}" = none)
+  WasmTransform(String, String)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -286,7 +289,12 @@ fn parse_body(
       for i, item in items {
         let path = "$.spec.transforms[\{i}]"
         if item is Object(t) {
-          reject_unknown_keys(path, t, ["type", "expr"], errors)
+          reject_unknown_keys(
+            path,
+            t,
+            ["type", "expr", "module", "config"],
+            errors,
+          )
           match t.get("type") {
             Some(String("expr")) =>
               match t.get("expr") {
@@ -307,11 +315,45 @@ fn parse_body(
                     message: "expr transforms require a string expr",
                   })
               }
+            Some(String("wasm")) =>
+              match t.get("module") {
+                Some(String(mpath)) =>
+                  if mpath.length() == 0 {
+                    errors.push(SpecError::{
+                      path: "\{path}.module",
+                      code: "bad-value",
+                      message: "module path must not be empty",
+                    })
+                  } else {
+                    // operator config is guest-defined: the kernel only
+                    // insists it be a JSON object, and passes the
+                    // compact text through to mf_op_init.
+                    match t.get("config") {
+                      None => out.push(WasmTransform(mpath, "{}"))
+                      Some(config) =>
+                        if config is Object(_) {
+                          out.push(WasmTransform(mpath, config.stringify()))
+                        } else {
+                          errors.push(SpecError::{
+                            path: "\{path}.config",
+                            code: "bad-type",
+                            message: "config must be a JSON object",
+                          })
+                        }
+                    }
+                  }
+                _ =>
+                  errors.push(SpecError::{
+                    path: "\{path}.module",
+                    code: "missing-field",
+                    message: "wasm transforms require a module path",
+                  })
+              }
             Some(String(other)) =>
               errors.push(SpecError::{
                 path: "\{path}.type",
                 code: "bad-value",
-                message: "unknown transform type \"\{other}\" (supported: expr)",
+                message: "unknown transform type \"\{other}\" (supported: expr, wasm)",
               })
             _ =>
               errors.push(SpecError::{

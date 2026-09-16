@@ -21,10 +21,11 @@ fn value_of(r : @protocol.Record) -> String {
 test "identity behavior round trips through the envelope" {
   let input = [rec("a"), rec("b")]
   match run_call(identity(), encode_output(input)) {
-    Ok(output) => match decode_input(output) {
-      Ok(decoded) => assert_eq(decoded, input)
-      Err(e) => abort("decode: \{e}")
-    }
+    Ok(output) =>
+      match decode_input(output) {
+        Ok(decoded) => assert_eq(decoded, input)
+        Err(e) => abort("decode: \{e}")
+      }
     Err(e) => abort("run: \{e}")
   }
 }
@@ -85,9 +86,7 @@ test "uppercase behavior semantics" {
 ///|
 test "config parse accepts objects, rejects the rest" {
   assert_true(parse_config(@utf8.encode("{}"[0:2])) is Ok(_))
-  assert_true(
-    parse_config(@utf8.encode("{\"k\": 1}"[0:8])) is Ok(_),
-  )
+  assert_true(parse_config(@utf8.encode("{\"k\": 1}"[0:8])) is Ok(_))
   assert_true(parse_config(@utf8.encode("[]"[0:2])) is Err(_))
   assert_true(parse_config(@utf8.encode("nope"[0:4])) is Err(_))
 }

@@ -5,47 +5,128 @@
 
 ///|
 #borrow(wasm, err)
-pub extern "C" fn we_session_new(wasm : Bytes, len : Int, err : FixedArray[Byte], err_len : Int) -> Int64 = "mf_we_session_new"
+pub extern "C" fn we_session_new(
+  wasm : Bytes,
+  len : Int,
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int64 = "mf_we_session_new"
 
 ///|
 pub extern "C" fn we_session_free(session : Int64) -> Unit = "mf_we_session_free"
 
 ///|
 #borrow(out, err)
-pub extern "C" fn we_abi_version(session : Int64, out : FixedArray[Int], err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_abi_version"
+pub extern "C" fn we_abi_version(
+  session : Int64,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_abi_version"
 
 ///|
 #borrow(out, err)
-pub extern "C" fn we_alloc_input(session : Int64, len : Int, out : FixedArray[Int], err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_alloc_input"
+pub extern "C" fn we_alloc_input(
+  session : Int64,
+  len : Int,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_alloc_input"
 
 ///|
 #borrow(out, err)
-pub extern "C" fn we_init(session : Int64, config_ptr : Int, out : FixedArray[Int], err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_init"
+pub extern "C" fn we_init(
+  session : Int64,
+  config_ptr : Int,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_init"
 
 ///|
 #borrow(out, err)
-pub extern "C" fn we_process(session : Int64, input_ptr : Int, out : FixedArray[Int], err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_process"
+pub extern "C" fn we_process(
+  session : Int64,
+  input_ptr : Int,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_process"
 
 ///|
 #borrow(out, err)
-pub extern "C" fn we_output_len(session : Int64, out : FixedArray[Int], err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_output_len"
+pub extern "C" fn we_output_len(
+  session : Int64,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_output_len"
 
 ///|
 #borrow(out, err)
-pub extern "C" fn we_last_status(session : Int64, out : FixedArray[Int], err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_last_status"
+pub extern "C" fn we_last_status(
+  session : Int64,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_last_status"
 
 ///|
 #borrow(data, err)
-pub extern "C" fn we_mem_write(session : Int64, ptr : Int, data : Bytes, len : Int, err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_mem_write"
+pub extern "C" fn we_mem_write(
+  session : Int64,
+  ptr : Int,
+  data : Bytes,
+  len : Int,
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_mem_write"
 
 ///|
 #borrow(out, err)
-pub extern "C" fn we_mem_read(session : Int64, ptr : Int, out : FixedArray[Byte], len : Int, err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_mem_read"
+pub extern "C" fn we_mem_read(
+  session : Int64,
+  ptr : Int,
+  out : FixedArray[Byte],
+  len : Int,
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_mem_read"
 
 ///|
 #borrow(out, err)
-pub extern "C" fn we_boxed_len(session : Int64, ptr : Int, out : FixedArray[Int], err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_boxed_len"
+pub extern "C" fn we_boxed_len(
+  session : Int64,
+  ptr : Int,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_boxed_len"
 
 ///|
 #borrow(out, err)
-pub extern "C" fn we_last_error(session : Int64, out : FixedArray[Int], err : FixedArray[Byte], err_len : Int) -> Int = "mf_we_last_error"
+pub extern "C" fn we_last_error(
+  session : Int64,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_last_error"
+
+///|
+#borrow(err)
+pub extern "C" fn we_set_fuel(
+  session : Int64,
+  fuel : Int64,
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_set_fuel"
+
+///|
+#borrow(out, err)
+pub extern "C" fn we_fuel_left(
+  session : Int64,
+  out : FixedArray[Int64],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_fuel_left"

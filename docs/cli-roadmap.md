@@ -1,0 +1,98 @@
+# moonflux CLI 命令工具规划（对标 Fluvio CLI）
+
+> 定位：CLI 是 moonflux 的产品化入口，也是 PipelineSpec 的权威编译/执行器（README 决策 5 spec-first）。
+> 本文档盘点现状、对标 Fluvio CLI 命令面（评估报告第二章各节实录）、给出缺口的分阶段映射与设计原则。
+> **边界声明**：本规划不改变当前 P2（WASM 算子沙箱）进行中的工作；各命令批次在实际启动时按惯例立 ticket（`.scratch/moonflux-p{N}/issues/`）。
+
+## 1. 现状（已交付，P0/P0′/P1 门禁全绿）
+
+单二进制多子命令形态（`apps/cli`，AGENTS.md §1.2 的"单程序多子命令"设计），构建产物 `_build/native/release/build/apps/cli/cli.exe`：
+
+| 命令 | 语义 | 门禁证据 |
+| :--- | :--- | :--- |
+| `produce --topic T --file F [--data-dir D \| --remote host:port]` | 文件源 → 本地日志追加 / 经 `serve` 远端追加 | `scripts/e2e-p0.sh` |
+| `consume --topic T [--from N] [--data-dir D \| --remote host:port]` | 打印 `offset\ttimestamp\tkey\tvalue`；任意 offset 重放 | `scripts/e2e-p0.sh`（`--from 7`） |
+| `serve --data-dir D --listen host:port` | TCP 帧协议服务（v2 握手 + 每请求热规则重载） | `scripts/e2e-p0.sh`、`scripts/e2e-p1-rules.sh` |
+| `pipeline plan -f spec.json` | spec 编译 + 线上差异预览（不落盘） | `scripts/e2e-p0p.sh` |
+| `pipeline apply -f spec.json` | 发布期静态检查（mbel）+ 落盘 `topology.json` | `scripts/e2e-p0p.sh`、`scripts/e2e-p1-rules.sh` |
+| `pipeline run [--spec P] [--name N]` | 单进程执行编译拓扑（source → topic → transform → sink） | `scripts/e2e-p0p.sh`、`scripts/e2e-p1-connectors.sh` |
+
+- 实现文件：`apps/cli/{main,produce,consume,serve,pipeline,rules,store}.mbt`；数据布局 `<data-dir>/topics/<topic>/partition-0.log`，应用状态 `<data-dir>/topology.json`。
+- 已知现状缺陷见 §5 勘误（含 `usage()` 帮助文本滞后）。
+
+## 2. 对标基准：Fluvio CLI 命令面（评估报告 §2.x 实录）
+
+> 在线索引：[Fluvio CLI overview](https://www.fluvio.io/docs/fluvio/cli/overview)（cluster start / topic create·list / produce / consume / partition list / cluster spu list / SmartModule / benchmark 等）；本节各命令语义以评估报告对应章节（离线、已核验）为准。
+
+| 命令族 | 代表命令 | 报告依据 |
+| :--- | :--- | :--- |
+| 集群生命周期 | `fluvio cluster start --local/--k8`、`check --fix`、`status`、`shutdown`、`delete`、`upgrade`、`resume`、`diagnostics` | §2.10.1–2.10.3 |
+| Topic 管理 | `fluvio topic create/list/describe/delete`、`add-partition -c N`、`--dedup` | §2.2.2–2.2.4、§2.7 |
+| 分区观测 | `fluvio partition list`（LEADER/REPLICAS/SIZE/HW/LEO/LSR 列） | §2.2.3 |
+| 生产 | `fluvio produce <topic>`（stdin 逐行 / `-f` / `--raw` / `--key-separator` / `--delivery-semantic`） | §2.3.4 |
+| 消费 | `fluvio consume`（起点 `-B/-H/-T/--start`、终点 `--end`、`-p/-A`、输出 `-O/-F`、`-d` 读完退出） | §2.4.5 |
+| 消费偏移 | `fluvio consumer list/delete`（托管偏移，无消费组） | §2.4.4 |
+| SmartModule | `fluvio smartmodule create/list/watch/delete/test`；收/发挂算子 `--smartmodule/--transforms` | §2.6.2、§2.6.4 |
+| Profile | `fluvio profile add/switch/rename/delete/sync/export`（`~/.fluvio/config`） | §2.10.5 |
+| SPU/SPG | `fluvio cluster spu register/unregister/list`；`spg create` | §2.10.4 |
+| 镜像 | `fluvio remote register/export`、`home connect`、`topic create --mirror` | §2.8.2 |
+| 基准工具 | `fluvio benchmark`（producer 吞吐 + 延迟直方图） | §2.12 |
+| Pipeline（moonflux 先行项） | `fluvio pipeline apply/plan/delete -f`（报告建议形态，参考系统尚无） | §6.3.3 路线 2 |
+| 插件机制 | `fluvio-<cmd>` 外部插件（hub/cdk 即经此路径） | `docs/fluvio-reference-guide.md` §2、报告 §2.1 |
+
+**差异说明**：Pipeline 命令族是 moonflux 的先手（P0′ 已交付 `apply/plan/run`，报告 §6.3.3 路线 2 只给出 apply/plan/delete 三形态）；其余命令族 moonflux 均处空白或雏形，见 §3。
+
+## 3. 缺口 → 分阶段映射
+
+### 3.1 现在可做（无新内核依赖，可与 P2 并行）
+
+| 命令 | 对标 | 前置 / 说明 |
+| :--- | :--- | :--- |
+| `topic create/list/describe/delete` | §2.2.3、§2.2.4 | 无（现有 `<data-dir>/topics/` 布局即可）；命名校验复用 `core/spec.valid_topic_name`；list/describe 先输出本地可见字段（分区数=1、段大小、水位），retention/compression 等字段待 P3 元数据 |
+| `consume` 对标补齐 | §2.4.5 | 起点/终点 `-B/--beginning`、`-H/--head N`、`-T/--tail N`、`--end N`（现仅 `--from N`）；输出 `-O json/table`、`-F` 模板（现为固定 TSV）；`-d` 读完退出在本地路径即现行为 |
+| `produce` 输入形态补齐 | §2.3.4 | stdin 逐行（`produce <topic>` 无 `-f` 时）、`--key-separator`、`--raw`；connectors 已有 stdin/file source 可复用 |
+| `profile` 连接配置 | §2.10.5 | 多环境 profile（本地文件，如 `~/.moonflux/config` 或 data-dir 内），替代每次裸传 `--remote`；`sync k8\|local` 属远期 |
+| `pipeline delete` | §6.3.3 路线 2 | 删除 topology.json / 取消执行；补齐报告建议的 apply/plan/**delete** 三形态 |
+| `codec` 协议工具 | §4.4.2（P1 行"codec 校验/编解码 CLI"） | 帧/批解码与校验子命令；能力已在 `apps/vectortool` 内，提升为正式子命令即对标完成 |
+| 帮助与用法 | —（自身质量项） | `usage()` 补 `pipeline` 与各命令帮助（§5 勘误 1）、增加 `--help` 非错误退出 |
+
+### 3.2 P2 伴随项（WASM 算子沙箱）
+
+- `pipeline plan/run` 与 spec 校验对 wasm transform 的呈现（capability 标记 `wasm-p2`）——**已含于 P2 ticket 17**；
+- 算子管理雏形：`operator create/list/delete`（对标 `fluvio smartmodule create/list/[watch/]delete`，§2.6.4）——**本规划新增提议，尚未立 ticket**；命名与注册目录约定随 P2 收尾确定；
+- 消费挂算子：对标 `fluvio consume --smartmodule`（§2.6.2，SPU fetch 路径执行）——与 README 决策 10（规则作用于消费路径）同构，wasm 算子作为 mbel 表达式并列的 transform 类型。
+
+### 3.3 P3（控制面就绪后）
+
+- `partition list`：对标 §2.2.3 列集；依赖多分区与元数据（compatibility-matrix 行 10）；
+- `topic add-partition -c N`：对标 §2.2.4；依赖多分区；
+- `consumer` 托管偏移管理（list/delete）：对标 §2.4.4；moonflux 偏移托管语义本身属 P3（compatibility-matrix 行 11）；
+- `cluster`/`spu` 命令族：随"单程序多子命令 all-in-one / sc / spu"拆分落地（AGENTS.md §1.2），本地多进程即最小集群；对标 §2.10.1–2.10.4，其中 K8s 专有项随 P4 可选部署；
+- `benchmark`：对标 §2.12（producer 基准先行，consumer 基准参考系统亦未发布）；
+- （远期、未排期）镜像命令族：对标 §2.8.2，依赖多集群能力。
+
+### 3.4 P4（全平台体验）
+
+- CLI 契约稳定化：与 native + wasm 客户端 SDK 对齐（README 能力对标表"客户端 SDK"行）；
+- 编辑器 spec-first 闭环：UI 是 spec 渲染器（决策 5），CLI 仍是 spec 的权威执行器——编辑器的部署/回滚直接复用 `pipeline apply/plan` 语义；
+- 插件机制（`moonflux-<cmd>` 对标 `fluvio-<cmd>`，`docs/fluvio-reference-guide.md` §2）：可选，视生态需要。
+
+## 4. 设计原则
+
+1. **spec 单一真相**：声明式命令一律围绕 PipelineSpec（决策 5/7/9），CLI 不引入第二真相；
+2. **本地优先**：每条命令的本地闭环（`--data-dir`）先于远端/集群形态；远端与集群命令在控制面就绪后接管（决策 9 执行形态的延伸，AGENTS.md §1.2）；
+3. **可证伪门禁**：每个命令批次附 e2e 脚本（`scripts/e2e-*.sh` 既有模式）与负例（非法输入被拒绝、退出码非零）；
+4. **留痕**：对标语义逐条引用报告章节；本规划决策记入 README「关键决策记录」13；新增对标语义按需入 `docs/compatibility-matrix.md`；
+5. **不越界**：不改变 P2 进行中工作；批次启动时立 ticket 并回填本文档状态。
+
+## 5. 勘误（本次盘点发现，未修，供后续 ticket）
+
+| # | 发现 | 位置 |
+| :-- | :--- | :--- |
+| 1 | `usage()` 帮助文本仍为 P0 版：缺 `pipeline` 命令 | `apps/cli/main.mbt` 的 `usage()` |
+| 2 | 待办行"P1 启动"未勾选，与路线图"P1 达成"不一致 | `README.md`「待办（下一步）」 |
+| 3 | 生成接口滞后：工作区 `spec.mbt` 已含 `HttpSource`/`StdinSource`/`HttpSink`，`.mbti` 未随 `moon info` 重生成 | `core/spec/pkg.generated.mbti` |
+
+---
+
+*维护规则：命令批次启动/交付时更新 §1 与 §3 的状态；本规划随阶段演进，重大调整同步 README 决策记录。*

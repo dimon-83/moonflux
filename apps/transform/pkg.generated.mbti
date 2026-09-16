@@ -1,0 +1,33 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/apps/transform"
+
+import {
+  "dimon-83/mbel/engine",
+  "moonflux/core/protocol",
+}
+
+// Values
+pub const BUDGET_MAX_DEPTH : Int = 100
+
+pub const BUDGET_MAX_NODES : Int = 10000
+
+pub const BUDGET_MAX_STEPS : Int = 100000
+
+pub fn apply(Transform, @protocol.Record) -> Result[@protocol.Record, String]
+
+pub fn apply_chain(Array[Transform], @protocol.Record) -> Result[@protocol.Record, String]
+
+pub fn compile(String) -> Result[Transform, String]
+
+// Errors
+
+// Types and methods
+pub struct Transform {
+  source : String
+  expr : @engine.Expression
+}
+
+// Type aliases
+
+// Traits
+

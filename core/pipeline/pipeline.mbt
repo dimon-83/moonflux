@@ -60,14 +60,16 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
     detail,
   })
   for i, t in spec.transforms {
-    let expr = match t {
-      ExprTransform(expr) => expr
+    let (capability, detail) = match t {
+      ExprTransform(expr) => ("mbel", "expr transform: \{expr}")
+      WasmTransform(module_id, config) =>
+        ("wasm", "wasm operator: \{module_id} config=\{config}")
     }
     processes.push(Process::{
       name: "transform-\{i}",
       role: "transform-runner",
-      capability: "mbel-p1",
-      detail: "expr transform: \{expr}",
+      capability,
+      detail,
     })
   }
   processes.push(Process::{
@@ -80,11 +82,17 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
 }
 
 ///|
-/// True when every process in the topology can execute on the P0
-/// runtime (no P1-only capabilities).
+/// The capability set the current runtime can execute.
+pub fn capability_runnable(capability : String) -> Bool {
+  capability == "native" || capability == "mbel" || capability == "wasm"
+}
+
+///|
+/// True when every process in the topology can execute on the current
+/// runtime (P2: native, mbel expr rules, and wasm operators).
 pub fn runnable(topology : Topology) -> Bool {
   for p in topology.processes {
-    if p.capability != "native" {
+    if !capability_runnable(p.capability) {
       return false
     }
   }

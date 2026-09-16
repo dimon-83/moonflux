@@ -6,24 +6,21 @@
 //
 // Imports for tests live in the "wbtest" section.
 
-options(
-  "native-stub": ["wasmtime_shim.c"],
-  link: {
-    "native": {
-      "stub-cc": "clang",
-      "stub-cc-flags": "-I/opt/homebrew/include",
-    },
-  },
-)
-
 supported_targets = "native"
 
 import {
-  "moonflux/core/operator" @operator,
-  "moonflux/core/protocol" @protocol,
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
 }
 
 import {
-  "moonbitlang/core/encoding/utf8" @utf8,
   "moonflux/adapters/fs-native" @fs,
 } for "wbtest"
+
+options(
+  "native-stub": [ "wasmtime_shim.c" ],
+  link: {
+    "native": { "stub-cc": "clang", "stub-cc-flags": "-I/opt/homebrew/include" },
+  },
+)

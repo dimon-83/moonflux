@@ -68,6 +68,18 @@ typedef void (*mf_config_parallel_set_t)(wasm_config_t *, bool);
 typedef void (*mf_config_delete_t)(wasm_config_t *);
 typedef wasm_engine_t *(*mf_engine_new_with_config_t)(wasm_config_t *);
 typedef void (*mf_engine_delete_t)(wasm_engine_t *);
+// Fuel API: declared here rather than taken from the headers because
+// wasmtime_config_consume_fuel_set is only documented (not declared) in
+// the installed 48.0.2 headers, and every call is dlsym'ed anyway.
+typedef void (*mf_config_consume_fuel_set_t)(wasm_config_t *, bool);
+typedef wasmtime_error_t *(*mf_ctx_set_fuel_t)(wasmtime_context_t *,
+                                               uint64_t);
+typedef wasmtime_error_t *(*mf_ctx_get_fuel_t)(const wasmtime_context_t *,
+                                               uint64_t *);
+
+// Fuel granted for guest start-up (_start + abi_version + init). The
+// per-call budget is installed by mf_we_set_fuel before each process.
+#define MF_STARTUP_FUEL 10000000ULL
 
 void mf_we_session_free(void *session);
 
@@ -92,6 +104,12 @@ static wasmtime_context_t *mf_store_context(wasmtime_store_t *store) {
   if (!fn) return NULL;
   return fn(store);
 }
+
+/* Installs `fuel` as the remaining budget for this store. Returns 0 on
+ * success, -1 with a message otherwise (fuel must be enabled on the
+ * engine, which mf_engine_new guarantees). */
+static int mf_ctx_set_fuel(wasmtime_context_t *ctx, uint64_t fuel, char *err,
+                           int err_len);
 
 static int mf_get_extern(wasmtime_context_t *ctx, wasmtime_instance_t *inst,
                          const char *name, wasmtime_extern_t *item) {
@@ -135,6 +153,21 @@ static void mf_write_trap(wasm_trap_t *trap, char *err, int err_len) {
   del_fn(trap);
 }
 
+static int mf_ctx_set_fuel(wasmtime_context_t *ctx, uint64_t fuel, char *err,
+                           int err_len) {
+  mf_ctx_set_fuel_t fn = (mf_ctx_set_fuel_t)mf_sym("wasmtime_context_set_fuel");
+  if (!fn) {
+    snprintf(err, err_len, "cannot resolve wasmtime_context_set_fuel");
+    return -1;
+  }
+  wasmtime_error_t *e = fn(ctx, fuel);
+  if (e != NULL) {
+    mf_write_error(e, err, err_len);
+    return -1;
+  }
+  return 0;
+}
+
 static int mf_lookup_func(wasmtime_context_t *ctx, wasmtime_instance_t *inst,
                           const char *name, wasmtime_func_t *out, char *err,
                           int err_len) {
@@ -166,6 +199,8 @@ static wasm_engine_t *mf_engine_new(char *err, int err_len) {
   mf_config_new_t config_new = (mf_config_new_t)mf_sym("wasm_config_new");
   mf_config_parallel_set_t parallel_set =
       (mf_config_parallel_set_t)mf_sym("wasmtime_config_parallel_compilation_set");
+  mf_config_consume_fuel_set_t fuel_set =
+      (mf_config_consume_fuel_set_t)mf_sym("wasmtime_config_consume_fuel_set");
   mf_config_delete_t config_delete =
       (mf_config_delete_t)mf_sym("wasm_config_delete");
   mf_engine_new_with_config_t engine_new_with_config =
@@ -175,12 +210,19 @@ static wasm_engine_t *mf_engine_new(char *err, int err_len) {
              "cannot resolve wasmtime config symbols (set MOONFLUX_WASMTIME_LIB)");
     return NULL;
   }
+  if (!fuel_set) {
+    // Without fuel the tier budget cannot be enforced: refuse rather
+    // than run unbounded guest code.
+    snprintf(err, err_len, "cannot resolve wasmtime_config_consume_fuel_set");
+    return NULL;
+  }
   wasm_config_t *config = config_new();
   if (!config) {
     snprintf(err, err_len, "config_new failed");
     return NULL;
   }
   parallel_set(config, false);
+  fuel_set(config, true);
   /* wasmtime_engine_new_with_config TAKES OWNERSHIP of the config —
    * do not delete it here. */
   wasm_engine_t *engine = engine_new_with_config(config);
@@ -236,6 +278,15 @@ void *mf_we_session_new(const uint8_t *wasm, int wasm_len, char *err,
     return NULL;
   }
   wasmtime_context_t *ctx = mf_store_context(s->store);
+  /* fuel is enabled engine-wide, so the store starts at zero and every
+   * guest call would trap; grant the start-up allowance first. */
+  if (mf_ctx_set_fuel(ctx, MF_STARTUP_FUEL, err, err_len) != 0) {
+    store_delete(s->store);
+    module_delete(s->module);
+    engine_delete(s->engine);
+    free(s);
+    return NULL;
+  }
   wasm_trap_t *trap = NULL;
   e = instance_new(ctx, s->module, NULL, 0, &s->instance, &trap);
   if (e != NULL) {
@@ -407,6 +458,40 @@ int mf_we_process(void *session, int32_t input_ptr, int32_t *out_ptr,
                   char *err, int err_len) {
   mf_session_t *s = (mf_session_t *)session;
   return mf_call_1_1(s, &s->f_process, input_ptr, out_ptr, err, err_len);
+}
+
+/* Installs the per-call fuel budget. Returns 0 on success, -1 on error. */
+int mf_we_set_fuel(void *session, int64_t fuel, char *err, int err_len) {
+  mf_session_t *s = (mf_session_t *)session;
+  if (!s || !s->store) {
+    snprintf(err, err_len, "invalid session");
+    return -1;
+  }
+  if (fuel <= 0) {
+    snprintf(err, err_len, "fuel must be positive");
+    return -1;
+  }
+  return mf_ctx_set_fuel(mf_store_context(s->store), (uint64_t)fuel, err,
+                         err_len);
+}
+
+/* Reports the fuel left in the store; 0 on success, -1 on error. */
+int mf_we_fuel_left(void *session, int64_t *out, char *err, int err_len) {
+  mf_session_t *s = (mf_session_t *)session;
+  mf_ctx_get_fuel_t fn =
+      (mf_ctx_get_fuel_t)mf_sym("wasmtime_context_get_fuel");
+  if (!fn) {
+    snprintf(err, err_len, "cannot resolve wasmtime_context_get_fuel");
+    return -1;
+  }
+  uint64_t left = 0;
+  wasmtime_error_t *e = fn(mf_store_context(s->store), &left);
+  if (e != NULL) {
+    mf_write_error(e, err, err_len);
+    return -1;
+  }
+  *out = (int64_t)left;
+  return 0;
 }
 
 int mf_we_output_len(void *session, int32_t *out, char *err, int err_len) {

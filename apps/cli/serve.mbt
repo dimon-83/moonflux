@@ -214,8 +214,11 @@ fn dispatch_fetch(
   // (mbel transforms) runs here, on the consumption path.
   let records : Array[@protocol.Record] = []
   for entry in entries {
-    match @transform.apply_chain(rules.chain, entry.record) {
-      Ok(record) => records.push(record)
+    match apply_nodes(rules.chain, [entry.record]) {
+      Ok(out_one) =>
+        for r in out_one {
+          records.push(r)
+        }
       Err(e) => return err_reply(@client.ERR_TRANSFORM, "transform: \{e}")
     }
   }

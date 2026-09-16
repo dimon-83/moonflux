@@ -168,12 +168,9 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
   // publish-time static check: every transform must compile before
   // the topology is persisted (AGENTS §8) — bad rules never apply
   for t in spec.transforms {
-    let expr = match t {
-      ExprTransform(expr) => expr
-    }
-    match @transform.compile(expr) {
+    match compile_node(t) {
       Ok(_) => ()
-      Err(e) => fail("transform '\{expr}' rejected: \{e}")
+      Err(e) => fail("transform rejected: \{e}")
     }
   }
   match persist_applied(data_dir, new_topology.pipeline, spec_json) {
@@ -212,14 +209,11 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     }
   }
   // dynamic rule chain: compiled once for this run (P1 capability)
-  let chain : Array[@transform.Transform] = []
+  let chain : Array[CompiledNode] = []
   for t in applied.spec.transforms {
-    let expr = match t {
-      ExprTransform(expr) => expr
-    }
-    match @transform.compile(expr) {
-      Ok(compiled) => chain.push(compiled)
-      Err(e) => fail("transform '\{expr}' rejected: \{e}")
+    match compile_node(t) {
+      Ok(node) => chain.push(node)
+      Err(e) => fail("transform rejected: \{e}")
     }
   }
   // 1. source: one pull through the connector framework
@@ -249,8 +243,11 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   }
   let out_records : Array[@protocol.Record] = []
   for entry in entries {
-    match @transform.apply_chain(chain, entry.record) {
-      Ok(record) => out_records.push(record)
+    match apply_nodes(chain, [entry.record]) {
+      Ok(out_one) =>
+        for r in out_one {
+          out_records.push(r)
+        }
       Err(e) => fail("transform: \{e}")
     }
   }

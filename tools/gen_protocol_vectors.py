@@ -15,6 +15,9 @@ import json
 import pathlib
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from moonbit_fmt import mbt_str, struct_literal  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VECTORS_JSON = ROOT / "core/protocol/testdata/protocol_vectors.json"
 GEN_MBT = ROOT / "core/protocol_test/vectors_gen.mbt"
@@ -40,21 +43,27 @@ let vector_cases : Array[VectorCase] = [
 """
 
 
-def mbt_escape(s: str) -> str:
-    return s.replace("\\", "\\\\").replace('"', '\\"')
-
-
 def render(cases: list) -> str:
+    # Emitted in the shape moon fmt settles on: the hex and JSON payloads
+    # are long enough that every case expands to one field per line, and
+    # `moon fmt` must be a no-op for `--check` to mean anything.
     out = [HEADER]
     for c in cases:
         out.append(
-            "  VectorCase::{ name: %s, base_offset: %dL, hex: \"%s\", "
-            "records_json: \"%s\" },\n"
-            % (
-                json.dumps(c["name"]),
-                int(c["base_offset"]),
-                c["hex"],
-                mbt_escape(json.dumps(c["records"], separators=(",", ":"))),
+            struct_literal(
+                "VectorCase",
+                [
+                    ("name", json.dumps(c["name"])),
+                    ("base_offset", "%dL" % int(c["base_offset"])),
+                    ("hex", '"%s"' % c["hex"]),
+                    (
+                        "records_json",
+                        mbt_str(
+                            json.dumps(c["records"], separators=(",", ":"))
+                        ),
+                    ),
+                ],
+                2,
             )
         )
     out.append("]\n")

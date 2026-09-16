@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// apps/operator-identity: the identity operator module (wasm guest).
-// ABI v1 surface: three pub functions exported via link.wasm.exports.
+// apps/operator-fixture: a config-driven guest whose only purpose is
+// to exercise the sandbox's failure paths (trap / refusal / runaway)
+// so the P2 gate can prove they surface as structured errors.
 
 import {
   "moonflux/apps/operator-sdk" @sdk,

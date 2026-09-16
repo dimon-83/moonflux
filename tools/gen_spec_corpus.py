@@ -11,6 +11,9 @@ import json
 import pathlib
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from moonbit_fmt import mbt_str, struct_literal  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORPUS_JSON = ROOT / "core/spec/testdata/spec_corpus.json"
 GEN_MBT = ROOT / "core/spec_test/corpus_gen.mbt"
@@ -47,24 +50,30 @@ let invalid_cases : Array[InvalidCase] = [
 """
 
 
-def mbt_str(s: str) -> str:
-    out = s.replace("\\", "\\\\").replace('"', '\\"')
-    return '"%s"' % out
-
-
 def render(doc: dict) -> str:
+    # Every literal is emitted in the shape moon fmt settles on, so
+    # `moon fmt` is a no-op on this file and `--check` stays meaningful.
     out = [HEADER]
     for c in doc["valid"]:
         out.append(
-            "  ValidCase::{ name: %s, json: %s },\n"
-            % (json.dumps(c["name"]), mbt_str(c["json"]))
+            struct_literal(
+                "ValidCase",
+                [("name", json.dumps(c["name"])), ("json", mbt_str(c["json"]))],
+                2,
+            )
         )
     out.append(MIDDLE)
     for c in doc["invalid"]:
-        codes = ", ".join(json.dumps(x) for x in c["expect_codes"])
         out.append(
-            "  InvalidCase::{ name: %s, json: %s, expect_codes: [%s] },\n"
-            % (json.dumps(c["name"]), mbt_str(c["json"]), codes)
+            struct_literal(
+                "InvalidCase",
+                [
+                    ("name", json.dumps(c["name"])),
+                    ("json", mbt_str(c["json"])),
+                    ("expect_codes", [json.dumps(x) for x in c["expect_codes"]]),
+                ],
+                2,
+            )
         )
     out.append("]\n")
     return "".join(out)
