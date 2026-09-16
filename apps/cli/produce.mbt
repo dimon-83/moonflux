@@ -24,26 +24,12 @@ fn unwrap_or(opt : String?, fallback : String) -> String {
 }
 
 ///|
-/// Splits a text file into non-empty lines (the P0 file Source).
+/// The produce file source goes through the shared connector
+/// framework (same text shaping — CRLF trimming included — as the
+/// pipeline path; no duplicate implementation).
 fn file_records(path : String) -> Result[Array[@protocol.Record], String] {
-  let bytes = match @fs.read_file(path) {
-    Ok(bytes) => bytes
-    Err(e) => return Err("read \{path}: \{e}")
-  }
-  let text = @utf8.decode_lossy(bytes[0:bytes.length()])
-  let records : Array[@protocol.Record] = []
-  for line in text.split("\n") {
-    let line = line.to_owned()
-    if line.length() > 0 {
-      records.push(@protocol.Record::{
-        timestamp: @env.now().reinterpret_as_int64(),
-        key: b"",
-        value: @utf8.encode(line[0:line.length()]),
-        headers: [],
-      })
-    }
-  }
-  Ok(records)
+  let source = @connectors.file_source(path, @env.now().reinterpret_as_int64())
+  (source.pull)()
 }
 
 ///|

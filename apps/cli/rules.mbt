@@ -36,7 +36,7 @@ fn RuleState::sync(self : RuleState, data_dir : String) -> Unit {
       self.stamp = stamp
       if chain.length() > 0 {
         println(
-          "rules active: pipeline \{name}, \{chain.length()} transform(s) (version \{stamp})",
+          "rules active: pipeline \{self.pipeline}, \{chain.length()} transform(s) (version \{stamp})",
         )
       }
     }
