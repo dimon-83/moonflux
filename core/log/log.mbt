@@ -278,3 +278,211 @@ pub fn SegmentedLog::read(
   }
   Ok(out)
 }
+
+///|
+/// What a truncation discarded. Reported rather than silent: dropping
+/// an unreplicated tail is a correctness action, and an operator (or
+/// a test) must be able to see how much was dropped and why.
+pub(all) struct TruncateReport {
+  /// Records removed from the log end.
+  dropped_records : Int
+  /// Bytes removed from the segment.
+  dropped_bytes : Int
+} derive(Debug, Eq, Show)
+
+///|
+/// A window of raw frame bytes, exactly as stored.
+pub(all) struct RawWindow {
+  /// Offset of the first record in the window.
+  base_offset : Int64
+  /// Records the bytes carry (whole frames only).
+  record_count : Int
+  /// Concatenated frames, byte-identical to what the leader stored.
+  bytes : Bytes
+} derive(Debug, Eq, Show)
+
+///|
+/// Reads whole frames starting at `from` (which must be a frame
+/// boundary) up to `max_records` records. Returns the raw bytes so a
+/// follower can append them verbatim: replicating re-encoded records
+/// would let two nodes hold the same records in different *framing*,
+/// and then "the follower's file is a byte-prefix of the leader's"
+/// would stop being true — which is the property the replication gate
+/// asserts.
+pub fn SegmentedLog::read_raw(
+  self : SegmentedLog,
+  from : Int64,
+  max_records : Int,
+) -> Result[RawWindow, LogError] {
+  if from < 0L || from > self.next_offset || max_records < 0 {
+    return Err(OffsetOutOfRange)
+  }
+  let empty = RawWindow::{ base_offset: from, record_count: 0, bytes: b"" }
+  if from == self.next_offset || max_records == 0 {
+    return Ok(empty)
+  }
+  let bytes = match (self.file.read)(0, self.valid_size) {
+    Ok(bytes) => bytes
+    Err(e) => return Err(e)
+  }
+  let reader = @codec.Reader::new(bytes)
+  let mut next = 0L
+  let mut start_byte : Int? = None
+  let mut end_byte = 0
+  let mut taken = 0
+  while reader.remaining() > 0 {
+    let before = reader.position()
+    match @protocol.decode_frame(reader) {
+      Ok(batch) => {
+        let count = batch.records.length()
+        let batch_end = next + count.to_int64()
+        if batch_end > from {
+          match start_byte {
+            None =>
+              if next != from {
+                // `from` falls inside a frame: refuse rather than
+                // slice a batch, which would create a boundary the
+                // leader does not have
+                return Err(OffsetOutOfRange)
+              } else {
+                start_byte = Some(before)
+              }
+            Some(_) => ()
+          }
+          if taken + count > max_records {
+            break
+          }
+          taken += count
+          end_byte = reader.position()
+          if taken >= max_records {
+            break
+          }
+        }
+        next = batch_end
+      }
+      Err(_) => return Err(CorruptFrame)
+    }
+  }
+  match start_byte {
+    None =>
+      // nothing at or after `from` was found (should not happen: the
+      // scan covers the whole segment), treat as an empty window
+      Ok(RawWindow::{ base_offset: from, record_count: 0, bytes: b"" })
+    Some(start) =>
+      Ok(RawWindow::{
+        base_offset: from,
+        record_count: taken,
+        bytes: bytes[start:end_byte].to_owned(),
+      })
+  }
+}
+
+///|
+/// Appends pre-encoded frame bytes as-is. This is the replication
+/// write path: the follower stores what the leader stored.
+///
+/// The frame offsets must line up exactly with this log's next offset
+/// — a hole or an overlap is refused, because either one silently
+/// breaks the offset contract every reader depends on.
+pub fn SegmentedLog::append_raw(
+  self : SegmentedLog,
+  bytes : Bytes,
+  record_count : Int,
+) -> Result[Unit, LogError] {
+  if record_count <= 0 {
+    return Ok(())
+  }
+  if bytes.length() == 0 {
+    return Err(CorruptFrame)
+  }
+  // the frames must parse, and must start where this log ends
+  let reader = @codec.Reader::new(bytes)
+  let mut next = self.next_offset
+  let mut seen = 0
+  while reader.remaining() > 0 {
+    match @protocol.decode_frame(reader) {
+      Ok(batch) => {
+        if batch.base_offset != next {
+          return Err(OffsetOutOfRange)
+        }
+        next += batch.records.length().to_int64()
+        seen += batch.records.length()
+      }
+      Err(_) => return Err(CorruptFrame)
+    }
+  }
+  if seen != record_count {
+    return Err(CorruptFrame)
+  }
+  let new_size = match (self.file.append)(bytes) {
+    Ok(size) => size
+    Err(e) => return Err(e)
+  }
+  self.valid_size = new_size
+  self.next_offset = next
+  match (self.file.flush)() {
+    Ok(_) => Ok(())
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// Cuts the log back to `offset`, which must be a frame boundary.
+/// This is the *voluntary* counterpart of crash recovery: a replica
+/// whose tail was never replicated drops it here, and the discard is
+/// reported (AGENTS §5: never silent). The reference system has no
+/// leader epoch to resolve such a tail by comparison, so the project
+/// rule is that the new leader's LEO is the only authority — this
+/// function is where that rule actually removes bytes.
+pub fn SegmentedLog::truncate_to(
+  self : SegmentedLog,
+  offset : Int64,
+) -> Result[TruncateReport, LogError] {
+  if offset < 0L || offset > self.next_offset {
+    return Err(OffsetOutOfRange)
+  }
+  if offset == self.next_offset {
+    return Ok(TruncateReport::{ dropped_records: 0, dropped_bytes: 0 })
+  }
+  let bytes = match (self.file.read)(0, self.valid_size) {
+    Ok(bytes) => bytes
+    Err(e) => return Err(e)
+  }
+  let reader = @codec.Reader::new(bytes)
+  let mut next = 0L
+  let mut cut : Int? = None
+  while reader.remaining() > 0 {
+    let before = reader.position()
+    match @protocol.decode_frame(reader) {
+      Ok(batch) => {
+        let count = batch.records.length().to_int64()
+        if next == offset {
+          cut = Some(before)
+          break
+        }
+        if next + count > offset {
+          // offset lands inside a frame: refuse to slice a batch
+          return Err(OffsetOutOfRange)
+        }
+        next += count
+      }
+      Err(_) => return Err(CorruptFrame)
+    }
+  }
+  let cut_at = match cut {
+    Some(cut) => cut
+    None => return Err(OffsetOutOfRange)
+  }
+  match (self.file.truncate)(cut_at) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
+  let dropped_records = (self.next_offset - offset).to_int()
+  let report = TruncateReport::{
+    dropped_records,
+    dropped_bytes: self.valid_size - cut_at,
+  }
+  self.valid_size = cut_at
+  self.next_offset = offset
+  Ok(report)
+}

@@ -173,3 +173,150 @@ fn flip_byte(data : Bytes, index : Int, replacement : Byte) -> Bytes {
   }
   out.to_bytes()
 }
+
+///|
+/// Builds a log with `n` records of `batch` size each, on a memory
+/// segment whose bytes the test can also inspect.
+fn seeded_log(n : Int, batch : Int) -> (@log.SegmentedLog, @log.MemorySegment) {
+  let memory = @log.MemorySegment::new()
+  let log = match @log.SegmentedLog::open(@log.MemorySegment::handle(memory)) {
+    Ok(log) => log
+    Err(e) => abort("open: \{e}")
+  }
+  let mut i = 0
+  while i < n {
+    let records : Array[@protocol.Record] = []
+    for j in 0..<batch {
+      if i + j < n {
+        records.push(rec("v\{i + j}"))
+      }
+    }
+    match log.append(records) {
+      Ok(_) => ()
+      Err(e) => abort("append: \{e}")
+    }
+    i += batch
+  }
+  (log, memory)
+}
+
+///|
+test "read_raw returns whole frames byte-identical to the segment" {
+  let (log, memory) = seeded_log(6, 3)
+  let window = match log.read_raw(3L, 10) {
+    Ok(window) => window
+    Err(e) => abort("read_raw: \{e}")
+  }
+  assert_eq(window.base_offset, 3L)
+  assert_eq(window.record_count, 3)
+  // the bytes are literally the tail of the segment, not a re-encoding:
+  // segment == first frame ++ window, with no byte unaccounted for
+  let all = memory.contents()
+  let first = match log.read_raw(0L, 3) {
+    Ok(first) => first
+    Err(e) => abort("read_raw head: \{e}")
+  }
+  assert_eq(first.bytes.length() + window.bytes.length(), all.length())
+  let joined = @buffer.Buffer::Buffer()
+  joined.write_bytes(first.bytes[0:first.bytes.length()])
+  joined.write_bytes(window.bytes[0:window.bytes.length()])
+  assert_eq(joined.to_bytes(), all)
+}
+
+///|
+test "read_raw refuses to start inside a frame" {
+  let (log, _) = seeded_log(6, 3)
+  // offsets 0..5 are stored as two frames of three; 2 is a record
+  // offset but not a frame boundary
+  assert_true(log.read_raw(2L, 10) is Err(OffsetOutOfRange))
+  // the boundaries themselves are fine
+  assert_true(log.read_raw(0L, 10) is Ok(_))
+  assert_true(log.read_raw(3L, 10) is Ok(_))
+  // and the end of the log is an empty window, not an error
+  match log.read_raw(6L, 10) {
+    Ok(window) => assert_eq(window.record_count, 0)
+    Err(e) => abort("read_raw at end: \{e}")
+  }
+}
+
+///|
+test "append_raw replicates bytes verbatim and enforces continuity" {
+  let (leader, _) = seeded_log(6, 3)
+  let window = match leader.read_raw(0L, 10) {
+    Ok(window) => window
+    Err(e) => abort("read_raw: \{e}")
+  }
+  let follower = match
+    @log.SegmentedLog::open(
+      @log.MemorySegment::handle(@log.MemorySegment::new()),
+    ) {
+    Ok(log) => log
+    Err(e) => abort("open follower: \{e}")
+  }
+  match follower.append_raw(window.bytes, window.record_count) {
+    Ok(_) => ()
+    Err(e) => abort("append_raw: \{e}")
+  }
+  assert_eq(follower.high_watermark(), 6L)
+  // the replica's file is byte-identical to the leader's
+  let (_, leader_mem) = seeded_log(6, 3)
+  let follower_bytes = match follower.read_raw(0L, 10) {
+    Ok(w) => w.bytes
+    Err(e) => abort("follower read_raw: \{e}")
+  }
+  assert_eq(follower_bytes.length(), leader_mem.contents().length())
+
+  // a second identical append would overlap: refused, not applied
+  assert_true(follower.append_raw(window.bytes, window.record_count) is Err(_))
+  // a record count that disagrees with the payload is refused
+  assert_true(follower.append_raw(window.bytes, 99) is Err(_))
+  // garbage is refused
+  assert_true(follower.append_raw(b"not a frame", 1) is Err(_))
+}
+
+///|
+test "truncate_to drops an unreplicated tail and reports it" {
+  let (log, memory) = seeded_log(6, 3)
+  let before = memory.contents().length()
+  let report = match log.truncate_to(3L) {
+    Ok(report) => report
+    Err(e) => abort("truncate_to: \{e}")
+  }
+  assert_eq(report.dropped_records, 3)
+  assert_true(report.dropped_bytes > 0)
+  assert_eq(log.high_watermark(), 3L)
+  assert_eq(memory.contents().length(), before - report.dropped_bytes)
+  // the surviving prefix still reads correctly
+  match log.read(0L, 10) {
+    Ok(entries) => {
+      assert_eq(entries.length(), 3)
+      assert_eq(entries[2].offset, 2L)
+    }
+    Err(e) => abort("read after truncate: \{e}")
+  }
+  // appending after the cut continues the offset sequence
+  match log.append([rec("new")]) {
+    Ok(base) => assert_eq(base, 3L)
+    Err(e) => abort("append after truncate: \{e}")
+  }
+  assert_eq(log.high_watermark(), 4L)
+}
+
+///|
+test "truncate_to refuses non-boundaries, growth, and no-ops cleanly" {
+  let (log, _) = seeded_log(6, 3)
+  // inside a frame (record offset 1 lives in the frame starting at 0)
+  assert_true(log.truncate_to(1L) is Err(OffsetOutOfRange))
+  // beyond the end: truncation never extends a log
+  assert_true(log.truncate_to(9L) is Err(OffsetOutOfRange))
+  assert_true(log.truncate_to(-1L) is Err(OffsetOutOfRange))
+  // cutting to the current end is a legal no-op
+  match log.truncate_to(6L) {
+    Ok(report) => {
+      assert_eq(report.dropped_records, 0)
+      assert_eq(report.dropped_bytes, 0)
+    }
+    Err(e) => abort("no-op truncate: \{e}")
+  }
+  assert_eq(log.high_watermark(), 6L)
+}

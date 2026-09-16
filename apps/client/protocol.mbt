@@ -53,6 +53,28 @@ pub const CMD_HEARTBEAT = 8
 /// Reads the control plane's node table.
 pub const CMD_NODES = 9
 
+///|
+/// Asks the control plane who leads a partition. Placement and
+/// elections are the control plane's decisions; data nodes ask
+/// rather than guess.
+pub const CMD_LEADER = 10
+
+///|
+/// Follower-pull replication: "send me your log bytes from offset X".
+/// The reply carries whole frames verbatim plus the leader's
+/// watermarks, so the follower stores exactly what the leader stored.
+pub const CMD_SYNC_FETCH = 11
+
+///|
+/// A follower telling its leader how far it has got. The leader
+/// derives the high watermark from these reports (core/replica
+/// owns the arithmetic; this command is only its transport).
+pub const CMD_SYNC_ACK = 12
+
+///|
+/// Reads a partition's watermark pair (HW/LEO) from its leader.
+pub const CMD_OFFSET_INFO = 13
+
 // Stable error codes (client-visible contract).
 
 ///|
@@ -332,4 +354,280 @@ pub fn decode_nodes(payload : Bytes) -> Result[Array[NodeRecord], String] {
     }
   }
   Ok(out)
+}
+
+// ---------------------------------------------------------------------
+// Replication payloads (P3): what a follower asks for and what a
+// leader answers with. Offsets travel as be64 (the wire protocol's
+// convention for offsets), counts as uleb128.
+
+///|
+/// Which partition a replication request is about. One partition per
+/// topic for now; the struct exists so the command does not have to
+/// change shape when placement starts spreading partitions across
+/// nodes (T24).
+pub(all) struct PartitionRef {
+  topic : String
+  partition : Int
+} derive(Debug, Eq, Show)
+
+///|
+/// A SYNC_FETCH request: the partition and the offset to resume from.
+pub(all) struct SyncRequest {
+  partition : PartitionRef
+  from : Int64
+  max_records : Int
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_sync_request(request : SyncRequest) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, request.partition.topic)
+  buf.write_leb128(request.partition.partition)
+  buf.write_int64_be(request.from)
+  buf.write_leb128(request.max_records)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_sync_request(payload : Bytes) -> Result[SyncRequest, String] {
+  let reader = @codec.Reader::new(payload)
+  let topic = match read_field(reader) {
+    Ok(topic) => topic
+    Err(e) => return Err(e)
+  }
+  if !@spec.valid_topic_name(topic) {
+    return Err("invalid topic name '\{topic}'")
+  }
+  let partition = match reader.read_uleb128_len() {
+    Ok(partition) => partition
+    Err(_) => return Err("truncated partition index")
+  }
+  let from = match reader.read_i64_be() {
+    Ok(from) => from
+    Err(_) => return Err("truncated offset")
+  }
+  let max_records = match reader.read_uleb128_len() {
+    Ok(max_records) => max_records
+    Err(_) => return Err("truncated record count")
+  }
+  if from < 0L || max_records <= 0 {
+    return Err("negative offset or non-positive record count")
+  }
+  Ok(SyncRequest::{
+    partition: PartitionRef::{ topic, partition },
+    from,
+    max_records,
+  })
+}
+
+///|
+/// A leader's answer: raw frame bytes plus the watermarks that were
+/// current when they were read. `base_offset` is where the bytes
+/// start, so the follower can check it is not being handed a hole.
+pub(all) struct SyncResponse {
+  base_offset : Int64
+  record_count : Int
+  high_watermark : Int64
+  log_end_offset : Int64
+  /// concatenated frames, byte-identical to the leader's segment
+  frames : Bytes
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_sync_response(response : SyncResponse) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_int64_be(response.base_offset)
+  buf.write_leb128(response.record_count)
+  buf.write_int64_be(response.high_watermark)
+  buf.write_int64_be(response.log_end_offset)
+  buf.write_leb128(response.frames.length())
+  buf.write_bytes(response.frames[0:response.frames.length()])
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_sync_response(payload : Bytes) -> Result[SyncResponse, String] {
+  let reader = @codec.Reader::new(payload)
+  let base_offset = match reader.read_i64_be() {
+    Ok(v) => v
+    Err(_) => return Err("truncated base offset")
+  }
+  let record_count = match reader.read_uleb128_len() {
+    Ok(v) => v
+    Err(_) => return Err("truncated record count")
+  }
+  let high_watermark = match reader.read_i64_be() {
+    Ok(v) => v
+    Err(_) => return Err("truncated high watermark")
+  }
+  let log_end_offset = match reader.read_i64_be() {
+    Ok(v) => v
+    Err(_) => return Err("truncated log end offset")
+  }
+  let len = match reader.read_uleb128_len() {
+    Ok(v) => v
+    Err(_) => return Err("truncated frame length")
+  }
+  let frames = match reader.read_bytes(len) {
+    Ok(v) => v
+    Err(_) => return Err("truncated frames")
+  }
+  if !reader.is_empty() {
+    return Err("trailing bytes after sync response")
+  }
+  Ok(SyncResponse::{
+    base_offset,
+    record_count,
+    high_watermark,
+    log_end_offset,
+    frames,
+  })
+}
+
+///|
+/// A SYNC_ACK: how far the follower has durably stored. The sender
+/// identifies itself by address because that is how the leader keys
+/// its progress ledger — the node's own view of who its replicas are
+/// comes from the control plane, and a report must be attributable to
+/// one of them (`ProgressLedger::observe` refuses strangers).
+pub(all) struct SyncAck {
+  partition : PartitionRef
+  from : String
+  leo : Int64
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_sync_ack(ack : SyncAck) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, ack.partition.topic)
+  buf.write_leb128(ack.partition.partition)
+  write_field(buf, ack.from)
+  buf.write_int64_be(ack.leo)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_sync_ack(payload : Bytes) -> Result[SyncAck, String] {
+  let reader = @codec.Reader::new(payload)
+  let topic = match read_field(reader) {
+    Ok(topic) => topic
+    Err(e) => return Err(e)
+  }
+  let partition = match reader.read_uleb128_len() {
+    Ok(partition) => partition
+    Err(_) => return Err("truncated partition index")
+  }
+  let from = match read_field(reader) {
+    Ok(from) => from
+    Err(e) => return Err(e)
+  }
+  if from.length() == 0 {
+    return Err("an ack must say who sent it")
+  }
+  let leo = match reader.read_i64_be() {
+    Ok(leo) => leo
+    Err(_) => return Err("truncated leo")
+  }
+  if leo < 0L {
+    return Err("negative leo")
+  }
+  Ok(SyncAck::{ partition: PartitionRef::{ topic, partition }, from, leo })
+}
+
+///|
+/// A CMD_LEADER request: which partition the caller is asking about.
+pub fn encode_partition_ref(ref : PartitionRef) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, ref.topic)
+  buf.write_leb128(ref.partition)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_partition_ref(payload : Bytes) -> Result[PartitionRef, String] {
+  let reader = @codec.Reader::new(payload)
+  let topic = match read_field(reader) {
+    Ok(topic) => topic
+    Err(e) => return Err(e)
+  }
+  let partition = match reader.read_uleb128_len() {
+    Ok(partition) => partition
+    Err(_) => return Err("truncated partition index")
+  }
+  Ok(PartitionRef::{ topic, partition })
+}
+
+///|
+/// The CMD_LEADER answer: who leads a partition and who else holds
+/// it. An empty leader means the control plane has no assignment —
+/// a legitimate answer, not an error: a partition without a live
+/// leader is a state the caller waits out rather than a fault to
+/// retry. The replica list is what lets the leader build its
+/// progress ledger without inventing members.
+pub(all) struct PartitionView {
+  leader : String
+  /// addresses of every replica, leader included when assigned
+  replicas : Array[String]
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_partition_view(view : PartitionView) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, view.leader)
+  buf.write_leb128(view.replicas.length())
+  for replica in view.replicas {
+    write_field(buf, replica)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_partition_view(payload : Bytes) -> Result[PartitionView, String] {
+  let reader = @codec.Reader::new(payload)
+  let leader = match read_field(reader) {
+    Ok(leader) => leader
+    Err(e) => return Err(e)
+  }
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated replica count")
+  }
+  let replicas : Array[String] = []
+  for _ in 0..<count {
+    match read_field(reader) {
+      Ok(replica) => replicas.push(replica)
+      Err(e) => return Err(e)
+    }
+  }
+  if !reader.is_empty() {
+    return Err("trailing bytes after partition view")
+  }
+  Ok(PartitionView::{ leader, replicas })
+}
+
+///|
+/// The CMD_OFFSET_INFO answer: a partition's watermarks.
+pub fn encode_offset_info(
+  high_watermark : Int64,
+  log_end_offset : Int64,
+) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_int64_be(high_watermark)
+  buf.write_int64_be(log_end_offset)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_offset_info(payload : Bytes) -> Result[(Int64, Int64), String] {
+  let reader = @codec.Reader::new(payload)
+  let hw = match reader.read_i64_be() {
+    Ok(hw) => hw
+    Err(_) => return Err("truncated high watermark")
+  }
+  let leo = match reader.read_i64_be() {
+    Ok(leo) => leo
+    Err(_) => return Err("truncated log end offset")
+  }
+  Ok((hw, leo))
 }

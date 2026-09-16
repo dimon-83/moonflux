@@ -206,12 +206,21 @@ fn cmd_spu(argv : Array[String]) -> Unit {
     None => note("  no control plane configured (standalone data node)")
   }
   let rules = RuleState::new()
+  let partition = PartitionHost::new(data_dir, identity.id, "\{host}:\{actual}")
+  partition.topic = applied_topic(data_dir)
+  if partition.topic.length() > 0 {
+    note("hosting topic \{partition.topic}")
+  } else {
+    note(
+      "no pipeline applied yet: this node serves requests but hosts no topic",
+    )
+  }
   let mut last_report : Int64 = -1L
   let mut registered = false
   while true {
     match listener.accept() {
       Ok(stream) => {
-        handle_connection(stream, data_dir, rules)
+        handle_data_connection(stream, data_dir, rules, partition)
         let _ = stream.close()
       }
       Err(TimedOut) => () // housekeeping tick
@@ -253,6 +262,28 @@ fn cmd_spu(argv : Array[String]) -> Unit {
               note("warning: control plane \{sc_addr} unreachable: \{e}")
             }
           }
+          // refresh placement, then do this node's half of it: a
+          // leader serves frames, a follower pulls them
+          if partition.topic.length() > 0 {
+            // a freshly applied pipeline can change which topic this
+            // node hosts (node.json has no opinion on topics)
+            let applied = applied_topic(data_dir)
+            if applied.length() > 0 && applied != partition.topic {
+              partition.topic = applied
+              partition.ledger = None
+              partition.leader_addr = ""
+              partition.caught_up = false
+              note("now hosting topic \{partition.topic}")
+            }
+            match ask_leader(sc_addr, partition.topic) {
+              Ok(view) => partition.adopt_view(view)
+              Err(e) =>
+                if partition.leader_addr.length() > 0 {
+                  note("warning: cannot refresh placement: \{e}")
+                }
+            }
+            partition.replicate_once()
+          }
         }
       }
     }
@@ -287,10 +318,11 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     "moonflux sc listening on \{host}:\{actual} (data dir \{data_dir}, liveness timeout \{NODE_TIMEOUT_MS}ms)",
   )
   let table = NodeTable::new(NODE_TIMEOUT_MS)
+  let placement = PlacementState::new(data_dir)
   while true {
     match listener.accept() {
       Ok(stream) => {
-        handle_control_connection(stream, table)
+        handle_control_connection(stream, table, placement)
         let _ = stream.close()
       }
       Err(TimedOut) => ()
@@ -300,6 +332,7 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     for node in swept {
       note("node \{node} is offline (no heartbeat within \{NODE_TIMEOUT_MS}ms)")
     }
+    placement.tick(table)
   }
 }
 
@@ -452,6 +485,7 @@ fn NodeTable::snapshot(self : NodeTable) -> Array[@client.NodeRecord] {
 fn handle_control_connection(
   stream : @net.TcpStream,
   table : NodeTable,
+  placement : PlacementState,
 ) -> Unit {
   let conn = @client.Conn::from_stream(stream)
   let hello = match conn.recv_first() {
@@ -507,6 +541,16 @@ fn handle_control_connection(
           Err(e) => Err((@client.ERR_BAD_PAYLOAD, "bad node record: \{e}"))
         }
       @client.CMD_NODES => Ok(@client.encode_nodes(table.snapshot()))
+      @client.CMD_LEADER =>
+        match @client.decode_partition_ref(frame.payload) {
+          Ok(ref) =>
+            Ok(
+              @client.encode_partition_view(
+                placement.view(ref.topic, ref.partition),
+              ),
+            )
+          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        }
       @client.CMD_PRODUCE | @client.CMD_FETCH =>
         Err(
           (
@@ -531,4 +575,736 @@ fn handle_control_connection(
       Err(_) => return
     }
   }
+}
+
+// ---------------------------------------------------------------------
+// Replication (T22): the leader serves raw frames, followers pull
+// them. The reference system replicates follower-pull and so does
+// this — a leader that pushed would need per-follower send state and a
+// backpressure story, and the milestone's gate is about watermarks,
+// not about inventing a second protocol.
+
+///|
+/// What a data node knows about the partition it hosts. One instance
+/// per process, mutated by the housekeeping tick and read by request
+/// handlers — the same pattern as RuleState, and the only shared
+/// mutable state in the process (single-threaded by design).
+struct PartitionHost {
+  data_dir : String
+  /// the topic this node was given, or "" when nothing is applied;
+  /// mutable because a node learns it from the applied pipeline
+  mut topic : String
+  /// the address this node advertises to peers
+  address : String
+  /// this node's identity
+  mut node_id : String
+  /// leader-side progress ledger; only meaningful while leading
+  mut ledger : @replica.ProgressLedger?
+  /// who leads the partition right now ("" = nobody yet)
+  mut leader_addr : String
+  /// the addresses that hold the partition (from the control plane)
+  mut replicas : Array[String]
+  /// set once the follower has reported its first successful pull
+  mut caught_up : Bool
+}
+
+///|
+fn PartitionHost::new(
+  data_dir : String,
+  node_id : String,
+  address : String,
+) -> PartitionHost {
+  PartitionHost::{
+    data_dir,
+    topic: "",
+    address,
+    node_id,
+    ledger: None,
+    leader_addr: "",
+    replicas: [],
+    caught_up: false,
+  }
+}
+
+///|
+/// Opens this node's log for the topic it hosts, creating it if
+/// needed. Returns None when no topic is applied.
+fn PartitionHost::open_log(self : PartitionHost) -> @log.SegmentedLog? {
+  if self.topic.length() == 0 {
+    return None
+  }
+  match open_topic_log(self.data_dir, self.topic) {
+    Ok(log) => Some(log)
+    Err(e) => {
+      note("warning: cannot open log for \{self.topic}: \{e}")
+      None
+    }
+  }
+}
+
+///|
+/// This node's log end, 0 when it holds nothing.
+fn PartitionHost::leo(self : PartitionHost) -> Int64 {
+  match self.open_log() {
+    Some(log) => log.high_watermark()
+    None => 0L
+  }
+}
+
+///|
+/// Am I the leader right now?
+fn PartitionHost::is_leader(self : PartitionHost) -> Bool {
+  self.leader_addr.length() > 0 && self.leader_addr == self.address
+}
+
+///|
+/// Adopts the control plane's view of the partition. Becoming leader
+/// seeds the progress ledger with every replica at its last known
+/// progress (zero for a replica that has never reported) — which is
+/// what keeps the high watermark honest: it cannot advance until the
+/// replicas actually confirm, so a dead follower stalls it.
+fn PartitionHost::adopt_view(
+  self : PartitionHost,
+  view : @client.PartitionView,
+) -> Unit {
+  let was_leader = self.is_leader()
+  self.leader_addr = view.leader
+  self.replicas = view.replicas
+  if self.is_leader() {
+    if !was_leader || self.ledger is None {
+      let progress : Array[@replica.ReplicaProgress] = []
+      // carry over anything already known about replicas
+      let known = self.ledger
+      for address in view.replicas {
+        let leo = if address == self.address {
+          self.leo()
+        } else {
+          match known {
+            Some(ledger) =>
+              match ledger.leo_of(address) {
+                Some(leo) => leo
+                None => 0L
+              }
+            None => 0L
+          }
+        }
+        progress.push(@replica.ReplicaProgress::{ spu: address, leo })
+      }
+      match @replica.ProgressLedger::new(self.address, progress) {
+        Ok(ledger) => {
+          self.ledger = Some(ledger)
+          if !was_leader {
+            self.caught_up = true
+            note(
+              "partition \{self.topic} is led by this node (\{self.address}), replica set \{view.replicas.length()}",
+            )
+          }
+        }
+        Err(e) => note("warning: cannot track replica progress: \{e}")
+      }
+    }
+  } else if was_leader {
+    note(
+      "stepped down: \{view.leader} leads \{self.topic} now, this node follows",
+    )
+    self.ledger = None
+    self.caught_up = false
+  }
+}
+
+///|
+/// Folds this node's own log end into the progress ledger. The
+/// leader's LEO is not something anyone reports to it — it is a fact
+/// about its own log — so it must be read back out of the log before
+/// any watermark arithmetic happens. Skipping this makes a leader
+/// advertise "leo 0" while holding data, and every follower then
+/// concludes there is nothing to fetch.
+fn PartitionHost::sync_leader_leo(self : PartitionHost) -> Unit {
+  if !self.is_leader() {
+    return
+  }
+  let leo = self.leo()
+  match self.ledger {
+    Some(ledger) =>
+      match ledger.advance_leader(leo) {
+        Ok(_) => ()
+        Err(e) => note("warning: progress ledger: \{e}")
+      }
+    None => ()
+  }
+}
+
+///|
+/// One follower tick: make this node's log match the leader's.
+///
+/// The order matters. The follower asks the leader where its log
+/// ends *first*, because that answer is the only authority for a
+/// rejoin — and because a request phrased as "send me bytes from
+/// offset N" cannot be answered at all when N is past the leader's
+/// end, which is exactly the divergent case.
+///
+/// The rejoin rule is the project's own (the reference has no epoch
+/// to compare tails with): **the leader's LEO wins**. A local tail
+/// past it was never replicated, so it is cut — and the cut is
+/// reported, never silent.
+fn PartitionHost::replicate_once(self : PartitionHost) -> Unit {
+  if self.is_leader() ||
+    self.leader_addr.length() == 0 ||
+    self.topic.length() == 0 {
+    return
+  }
+  let log = match self.open_log() {
+    Some(log) => log
+    None => return
+  }
+  let my_leo = log.high_watermark()
+  let (leader_hw, leader_leo) = match offset_info_of(self.leader_addr) {
+    Ok(pair) => pair
+    Err(e) => {
+      if self.caught_up {
+        self.caught_up = false
+        note("warning: replication from \{self.leader_addr} interrupted: \{e}")
+      }
+      return
+    }
+  }
+  if my_leo > leader_leo {
+    match log.truncate_to(leader_leo) {
+      Ok(report) =>
+        note(
+          "divergent tail: truncated \{self.topic} from \{my_leo} to \{leader_leo} (dropped \{report.dropped_records} records, \{report.dropped_bytes} bytes)",
+        )
+      Err(e) => {
+        note("warning: cannot truncate divergent tail: \{e}")
+        return
+      }
+    }
+  } else if my_leo < leader_leo {
+    let window = match
+      sync_fetch(self.leader_addr, self.topic, my_leo, REPLICATION_BATCH) {
+      Ok(window) => window
+      Err(e) => {
+        if self.caught_up {
+          self.caught_up = false
+          note(
+            "warning: replication from \{self.leader_addr} interrupted: \{e}",
+          )
+        }
+        return
+      }
+    }
+    if window.record_count > 0 {
+      if window.base_offset != my_leo {
+        note(
+          "warning: leader offered \{self.topic} from \{window.base_offset} but this node ends at \{my_leo}; refusing to guess",
+        )
+        return
+      }
+      match log.append_raw(window.frames, window.record_count) {
+        Ok(_) => ()
+        Err(e) => {
+          note("warning: cannot apply replicated frames: \{e}")
+          return
+        }
+      }
+    }
+  }
+  let _ = leader_hw
+  // tell the leader how far this node has durably stored
+  let acked = log.high_watermark()
+  match sync_ack(self.leader_addr, self.topic, self.address, acked) {
+    Ok(_) =>
+      if !self.caught_up {
+        self.caught_up = true
+        note(
+          "replicating \{self.topic} from \{self.leader_addr}; caught up to \{acked}",
+        )
+      }
+    Err(e) =>
+      if self.caught_up {
+        self.caught_up = false
+        note("warning: ack to \{self.leader_addr} failed: \{e}")
+      }
+  }
+}
+
+///|
+/// Asks a node for its watermark pair. Position-independent, so it is
+/// also the question a rejoining replica can always ask.
+fn offset_info_of(address : String) -> Result[(Int64, Int64), String] {
+  let payload = match control_call(address, @client.CMD_OFFSET_INFO, b"") {
+    Ok(payload) => payload
+    Err(e) => return Err(e)
+  }
+  @client.decode_offset_info(payload)
+}
+
+///|
+/// How many records one replication round pulls. Bounded so a node
+/// stays responsive (serving requests between rounds) and so a
+/// freshly started follower does not try to swallow a whole log in
+/// one gulp.
+const REPLICATION_BATCH : Int = 512
+
+///|
+/// Asks the leader for raw frames from `from`.
+fn sync_fetch(
+  leader_addr : String,
+  topic : String,
+  from : Int64,
+  max_records : Int,
+) -> Result[@client.SyncResponse, String] {
+  let request = @client.SyncRequest::{
+    partition: @client.PartitionRef::{ topic, partition: 0 },
+    from,
+    max_records,
+  }
+  let payload = match
+    control_call(
+      leader_addr,
+      @client.CMD_SYNC_FETCH,
+      @client.encode_sync_request(request),
+    ) {
+    Ok(payload) => payload
+    Err(e) => return Err(e)
+  }
+  @client.decode_sync_response(payload)
+}
+
+///|
+/// Reports this node's log end to its leader and returns the leader's
+/// watermarks.
+fn sync_ack(
+  leader_addr : String,
+  topic : String,
+  from : String,
+  leo : Int64,
+) -> Result[(Int64, Int64), String] {
+  let ack = @client.SyncAck::{
+    partition: @client.PartitionRef::{ topic, partition: 0 },
+    from,
+    leo,
+  }
+  let payload = match
+    control_call(
+      leader_addr,
+      @client.CMD_SYNC_ACK,
+      @client.encode_sync_ack(ack),
+    ) {
+    Ok(payload) => payload
+    Err(e) => return Err(e)
+  }
+  @client.decode_offset_info(payload)
+}
+
+///|
+/// Asks the control plane who leads this node's partition.
+fn ask_leader(
+  sc_addr : String,
+  topic : String,
+) -> Result[@client.PartitionView, String] {
+  let ref = @client.PartitionRef::{ topic, partition: 0 }
+  let payload = match
+    control_call(sc_addr, @client.CMD_LEADER, @client.encode_partition_ref(ref)) {
+    Ok(payload) => payload
+    Err(e) => return Err(e)
+  }
+  @client.decode_partition_view(payload)
+}
+
+///|
+/// Leader-side: apply a follower's report and answer with the
+/// watermarks that result. The ledger is where HW = min(LEO) lives
+/// (core/replica); this function only moves the numbers.
+fn PartitionHost::observe_follower(
+  self : PartitionHost,
+  topic : String,
+  address : String,
+  leo : Int64,
+) -> Result[(Int64, Int64), String] {
+  if self.topic != topic {
+    return Err("this node hosts \{self.topic}, not \{topic}")
+  }
+  let ledger = match self.ledger {
+    Some(ledger) => ledger
+    None => return Err("this node is not tracking progress for \{topic}")
+  }
+  match ledger.observe(address, leo) {
+    Ok(_) => ()
+    Err(e) => return Err("replica \{address}: \{e}")
+  }
+  let info = ledger.offset_info()
+  Ok((info.high_watermark, info.log_end_offset))
+}
+
+///|
+/// The topic the applied pipeline writes to, or "" when nothing is
+/// applied. A node's *identity* is persistent; what it *hosts* comes
+/// from the control plane's view of the world, which today is the
+/// applied pipeline's topic (topic creation becomes a control-plane
+/// verb in T24).
+fn applied_topic(data_dir : String) -> String {
+  match load_applied(data_dir) {
+    Some(applied) => applied.spec.topic.name
+    None => ""
+  }
+}
+
+///|
+/// The data-node connection handler: `serve`'s protocol plus the
+/// replication commands. Kept beside `handle_connection` rather than
+/// folded into it so that `serve` (a single process that owns its
+/// data dir and belongs to no cluster) keeps its exact old behaviour —
+/// every pre-P3 gate runs through that path.
+fn handle_data_connection(
+  stream : @net.TcpStream,
+  data_dir : String,
+  rules : RuleState,
+  partition : PartitionHost,
+) -> Unit {
+  let conn = @client.Conn::from_stream(stream)
+  let hello = match conn.recv_first() {
+    @client.Got(frame) => frame
+    @client.Eof => return
+    @client.Garbage(_) => return
+    @client.WrongVersion(_) => {
+      let _ = conn.send_frame(@client.Frame::{
+        cmd: @client.CMD_ERR,
+        rid: 0,
+        payload: @client.encode_error(
+          @client.ERR_UNSUPPORTED_VERSION,
+          "data node speaks frame version \{@client.PROTOCOL_VERSION}",
+        ),
+      })
+      return
+    }
+  }
+  if hello.cmd != @client.CMD_HELLO {
+    let _ = conn.send_frame(@client.Frame::{
+      cmd: @client.CMD_ERR,
+      rid: hello.rid,
+      payload: @client.encode_error(
+        @client.ERR_SEQUENCE,
+        "handshake required: send HELLO first",
+      ),
+    })
+    return
+  }
+  let _ = conn.send_frame(@client.Frame::{
+    cmd: @client.CMD_WELCOME,
+    rid: hello.rid,
+    payload: @client.encode_hello(@client.PROTOCOL_VERSION, 0),
+  })
+  while true {
+    let frame = match conn.recv_frame() {
+      Ok(Some(frame)) => frame
+      Ok(None) => return
+      Err(_) => return
+    }
+    let reply = dispatch_data_frame(frame, data_dir, rules, partition)
+    match
+      conn.send_frame(@client.Frame::{
+        cmd: reply.0,
+        rid: frame.rid,
+        payload: reply.1,
+      }) {
+      Ok(_) => ()
+      Err(_) => return
+    }
+  }
+}
+
+///|
+/// One request against a data node. Data commands behave exactly as
+/// they do under `serve`; the replication commands are answered only
+/// by the node that is actually the leader for the partition, so a
+/// follower can never be mistaken for the source of truth.
+fn dispatch_data_frame(
+  frame : @client.Frame,
+  data_dir : String,
+  rules : RuleState,
+  partition : PartitionHost,
+) -> (Int, Bytes) {
+  match frame.cmd {
+    @client.CMD_PRODUCE => {
+      let reply = dispatch_produce(frame.payload, data_dir)
+      // the append just moved this node's log end; the ledger is
+      // what the watermark arithmetic reads
+      partition.sync_leader_leo()
+      reply
+    }
+    @client.CMD_FETCH => {
+      rules.sync(data_dir)
+      dispatch_fetch(frame.payload, data_dir, rules)
+    }
+    @client.CMD_SYNC_FETCH => {
+      let request = match @client.decode_sync_request(frame.payload) {
+        Ok(request) => request
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+          )
+      }
+      if !partition.is_leader() {
+        return (
+          @client.CMD_ERR,
+          @client.encode_error(
+            @client.ERR_WRONG_ROLE,
+            "this node does not lead \{request.partition.topic}; ask \{partition.leader_addr}",
+          ),
+        )
+      }
+      let log = match partition.open_log() {
+        Some(log) => log
+        None =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(
+              @client.ERR_STORAGE,
+              "no log for \{request.partition.topic}",
+            ),
+          )
+      }
+      partition.sync_leader_leo()
+      let window = match log.read_raw(request.from, request.max_records) {
+        Ok(window) => window
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_STORAGE, "\{e}"),
+          )
+      }
+      let (hw, leo) = match partition.ledger {
+        Some(ledger) => {
+          let info = ledger.offset_info()
+          (info.high_watermark, info.log_end_offset)
+        }
+        // no ledger yet (no follower has ever reported): the log end
+        // is the only fact this node has, and claiming a watermark
+        // equal to it would be a lie — report zero replicated prefix
+        None => (0L, log.high_watermark())
+      }
+      let response = @client.SyncResponse::{
+        base_offset: window.base_offset,
+        record_count: window.record_count,
+        high_watermark: hw,
+        log_end_offset: leo,
+        frames: window.bytes,
+      }
+      (@client.CMD_OK, @client.encode_sync_response(response))
+    }
+    @client.CMD_SYNC_ACK => {
+      let ack = match @client.decode_sync_ack(frame.payload) {
+        Ok(ack) => ack
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+          )
+      }
+      match partition.observe_follower(ack.partition.topic, ack.from, ack.leo) {
+        Ok((hw, leo)) => (@client.CMD_OK, @client.encode_offset_info(hw, leo))
+        Err(e) =>
+          (@client.CMD_ERR, @client.encode_error(@client.ERR_WRONG_ROLE, e))
+      }
+    }
+    @client.CMD_OFFSET_INFO => {
+      partition.sync_leader_leo()
+      let (hw, leo) = match partition.ledger {
+        Some(ledger) => {
+          let info = ledger.offset_info()
+          (info.high_watermark, info.log_end_offset)
+        }
+        None => (0L, partition.leo())
+      }
+      (@client.CMD_OK, @client.encode_offset_info(hw, leo))
+    }
+    @client.CMD_LEADER =>
+      (
+        @client.CMD_ERR,
+        @client.encode_error(
+          @client.ERR_WRONG_ROLE,
+          "placement lives with the control plane (sc), not a data node",
+        ),
+      )
+    other =>
+      (
+        @client.CMD_ERR,
+        @client.encode_error(
+          @client.ERR_UNKNOWN_COMMAND,
+          "unknown command \{other}",
+        ),
+      )
+  }
+}
+
+// ---------------------------------------------------------------------
+// Placement (T22/T24 boundary): the control plane turns "these nodes
+// exist" plus "these topics should exist" into "this partition lives
+// here and is led by that node". The decision procedure is
+// core/cluster's reconcile — pure, deterministic, and already tested;
+// what lives here is only the wiring: reading the topic declarations,
+// remembering the resulting state, and answering leader queries.
+
+///|
+/// A topic declaration as the control plane reads it. This is the
+/// minimal shape T22 needs (which topics exist, how many replicas);
+/// T24 replaces the file with the metadata store and the
+/// `topic create` verb, at which point this struct becomes the
+/// store's on-disk form rather than a second source of truth.
+struct TopicDecl {
+  name : String
+  partitions : Int
+  replication_factor : Int
+}
+
+///|
+/// <sc data-dir>/topics.json — an array of topic declarations. Absent
+/// file means "no topics": the control plane then assigns nothing, and
+/// data nodes stay leaderless rather than guessing.
+fn read_topic_decls(data_dir : String) -> Array[TopicDecl] {
+  let path = "\{data_dir}/topics.json"
+  let bytes = match @fs.read_file(path) {
+    Ok(bytes) => bytes
+    Err(_) => return []
+  }
+  let text = @utf8.decode_lossy(bytes[0:bytes.length()])
+  let json = @json.parse(text[0:text.length()]) catch {
+    e => {
+      note("warning: \{path} is not valid JSON (\{e}); ignoring it")
+      return []
+    }
+  }
+  let items = match json {
+    Array(items) => items
+    _ => {
+      note("warning: \{path} must be a JSON array of topics")
+      return []
+    }
+  }
+  let out : Array[TopicDecl] = []
+  for i, item in items {
+    let obj = match item {
+      Object(obj) => obj
+      _ => {
+        note("warning: \{path}[\{i}] is not an object")
+        continue
+      }
+    }
+    let name = match obj.get("name") {
+      Some(String(name)) => name
+      _ => continue
+    }
+    let partitions = match obj.get("partitions") {
+      Some(Number(n)) => n.to_int()
+      _ => 1
+    }
+    let rf = match obj.get("replication_factor") {
+      Some(Number(n)) => n.to_int()
+      _ => 1
+    }
+    out.push(TopicDecl::{ name, partitions, replication_factor: rf })
+  }
+  out
+}
+
+///|
+/// The control plane's placement memory: the topic declarations it
+/// last saw, and the cluster state core/cluster's reconcile produced
+/// from them. Re-reading the declarations every tick is what makes
+/// this level-triggered: an edited file is picked up without any
+/// event, and an unchanged file produces no actions.
+struct PlacementState {
+  data_dir : String
+  mut state : @cluster.ClusterState
+  mut declarations : Array[TopicDecl]
+}
+
+///|
+fn PlacementState::new(data_dir : String) -> PlacementState {
+  PlacementState::{
+    data_dir,
+    state: @cluster.ClusterState::{ partitions: [] },
+    declarations: [],
+  }
+}
+
+///|
+/// One reconcile tick: observe (online data nodes + declared topics),
+/// decide (reconcile), record (apply_actions). Errors are reported
+/// once per tick and never take the control plane down — a cluster
+/// whose declarations are unsatisfiable (more replicas than nodes) is
+/// a configuration to fix, not a crash.
+fn PlacementState::tick(self : PlacementState, table : NodeTable) -> Unit {
+  let declarations = read_topic_decls(self.data_dir)
+  let spus : Array[@cluster.SpuSpec] = []
+  for node in table.snapshot() {
+    if node.role is Spu {
+      spus.push(@cluster.SpuSpec::{ id: node.address, address: node.address })
+    }
+  }
+  let topics : Array[@cluster.TopicSpec] = []
+  for decl in declarations {
+    topics.push(@cluster.TopicSpec::{
+      name: decl.name,
+      partitions: decl.partitions,
+      replication_factor: decl.replication_factor,
+    })
+  }
+  let spec = @cluster.ClusterSpec::{ topics, spus }
+  match @cluster.reconcile(self.state, spec) {
+    Err(e) =>
+      // a refused reconcile is a steady state, not an event storm:
+      // only say it when the declarations changed
+      if declarations.length() != self.declarations.length() {
+        note("warning: cannot place partitions: \{e}")
+      }
+    Ok(actions) =>
+      if actions.length() > 0 {
+        self.state = @cluster.apply_actions(self.state, actions)
+        for action in actions {
+          match action {
+            @cluster.PlacePartition(partition, replicas) =>
+              note(
+                "placed \{partition.topic}[\{partition.index}] on \{replicas.length()} replica(s): \{format_addresses(replicas)}",
+              )
+            @cluster.AssignLeader(partition, leader) =>
+              note(
+                "assigned leader of \{partition.topic}[\{partition.index}]: \{leader}",
+              )
+            @cluster.RemovePartition(partition) =>
+              note("removed \{partition.topic}[\{partition.index}]")
+          }
+        }
+      }
+  }
+  self.declarations = declarations
+}
+
+///|
+/// The view of one partition: who leads it and who holds it.
+fn PlacementState::view(
+  self : PlacementState,
+  topic : String,
+  partition : Int,
+) -> @client.PartitionView {
+  for rs in self.state.partitions {
+    if rs.partition.topic == topic && rs.partition.index == partition {
+      return @client.PartitionView::{ leader: rs.leader, replicas: rs.replicas }
+    }
+  }
+  @client.PartitionView::{ leader: "", replicas: [] }
+}
+
+///|
+fn format_addresses(addresses : Array[String]) -> String {
+  let sb = StringBuilder::new()
+  for i, address in addresses {
+    if i > 0 {
+      sb.write_string(",")
+    }
+    sb.write_string(address)
+  }
+  sb.to_string()
 }

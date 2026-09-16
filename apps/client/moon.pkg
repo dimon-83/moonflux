@@ -9,5 +9,6 @@ import {
   "moonflux/core/codec",
   "moonflux/core/log",
   "moonflux/core/protocol",
+  "moonflux/core/spec",
   "moonflux/adapters/net-native" @net,
 }

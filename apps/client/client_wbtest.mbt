@@ -311,3 +311,102 @@ test "the control plane's node table round trips" {
   let truncated = b"\x02\x05\x01a"
   assert_true(decode_nodes(truncated) is Err(_))
 }
+
+///|
+test "replication payloads round trip and reject malformed input" {
+  let ref_ = PartitionRef::{ topic: "events", partition: 0 }
+  let request = SyncRequest::{ partition: ref_, from: 12L, max_records: 64 }
+  match decode_sync_request(encode_sync_request(request)) {
+    Ok(decoded) => assert_eq(decoded, request)
+    Err(e) => abort("sync request: \{e}")
+  }
+  // a negative resume offset is refused, not clamped
+  assert_true(
+    decode_sync_request(
+      encode_sync_request(SyncRequest::{
+        partition: ref_,
+        from: -1L,
+        max_records: 8,
+      }),
+    )
+    is Err(_),
+  )
+  assert_true(
+    decode_sync_request(
+      encode_sync_request(SyncRequest::{
+        partition: ref_,
+        from: 0L,
+        max_records: 0,
+      }),
+    )
+    is Err(_),
+  )
+  // topic names go through the same whitelist as everywhere else
+  assert_true(
+    decode_sync_request(
+      encode_sync_request(SyncRequest::{
+        partition: PartitionRef::{ topic: "Bad Name", partition: 0 },
+        from: 0L,
+        max_records: 8,
+      }),
+    )
+    is Err(_),
+  )
+
+  let response = SyncResponse::{
+    base_offset: 4L,
+    record_count: 3,
+    high_watermark: 7L,
+    log_end_offset: 9L,
+    frames: b"\x01\x02\x03",
+  }
+  match decode_sync_response(encode_sync_response(response)) {
+    Ok(decoded) => assert_eq(decoded, response)
+    Err(e) => abort("sync response: \{e}")
+  }
+  // trailing bytes mean the payload is not what it claims to be
+  assert_true(
+    decode_sync_response(
+      b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x00",
+    )
+    is Err(_),
+  )
+
+  let ack = SyncAck::{ partition: ref_, from: "127.0.0.1:1", leo: 7L }
+  match decode_sync_ack(encode_sync_ack(ack)) {
+    Ok(decoded) => assert_eq(decoded, ack)
+    Err(e) => abort("sync ack: \{e}")
+  }
+  // an ack with no sender cannot be attributed to a replica
+  assert_true(
+    decode_sync_ack(
+      encode_sync_ack(SyncAck::{ partition: ref_, from: "", leo: 1L }),
+    )
+    is Err(_),
+  )
+}
+
+///|
+test "partition views carry the leader and the replica set" {
+  let view = PartitionView::{
+    leader: "127.0.0.1:1",
+    replicas: ["127.0.0.1:1", "127.0.0.1:2"],
+  }
+  match decode_partition_view(encode_partition_view(view)) {
+    Ok(decoded) => assert_eq(decoded, view)
+    Err(e) => abort("partition view: \{e}")
+  }
+  // "no leader yet" is a state, not an error: the replica set may
+  // still be known
+  let unassigned = PartitionView::{ leader: "", replicas: ["127.0.0.1:1"] }
+  match decode_partition_view(encode_partition_view(unassigned)) {
+    Ok(decoded) => {
+      assert_eq(decoded.leader, "")
+      assert_eq(decoded.replicas.length(), 1)
+    }
+    Err(e) => abort("unassigned view: \{e}")
+  }
+  // offsets queries answer with a pair
+  assert_eq(decode_offset_info(encode_offset_info(3L, 5L)), Ok((3L, 5L)))
+  assert_true(decode_offset_info(b"\x00") is Err(_))
+}

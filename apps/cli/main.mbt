@@ -45,7 +45,9 @@ fn usage() -> Unit {
     "  spu      --id A --listen host:port [--data-dir D] [--sc host:port]",
   )
   println("  sc       --listen host:port [--data-dir D]")
-  println("  cluster  nodes --remote host:port")
+  println("  cluster  nodes   --remote host:port")
+  println("  cluster  leader  --topic T --remote host:port")
+  println("  cluster  offsets --topic T --remote <leader>")
   cli_exit(1)
 }
 

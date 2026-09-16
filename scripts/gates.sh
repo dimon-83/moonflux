@@ -58,6 +58,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p1-connectors.sh" scripts/e2e-p1-connectors.sh
   step "e2e-p1-rules.sh" scripts/e2e-p1-rules.sh
   step "e2e-p3-nodes.sh" scripts/e2e-p3-nodes.sh
+  step "e2e-p3-replication.sh" scripts/e2e-p3-replication.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

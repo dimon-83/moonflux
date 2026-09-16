@@ -19,7 +19,9 @@ fn cmd_cluster(argv : Array[String]) -> Unit {
   }
   match verb {
     "nodes" => cluster_nodes(rest)
-    _ => fail("cluster: unknown verb '\{verb}' (known: nodes)")
+    "leader" => cluster_leader(rest)
+    "offsets" => cluster_offsets(rest)
+    _ => fail("cluster: unknown verb '\{verb}' (known: nodes, leader, offsets)")
   }
 }
 
@@ -50,5 +52,52 @@ fn cluster_nodes(argv : Array[String]) -> Unit {
       "\{node.id}:\{@client.role_name(node.role)}\t\{node.address}\tleo=\{node.leo}",
     )
   }
+  cli_exit(0)
+}
+
+///|
+/// `moonflux cluster leader --topic T --remote <control plane>` —
+/// prints the address that leads the topic's partition 0, or nothing
+/// when the control plane has no assignment (a legitimate state: the
+/// exit code distinguishes it from a failed query).
+fn cluster_leader(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let remote = flags.require("remote")
+  let topic = flags.require("topic")
+  let ref = @client.PartitionRef::{ topic, partition: 0 }
+  let payload = match
+    control_call(remote, @client.CMD_LEADER, @client.encode_partition_ref(ref)) {
+    Ok(payload) => payload
+    Err(e) => fail("cluster leader: \{e}")
+  }
+  let view = match @client.decode_partition_view(payload) {
+    Ok(view) => view
+    Err(e) => fail("cluster leader: \{e}")
+  }
+  if view.leader.length() == 0 {
+    cli_exit(3) // no assignment yet — not an error
+  }
+  println(view.leader)
+  cli_exit(0)
+}
+
+///|
+/// `moonflux cluster offsets --topic T --remote <leader>` — prints
+/// `<hw> <leo>` for the topic's partition 0, asked of the node that
+/// actually leads it (the leader owns the progress ledger; asking a
+/// follower would answer a different question).
+fn cluster_offsets(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let remote = flags.require("remote")
+  let topic = flags.require("topic")
+  let payload = match control_call(remote, @client.CMD_OFFSET_INFO, b"") {
+    Ok(payload) => payload
+    Err(e) => fail("cluster offsets: \{e}")
+  }
+  let (hw, leo) = match @client.decode_offset_info(payload) {
+    Ok(pair) => pair
+    Err(e) => fail("cluster offsets: \{e}")
+  }
+  println("\{hw} \{leo}")
   cli_exit(0)
 }

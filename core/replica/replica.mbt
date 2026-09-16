@@ -394,6 +394,19 @@ pub fn elect_candidate(
 }
 
 ///|
+/// The last log end reported for a replica, or None if the ledger has
+/// never heard of it (an unknown replica is not the same as one at
+/// zero — the caller decides which it is looking at).
+pub fn ProgressLedger::leo_of(self : ProgressLedger, spu : String) -> Int64? {
+  for r in self.replicas {
+    if r.spu == spu {
+      return Some(r.leo)
+    }
+  }
+  None
+}
+
+///|
 /// The number of records a replica is missing relative to the leader.
 pub fn lag_of(ledger : ProgressLedger, spu : String) -> Int64? {
   let leo = ledger.leader_leo()

@@ -1,5 +1,6 @@
 // Blackbox tests for moonflux/core/log.
 import {
+  "moonbitlang/core/buffer",
   "moonflux/core/codec",
   "moonflux/core/log",
   "moonflux/core/protocol",

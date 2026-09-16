@@ -57,6 +57,7 @@ pub(all) struct ProgressLedger {
 pub fn ProgressLedger::advance_leader(Self, Int64) -> Result[Unit, ReplicaError]
 pub fn ProgressLedger::high_watermark(Self) -> Int64
 pub fn ProgressLedger::leader_leo(Self) -> Int64
+pub fn ProgressLedger::leo_of(Self, String) -> Int64?
 pub fn ProgressLedger::new(String, Array[ReplicaProgress]) -> Result[Self, ReplicaError]
 pub fn ProgressLedger::observe(Self, String, Int64) -> Result[Unit, ReplicaError]
 pub fn ProgressLedger::offset_info(Self) -> OffsetInfo
