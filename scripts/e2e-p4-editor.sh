@@ -131,8 +131,19 @@ verify() {
   pass "the topic log holds $(printf '%s\n' "$on_disk" | wc -l | tr -d ' ') record(s), written by the browser"
 
   # 3. the deployed chain runs on the consumption path. The broker
-  #    serves connections concurrently (P5), so this reads while the
-  #    editor still holds its WebSocket open.
+  #    serves connections concurrently (P5), so this read happens while
+  #    the editor still holds its WebSocket open — the case that used to
+  #    be impossible.
+  timeout_consume "$topic" || fail "the broker did not answer a read while the editor is connected"
+  local out
+  out="$(cat "$WORK/consume.out")"
+  [ -n "$out" ] || fail "the broker returned no records"
+  printf '%s\n' "$out" | cut -f4- | grep -q "^[A-Z0-9 ,.-]*$" \
+    || { printf '%s\n' "$out"; fail "the deployed transform did not run (records are not upper-cased)"; }
+  printf '%s\n' "$out" | cut -f4- | grep -qi "hello world" \
+    || { printf '%s\n' "$out"; fail "the editor's sample records are not what came back"; }
+  pass "the deployed expr chain ran: the records came back upper-cased (read while the browser stayed connected)"
+
   local first
   first="$(printf '%s\n' "$out" | head -1 | cut -f4-)"
   [ "$first" = "HELLO WORLD" ] || fail "expected HELLO WORLD first, got '$first'"
