@@ -11,6 +11,7 @@ options(
   link: {
     "native": {
       "stub-cc": "clang",
+      "stub-cc-flags": "-I/opt/homebrew/include",
     },
   },
 )
