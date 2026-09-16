@@ -7,11 +7,11 @@ wasm 执行，执行件在 15；信封先用一个"透传算子"的进程内假�
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ✅ done (2026-09-16)
 
-- [ ] `core/operator` 包：`OperatorSpec{ module_path, exports, budget_tier }`、
+- [x] `core/operator` 包：`OperatorSpec{ module_path, exports, budget_tier }`、
       ABI v1 常量与载荷编解码（复用 core/protocol 帧）；宿主接口 `OperatorEngine`
       （函数字段注入：instantiate / call_process），与 SegmentFile/Conn 同风格
-- [ ] 进程内参考实现 `PassthroughEngine`（原样返回输入），供 17 的语义对拍基线与单测
-- [ ] 预算档位常量（复用 P1 分级经验：内部/用户/租户三档，宿主执行超时→结构化错误）
-- [ ] 单测：信封往返、版本不匹配拒绝、预算档位校验；双后端通过
+- [x] 进程内参考实现 `PassthroughEngine`（原样返回输入），供 17 的语义对拍基线与单测
+- [x] 预算档位常量（复用 P1 分级经验：内部/用户/租户三档，宿主执行超时→结构化错误）
+- [x] 单测：信封往返、版本不匹配拒绝、预算档位校验；双后端通过

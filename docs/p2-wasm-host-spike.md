@@ -1,6 +1,7 @@
 # P2 Spike：native 宿主执行 guest 算子 wasm 的路径
 
-日期：2026-09-15 · 结论已由本地探针实证（非文献推断）· 决策记录见 README #13
+日期：2026-09-15 · 结论已由本地探针实证（非文献推断）· 决策记录见 README #14/#15/#16
+（2026-09-16 补：T15 根因实录与落地形态，见文末两节）
 
 ## 问题
 
@@ -41,6 +42,36 @@ ABI 函数用自然 MoonBit 签名书写（`Bytes` 进出即 (ptr, len)），通
 
 ## 风险与跟进
 
-- wasmtime 动态库的分发/链接（`cc-link-flags` 已由 moon 原生链接配置支持）；
+- wasmtime 动态库的分发/链接（本仓库最终以 **dlopen 运行时解析符号**落地，见下文「T15 落地实录」）；
 - guest 模块里 WASI import（fd_write）在 wasmtime 中需显式关停或 stub（算子不应有 IO）；
 - `moon upgrade` 到含 `pkgtype` 语法的新工具链可简化导出声明，但需一次全仓兼容性回归——另行立项，不阻塞 P2。
+
+## T15 落地实录（2026-09-16）：两个类型镜像尺寸
+
+集成期出现的症状是**误导性的**：`wasmtime_func_call` 报出 `vmoffsets
+num_defined_memories` 断言 panic，看起来像上游 wasmtime 的后台编译路径有 bug
+（当时据此写了"上游 panic"的结论、并列出 wasm-tools reduce / 子进程宿主 / moonrun
+三条解锁路径）。**实际根因在 shim 自己**：
+
+| 类型 | 真实大小（arm64，wasmtime 48.0.2） | shim 早期镜像 | 后果 |
+| :--- | :--- | :--- | :--- |
+| `wasmtime_val_t` | **32 B** | 16 B | 每次调用结果写越 16 B 栈 |
+| `wasmtime_memory_t` | **24 B** | 16 B | `instance_export_get("memory")` 覆盖 session 结构里相邻的 func 句柄 |
+
+句柄被踩坏后，后续调用自然指向垃圾内存，于是表现为"上游神秘的 vmoffsets 断言"。
+**修法**：shim 不再手写镜像类型，直接 `#include <wasmtime.h>` 用真类型，所有函数仍走
+`dlsym`（保持零链接期依赖）。修后 3/3 集成绿，无需上述三条解锁路径（它们仅作为将来
+真遇到上游问题时的备选记录）。
+
+**留存的教训**：(1) 手写 FFI 镜像类型必须用 `sizeof` 探针钉死（`probe_sizes.c`）；
+(2) 断言消息来自上游 ≠ 故障在上游——先验证自己传进去的内存布局。
+
+## 落地形态（P2 定稿，供后续维护对照）
+
+| 项 | 落地 |
+| :--- | :--- |
+| 引擎配置 | `parallel_compilation = false`（确定性）+ `consume_fuel = true`（预算可计量） |
+| 库加载 | `dlopen`（默认 `/opt/homebrew/lib/libwasmtime.dylib`，`MOONFLUX_WASMTIME_LIB` 可覆盖）；**无链接期依赖** |
+| 实例化 | 空导入实例化 ⇒ 有 import 段的模块直接被拒（算子无 IO 由结构保证） |
+| 预算 | 启动送 `MF_STARTUP_FUEL`；每次 process 前装入 `core/operator.fuel_per_call(tier)`；耗尽 → `BudgetExceeded`（非裸 trap） |
+| 配置 | `mf_op_init` 载荷 = spec 的 `config` 对象（原样透传，guest 自解析） |

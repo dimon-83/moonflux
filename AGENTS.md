@@ -46,7 +46,7 @@
 | P0 | **Native 最小闭环**：内核 codec + fs/net-native 适配 + 单机最小日志 + CLI + 文件源 → topic → stdout 汇贯通 | 端到端 demo 可复现；协议样本对拍通过 | ✅ 2026-09-15（`scripts/e2e-p0.sh`、`scripts/crosscheck-protocol.sh`） |
 | P0′（并行） | PipelineSpec v1alpha1 + CLI 编译/计划 | 一份 spec 可编译为可运行的进程拓扑 | ✅ 2026-09-15（`scripts/e2e-p0p.sh`） |
 | P1 | **连接器与外设**：Source/Sink 框架 + HTTP/文件/MQ + mbel 表达式 transforms + 客户端 SDK 雏形 | ≥3 个真实数据源接入跑通；改规则秒级生效 | ✅ 2026-09-15（`scripts/e2e-p1-connectors.sh`、`scripts/e2e-p1-rules.sh`；MQTT/Kafka 留后续） |
-| P2 | WASM 算子沙箱：guest SDK + ABI + 全算子 + 双后端测试矩阵 | 算子语义与参考实现对拍一致 | 未启动 |
+| P2 | WASM 算子沙箱：guest SDK + ABI + 全算子 + 双后端测试矩阵 | 算子语义与参考实现对拍一致 | ✅ 2026-09-16（`scripts/crosscheck-operators.sh`：native vs wasm 字节级一致 + trap/拒绝/超预算 fail-closed；`scripts/build-operators.sh` 构建门禁） |
 | P3 | 复制 + 选主 + 元数据调和（本地多进程优先） | 故障注入通过（宕机/恢复/水位一致性） | 未启动 |
 | P4 | 客户端 SDK 完备 + Web 编辑器 + 部署形态（本地优先，K8s 可选） | 端到端：拖拽一条管道 → 运行 → 消费到数据 | 未启动 |
 
@@ -85,12 +85,13 @@ moonflux/
 
 ## 6. 验证流程（"完成"的定义）
 
-完成任务前逐项确认：
+完成任务前逐项确认（**`scripts/gates.sh` 一次跑完全部**；`scripts/gates.sh fast` 跳过 E2E 门禁）：
 
-- [ ] `moon check` 通过；`moon fmt` 无 diff；`moon info` 的 `.mbti` 变更符合预期
+- [ ] `moon check` 通过；`moon fmt` 无 diff（`moon fmt --check`）；`moon info` 的 `.mbti` 变更符合预期
 - [ ] `moon test` 在 **≥2 个后端**通过（内核包必须：wasm 与 native）
 - [ ] 多后端编译矩阵：`moon build --target wasm|wasm-gc|js|native`（core 包全过）
 - [ ] 涉及 codec/算子：golden vectors 对拍通过；涉及执行路径：预算与超时行为测试通过
+- [ ] 生成物一致性：`tools/gen_*.py --check` 全部 up to date（**改数据文件后必须重跑生成器**；生成器按 `moon fmt` 排版输出，故 fmt 对生成文件是 no-op）
 - [ ] 涉及集成（mbel / 参考系统互操作）：附可复现脚本与对照输出
 - [ ] 文档同步：README / 报告章节 / 本文件金规则表（如决策有变更并注明依据）
 
@@ -108,6 +109,15 @@ moonflux/
 - 集成前对照报告 5.5 生产化清单：宿主墙钟超时、预算分级（内部 / 用户 / 租户）、plain wasm 目标测试、热路径"编译一次、复用到每记录"。
 - 规则资产（表达式 + 函数集 + env）必须版本化；发布前过 **Compile mode 静态检查**（`unknown name` / 类型错误在发布期拦截，而非运行期）。
 
+### 8.1 算子沙箱纪律（P2 起）
+
+- **算子 ABI 定稿即契约**：v1 的 7 个导出名固定（`core/operator` 中的常量），spec 不暴露 `export`；要改 ABI 就升版本号并同时改宿主与 guest SDK——**新的 ABI 版本走显式版本记录**，不得"尽力而为"地兼容。
+- **guest 无导入**：算子模块不得有 import 段（无 WASI、无 IO、无时钟、无随机源）。这不是约定而是结构性事实——宿主的"纯函数"假设建立在它之上；构建门禁 `tools/probe_operator_exports.py` 以编译器 WAT 为真相源。
+- **配置只走 `mf_op_init`**：spec 的 `config` 对象原样透传给 guest，宿主不解释其语义（语义属算子）。
+- **双预算**：记录数上限 + 指令数（fuel）上限随 tier 收紧；预算超限报 `BudgetExceeded`，**不**报裸 trap。fuel 是确定性计量（无时钟），重放同一批数据得到同一结果——这条与内核红线同源。
+- **失败一律 fail-closed**：算子拒绝 / trap / 预算超限都必须变成结构化错误，且**已产出的一半批次绝不落 Sink**（`scripts/crosscheck-operators.sh` 的 fail-closed 四条腿是这条纪律的门禁）。
+- **语义变更必须对拍**：任何算子语义调整都要有 native-vs-wasm 的字节级证据；测试向量放数据文件（`scripts/testdata/operator-golden.txt`，由 `tools/gen_operator_golden.py` 生成），手改即失败。
+
 ## 9. 不做清单（Anti-patterns）
 
 - ❌ 未经 §1.1 四检的移植（携带 Rust 依赖 / 假设、破坏内核红线）；❌ 把"整体照搬"当目标（移植是加速手段，不是项目目标）。
@@ -124,6 +134,8 @@ moonflux/
 | 立项评估报告 | [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md) | 架构与选型的全部证据（7 章） |
 | 对标参考工作规约 | [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md) | 在 Fluvio 参考仓库作业时的硬规则 |
 | CLI 命令工具规划 | [docs/cli-roadmap.md](docs/cli-roadmap.md) | 命令面分阶段规划（对标 Fluvio CLI；README 决策 13） |
+| 兼容性矩阵 | [docs/compatibility-matrix.md](docs/compatibility-matrix.md) | 每个对标语义的验证状态与证据入口（P2 算子沙箱条目见 #12/#14） |
+| 算子沙箱取证 | [docs/p2-wasm-host-spike.md](docs/p2-wasm-host-spike.md) | wasmtime 进程内宿主的问题取证（类型镜像尺寸、后台编译 panic） |
 | mbel 表达式引擎 | `~/workspace/mbel` | 动态规则层的候选内核 |
 | mbel-orch 设计 | `~/workspace/mbel-orch` | 算子/插件分发体系的设计参考 |
 

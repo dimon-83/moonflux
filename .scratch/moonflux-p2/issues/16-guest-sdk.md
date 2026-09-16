@@ -6,9 +6,9 @@
 
 **Blocked by:** 14.
 
-**Status:** ready-for-agent
+**Status:** ✅ done (2026-09-16)
 
-- [ ] guest 模板包：ABI 函数（pub + 整数/Bytes 签名）、配置解析（init 载荷 = JSON）
-- [ ] 示例算子：identity、to_uppercase（对拍 SmartModule 语义锚点）
-- [ ] `scripts/build-operators.sh`：确定性构建 .wasm（含 hash 输出，供宿主校验）
-- [ ] guest 侧单测（MoonBit 原生测试，语义先行）；导出面用探针脚本断言（exports/签名）
+- [x] guest 模板包：ABI 函数（pub + 整数/Bytes 签名）、配置解析（init 载荷 = JSON）
+- [x] 示例算子：identity、to_uppercase（对拍 SmartModule 语义锚点）
+- [x] `scripts/build-operators.sh`：确定性构建 .wasm（含 hash 输出，供宿主校验）
+- [x] guest 侧单测（MoonBit 原生测试，语义先行）；导出面用探针脚本断言（exports/签名）

@@ -7,7 +7,11 @@ guest 算子模块、读写线性内存、调用 ABI 导出函数；接入 core/
 
 **Blocked by:** 14.
 
-**Status:** partial (2026-09-15) — shim + engine implemented; integration BLOCKED on a wasmtime background-compile panic（已用探针链完整定位，见下）
+**Status:** ✅ done (2026-09-16) — 集成已解锁：根因是 shim 的手写类型镜像尺寸
+（`wasmtime_val_t` 真实 32B / 镜像 16B、`wasmtime_memory_t` 真实 24B / 镜像 16B，后者在
+`instance_export_get("memory")` 时踩坏相邻 func 句柄）→ 改为直接使用真实 `wasmtime.h` 类型后
+3/3 集成绿。**注意**：当时的"后台编译 panic"是**误导性症状**（内存踩坏后的二级表现），
+不是上游 bug；下述取证链保留为排查记录。
 
 > **取证链（T15 probe，/tmp/t15probe + tools 内探针脚本）**
 > 1. `wasmtime run` CLI 跑同一模块：✅ exit=0（模块合法）。
@@ -28,9 +32,10 @@ guest 算子模块、读写线性内存、调用 ABI 导出函数；接入 core/
 > 作为宿主进程。集成测试停在 `wasmtime_integration_test.mbt.disabled`（恢复：改回
 > `.wbt.mbt` 后缀；注意会让 `moon test --target native` 失败直至 blocker 解除）。
 
-- [ ] wasmtime 动态库获取与链接验证（本机 brew 48.0.2 已确认可装；记录可复现的链接配置）
-- [ ] FFI 面：engine/module/instance/linker、memory read/write、exported func call
+- [x] wasmtime 动态库获取与链接验证（本机 brew 48.0.2 已确认可装；记录可复现的链接配置）
+- [x] FFI 面：engine/module/instance/linker、memory read/write、exported func call
       （#borrow 标注全合规）；错误映射为结构化 WasmError（含 trap 消息）
-- [ ] WASI stub：fd_write 等被 import 时不挂接实现 → 实例化失败即拒绝该模块（算子红线：无 IO）
-- [ ] `Bytes` (ptr,len) 边界往返验证：宿主写入输入 → 调 process → 读出输出（含二进制安全）
-- [ ] 集成测试（native）：透传算子、大小写转换算子、超预算中断；双后端矩阵不回退
+- [x] WASI stub：fd_write 等被 import 时不挂接实现 → 实例化失败即拒绝该模块（算子红线：无 IO）
+- [x] `Bytes` (ptr,len) 边界往返验证：宿主写入输入 → 调 process → 读出输出（含二进制安全）
+- [x] 集成测试（native）：透传算子、大小写转换算子、超预算中断；双后端矩阵不回退
+      （6 项 in-process 集成：identity / upper / 缺失模块 / guest 拒绝 / trap / fuel 超限 / config 被拒）
