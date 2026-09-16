@@ -8,6 +8,11 @@
 
 options(
   "native-stub": ["wasmtime_shim.c"],
+  link: {
+    "native": {
+      "stub-cc": "clang",
+    },
+  },
 )
 
 supported_targets = "native"

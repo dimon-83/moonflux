@@ -36,7 +36,6 @@ fn value_of(r : @protocol.Record) -> String {
 }
 
 ///|
-@skip("T15 deep-dive: wasmtime func_call panics inside wasmtime (vmoffsets assert) though `wasmtime run` executes the module fine; suspect tcc-compiled shim interaction — isolate with a standalone C probe")
 test "identity operator runs through wasmtime" {
   let path = match locate_module("operator-identity") {
     Some(path) => path
@@ -72,7 +71,6 @@ test "identity operator runs through wasmtime" {
 }
 
 ///|
-@skip("T15 deep-dive: see identity test skip note")
 test "uppercase operator transforms through wasmtime" {
   let path = match locate_module("operator-upper") {
     Some(path) => path

@@ -50,8 +50,12 @@ typedef struct {
     int64_t i64;
     float f32;
     double f64;
+    /* the real valunion is larger (funcref/v128 + tail padding):
+     * sizeof(wasmtime_val_t) == 32 with of.i32 at offset 8 — verified
+     * by the T15 probe; undersized mirrors corrupt the stack */
+    uint8_t blob[24];
   } of;
-} mf_val_t; /* 16 bytes, of.i32 at offset 8 */
+} mf_val_t; /* 32 bytes, of.i32 at offset 8 */
 
 typedef struct {
   uint64_t store_id;
@@ -88,6 +92,7 @@ typedef struct {
 /* Function-pointer typedefs mirroring the wasmtime C API. */
 typedef struct wasm_engine_t *(*mf_engine_new_t)(void);
 typedef void (*mf_engine_delete_t)(struct wasm_engine_t *);
+typedef struct wasm_config_t mf_config_o; /* base config (wasm C API) */
 typedef struct wasmtime_error_t *(*mf_module_new_t)(
     mf_engine_o *, const uint8_t *, size_t, mf_module_o **);
 typedef void (*mf_module_delete_t)(mf_module_o *);
@@ -108,6 +113,11 @@ typedef uint8_t *(*mf_memory_data_t)(mf_context_o *, const mf_memory_t *);
 typedef size_t (*mf_memory_data_size_t)(mf_context_o *, const mf_memory_t *);
 typedef void (*mf_error_message_t)(mf_error_o *, mf_name_t *);
 typedef void (*mf_error_delete_t)(mf_error_o *);
+typedef mf_config_o *(*mf_config_new_t)(void);
+typedef void (*mf_config_parallel_set_t)(mf_config_o *, bool);
+typedef void (*mf_config_delete_t)(mf_config_o *);
+typedef void (*mf_gc_support_set_t)(mf_config_o *, bool);
+typedef mf_engine_o *(*mf_engine_new_with_config_t)(mf_config_o *); /* wasm_ prefix: wasm_engine_new_with_config */
 typedef void (*mf_trap_message_t)(mf_trap_o *, mf_name_t *);
 typedef void (*mf_trap_delete_t)(mf_trap_o *);
 
@@ -226,13 +236,43 @@ void *mf_we_session_new(const uint8_t *wasm, int wasm_len, char *err,
              "cannot resolve wasmtime symbols (set MOONFLUX_WASMTIME_LIB)");
     return NULL;
   }
+  /* Parallel-compilation worker threads panic on MoonBit-generated
+   * modules (wasmtime 48, vmoffsets num_defined_memories assert) while
+   * single-threaded compilation of the same module is fine — so the
+   * engine is built with parallel compilation disabled. */
+  mf_config_new_t config_new = (mf_config_new_t)mf_sym("wasm_config_new");
+  mf_config_parallel_set_t parallel_set =
+      (mf_config_parallel_set_t)mf_sym("wasmtime_config_parallel_compilation_set");
+  mf_config_delete_t config_delete =
+      (mf_config_delete_t)mf_sym("wasm_config_delete");
+  mf_gc_support_set_t gc_support_set =
+      (mf_gc_support_set_t)mf_sym("wasmtime_config_gc_support_set");
+  mf_engine_new_with_config_t engine_new_with_config =
+      (mf_engine_new_with_config_t)mf_sym("wasm_engine_new_with_config");
+  if (!config_new || !parallel_set || !config_delete || !engine_new_with_config || !gc_support_set) {
+    snprintf(err, err_len,
+             "cannot resolve wasmtime config symbols (set MOONFLUX_WASMTIME_LIB)");
+    return NULL;
+  }
+  mf_config_o *config = config_new();
+  if (!config) {
+    snprintf(err, err_len, "config_new failed");
+    return NULL;
+  }
+  parallel_set(config, false);
+  /* classic wasm target: no GC proposal needed; dropping GC support
+   * also removes the compilation path that asserts on MoonBit modules */
+  gc_support_set(config, false);
   mf_session_t *s = (mf_session_t *)malloc(sizeof(mf_session_t));
   if (!s) {
+    config_delete(config);
     snprintf(err, err_len, "oom");
     return NULL;
   }
   memset(s, 0, sizeof(*s));
-  s->engine = engine_new();
+  /* wasmtime_engine_new_with_config TAKES OWNERSHIP of the config —
+   * do not delete it here. */
+  s->engine = engine_new_with_config(config);
   if (!s->engine) {
     snprintf(err, err_len, "engine_new failed");
     free(s);
@@ -318,6 +358,7 @@ void *mf_we_session_new(const uint8_t *wasm, int wasm_len, char *err,
     mf_we_session_free(s);
     return NULL;
   }
+  fprintf(stderr, "[shim] _start call begin\n");
   mf_func_call_t func_call = (mf_func_call_t)mf_sym("wasmtime_func_call");
   if (!func_call) {
     snprintf(err, err_len,
@@ -327,6 +368,7 @@ void *mf_we_session_new(const uint8_t *wasm, int wasm_len, char *err,
   }
   mf_trap_o *start_trap = NULL;
   mf_error_o *se = func_call(ctx, &s->f_start, NULL, 0, NULL, 0, &start_trap);
+  fprintf(stderr, "[shim] _start call done\n");
   if (se != NULL) {
     mf_write_error(se, err, err_len);
     mf_we_session_free(s);

@@ -7,13 +7,26 @@ guest 算子模块、读写线性内存、调用 ABI 导出函数；接入 core/
 
 **Blocked by:** 14.
 
-**Status:** partial (2026-09-15) — shim + engine implemented & compiling; integration BLOCKED pending deep-dive
+**Status:** partial (2026-09-15) — shim + engine implemented; integration BLOCKED on a wasmtime background-compile panic（已用探针链完整定位，见下）
 
-> **Blocker（已取证）**：wasmtime 48 `func_call` 内部 panic（vmoffsets num_defined_memories
-> 断言），而 `wasmtime run` 对同一模块执行成功（exit=0）——问题在 C-API 调用路径，疑点：
-> tcc 编译的 shim 与 wasmtime ABI 的交互、val 布局、_start 时序。下一步：写独立 C 探针
-> （clang 直编、不经 moon）隔离复现；或改用 moonrun/进程外 CLI 兜底。集成测试已移为
-> `wasmtime_integration_test.mbt.disabled`（恢复：mv 回 `.wbt.mbt` 后缀）。
+> **取证链（T15 probe，/tmp/t15probe + tools 内探针脚本）**
+> 1. `wasmtime run` CLI 跑同一模块：✅ exit=0（模块合法）。
+> 2. 独立 clang 探针（直链 wasmtime、真头文件、主线程）：✅ 全阶段绿——C API 调用序列、
+>    `Bytes` 边界、缓冲协议全部可行。
+> 3. 独立 clang 探针（worker 线程）：✅ 绿——线程因素排除。
+> 4. 生产 shim（clang 编译）+ 独立 main：⚠️ 后台线程 panic（vmoffsets
+>    num_defined_memories 断言），但主线程全阶段绿、exit=0——**panic 不致命**。
+> 5. moon-test 进程（MoonBit 运行时共存）：同样的后台 panic → 进程 abort（测试失败）。
+>
+> **结论**：wasmtime 48 的某条后台编译/compilation 路径对 MoonBit 生成的模块 panic
+> （并行编译已关仍复现 → 疑似 tier-up 或 GC-support 编译路径，见 shim 内 config）；
+> 独立进程中该 panic 可存活，但 MoonBit 测试运行时共存环境下变为致命 abort。
+> 已实施缓解：parallel_compilation off + gc_support off（未根除）。
+>
+> **解锁路径（按优先级）**：(a) 最小化模块（wasm-tools reduce）定位致断言的代码段并报
+> 上游；(b) 子进程/独立宿主进程方案（探针已证可行，功能等价，性能后置）；(c) moonrun
+> 作为宿主进程。集成测试停在 `wasmtime_integration_test.mbt.disabled`（恢复：改回
+> `.wbt.mbt` 后缀；注意会让 `moon test --target native` 失败直至 blocker 解除）。
 
 - [ ] wasmtime 动态库获取与链接验证（本机 brew 48.0.2 已确认可装；记录可复现的链接配置）
 - [ ] FFI 面：engine/module/instance/linker、memory read/write、exported func call
