@@ -34,3 +34,9 @@ pub extern "C" fn net_close(fd : Int) -> Int = "mf_net_close"
 ///|
 #borrow(pair)
 pub extern "C" fn net_socketpair(pair : FixedArray[Int]) -> Int = "mf_net_socketpair"
+
+///|
+pub extern "C" fn net_set_recv_timeout(fd : Int, ms : Int) -> Int = "mf_net_set_recv_timeout"
+
+///|
+pub extern "C" fn net_accept_timeout(fd : Int, ms : Int) -> Int = "mf_net_accept_timeout"

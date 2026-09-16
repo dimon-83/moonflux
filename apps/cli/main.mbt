@@ -22,6 +22,18 @@ fn[T] fail(msg : String) -> T {
 }
 
 ///|
+extern "C" fn flush_streams() -> Unit = "mf_cli_flush"
+
+///|
+/// Prints one operator-facing line and flushes it. Used by the
+/// long-lived node processes (serve / spu / sc): their output is
+/// read while they run, and a signal can stop them between lines.
+fn note(msg : String) -> Unit {
+  println(msg)
+  flush_streams()
+}
+
+///|
 fn usage() -> Unit {
   println("usage: moonflux <command> [flags]")
   println("")
@@ -29,6 +41,11 @@ fn usage() -> Unit {
   println("  produce  --topic T --file F [--data-dir D] [--remote host:port]")
   println("  consume  --topic T [--from N] [--data-dir D] [--remote host:port]")
   println("  serve    --data-dir D --listen host:port")
+  println(
+    "  spu      --id A --listen host:port [--data-dir D] [--sc host:port]",
+  )
+  println("  sc       --listen host:port [--data-dir D]")
+  println("  cluster  nodes --remote host:port")
   cli_exit(1)
 }
 
@@ -108,7 +125,10 @@ fn main {
     text == "produce" ||
     text == "consume" ||
     text == "serve" ||
-    text == "pipeline"
+    text == "pipeline" ||
+    text == "spu" ||
+    text == "sc" ||
+    text == "cluster"
   }
 
   let start = if args.length() > 0 && is_command(args[0]) {
@@ -128,6 +148,9 @@ fn main {
     "consume" => cmd_consume(rest)
     "serve" => cmd_serve(rest)
     "pipeline" => cmd_pipeline(rest)
+    "spu" => cmd_spu(rest)
+    "sc" => cmd_sc(rest)
+    "cluster" => cmd_cluster(rest)
     _ => usage()
   }
 }

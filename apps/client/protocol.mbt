@@ -36,6 +36,23 @@ pub const CMD_OK = 5
 ///|
 pub const CMD_ERR = 6
 
+// Control-plane commands (P3). They ride the same framing so a node
+// speaks one protocol whether it is serving data or cluster state;
+// an old peer answers ERR(unknown-command) rather than dropping the
+// connection, which is the whole point of having a version byte.
+
+///|
+/// A node announcing itself to the control plane: id, role, address.
+pub const CMD_REGISTER = 7
+
+///|
+/// Liveness plus progress: the same node record, resent on a timer.
+pub const CMD_HEARTBEAT = 8
+
+///|
+/// Reads the control plane's node table.
+pub const CMD_NODES = 9
+
 // Stable error codes (client-visible contract).
 
 ///|
@@ -55,6 +72,11 @@ pub const ERR_TRANSFORM = 5
 
 ///|
 pub const ERR_SEQUENCE = 6
+
+///|
+/// The peer is registered but the request does not apply to its role
+/// (e.g. a data command sent to the control plane's control port).
+pub const ERR_WRONG_ROLE = 7
 
 ///|
 pub const MAX_FRAME_PAYLOAD = 33554432
@@ -155,4 +177,159 @@ pub fn decode_error(payload : Bytes) -> (Int, String) {
     Err(_) => b""
   }
   (code, @utf8.decode_lossy(rest[0:rest.length()]))
+}
+
+// ---------------------------------------------------------------------
+// Control-plane payloads (P3): a node's self-description and the
+// progress it reports. Encoded as uleb128-length-prefixed UTF-8
+// fields + a varint offset, matching the wire protocol's conventions
+// (no JSON on the wire; the on-disk forms use JSON, the network does
+// not, and a node's identity is data this project must be able to
+// compare byte for byte in tests).
+
+///|
+/// The role a node plays in a cluster.
+pub(all) enum NodeRole {
+  /// Control plane: owns cluster metadata and elections.
+  Sc
+  /// Data plane: owns partition logs and serves produce/fetch.
+  Spu
+} derive(Debug, Eq, Show)
+
+///|
+/// Parses a role name; unknown names are rejected rather than
+/// defaulted, so a typo cannot silently produce a data node.
+pub fn parse_node_role(s : String) -> Result[NodeRole, String] {
+  match s {
+    "sc" => Ok(Sc)
+    "spu" => Ok(Spu)
+    _ => Err("unknown role '\{s}' (expected sc or spu)")
+  }
+}
+
+///|
+/// The wire spelling of a role.
+pub fn role_name(role : NodeRole) -> String {
+  match role {
+    Sc => "sc"
+    Spu => "spu"
+  }
+}
+
+///|
+/// What a node tells the control plane about itself. `leo` is the
+/// node's own log end for the partition it is reporting on — empty
+/// for a freshly started node or a control node, since progress is
+/// per partition and this record is per node (§T21 scope: one
+/// partition per topic, so a single LEO suffices and the per-partition
+/// shape arrives with the placement work in T24).
+pub(all) struct NodeRecord {
+  id : String
+  role : NodeRole
+  address : String
+  leo : Int64
+} derive(Debug, Eq, Show)
+
+///|
+fn write_field(buf : @buffer.Buffer, s : String) -> Unit {
+  let bytes = @utf8.encode(s[0:s.length()])
+  buf.write_leb128(bytes.length())
+  buf.write_bytes(bytes[0:bytes.length()])
+}
+
+///|
+fn read_field(reader : @codec.Reader) -> Result[String, String] {
+  let len = match reader.read_uleb128_len() {
+    Ok(len) => len
+    Err(_) => return Err("truncated string field")
+  }
+  match reader.read_bytes(len) {
+    Ok(bytes) => Ok(@utf8.decode_lossy(bytes[0:bytes.length()]))
+    Err(_) => Err("truncated string field")
+  }
+}
+
+///|
+/// Encodes a node record. Deterministic: same record, same bytes.
+pub fn encode_node(record : NodeRecord) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, record.id)
+  write_field(buf, role_name(record.role))
+  write_field(buf, record.address)
+  buf.write_leb128(record.leo)
+  buf.to_bytes()
+}
+
+///|
+/// Decodes a node record; any malformed input is a structured error,
+/// never a partially-filled record.
+pub fn decode_node(payload : Bytes) -> Result[NodeRecord, String] {
+  let reader = @codec.Reader::new(payload)
+  let id = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if id.length() == 0 || id.length() > 128 {
+    return Err("node id must be 1..128 chars")
+  }
+  let role = match read_field(reader) {
+    Ok(v) =>
+      match parse_node_role(v) {
+        Ok(role) => role
+        Err(e) => return Err(e)
+      }
+    Err(e) => return Err(e)
+  }
+  let address = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if address.length() == 0 {
+    return Err("node address must not be empty")
+  }
+  let leo = match reader.read_uleb128() {
+    Ok(leo) => leo.reinterpret_as_int64()
+    Err(_) => return Err("truncated leo field")
+  }
+  Ok(NodeRecord::{ id, role, address, leo })
+}
+
+///|
+/// Encodes the node table reply: uleb128 count, then one node record
+/// per entry (each length-prefixed).
+pub fn encode_nodes(records : Array[NodeRecord]) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_leb128(records.length())
+  for record in records {
+    let bytes = encode_node(record)
+    buf.write_leb128(bytes.length())
+    buf.write_bytes(bytes[0:bytes.length()])
+  }
+  buf.to_bytes()
+}
+
+///|
+/// Decodes the node table reply.
+pub fn decode_nodes(payload : Bytes) -> Result[Array[NodeRecord], String] {
+  let reader = @codec.Reader::new(payload)
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated node table")
+  }
+  let out : Array[NodeRecord] = []
+  for _ in 0..<count {
+    let len = match reader.read_uleb128_len() {
+      Ok(len) => len
+      Err(_) => return Err("truncated node table entry")
+    }
+    let bytes = match reader.read_bytes(len) {
+      Ok(bytes) => bytes
+      Err(_) => return Err("truncated node table entry")
+    }
+    match decode_node(bytes) {
+      Ok(record) => out.push(record)
+      Err(e) => return Err("bad node record: \{e}")
+    }
+  }
+  Ok(out)
 }

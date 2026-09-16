@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -87,14 +88,63 @@ int mf_net_getsockport(int fd) {
   return -EINVAL;
 }
 
+/*
+ * Timeouts are reported with a dedicated code rather than errno, so
+ * the MoonBit side can tell "nothing to accept yet" from a real
+ * failure without knowing platform errno values.
+ */
+#define MF_NET_TIMEOUT 9999
+
 int mf_net_accept(int fd) { return accept(fd, NULL, NULL); }
+
+/*
+ * Accept with a deadline. SO_RCVTIMEO does NOT cover accept() on
+ * macOS/BSD (it only covers recv), so a timeout there is honoured
+ * here with poll() instead of a socket option: wait for readability,
+ * then accept. ms <= 0 means "block forever".
+ */
+int mf_net_accept_timeout(int fd, int ms) {
+  if (ms <= 0) {
+    return mf_net_accept(fd);
+  }
+  struct pollfd pfd;
+  pfd.fd = fd;
+  pfd.events = POLLIN;
+  pfd.revents = 0;
+  int rc = poll(&pfd, 1, ms);
+  if (rc == 0) {
+    return -MF_NET_TIMEOUT;
+  }
+  if (rc < 0) {
+    return -errno;
+  }
+  return mf_net_accept(fd);
+}
+
+/*
+ * Sets SO_RCVTIMEO (which also makes accept() time out) in
+ * milliseconds; 0 clears it. Returns 0 or -errno.
+ */
+int mf_net_set_recv_timeout(int fd, int ms) {
+  struct timeval tv;
+  tv.tv_sec = ms / 1000;
+  tv.tv_usec = (ms % 1000) * 1000;
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+    return -errno;
+  }
+  return 0;
+}
 
 int mf_net_send(int fd, const uint8_t *buf, int len) {
   return (int)send(fd, buf, len, 0);
 }
 
 int mf_net_recv(int fd, uint8_t *buf, int len) {
-  return (int)recv(fd, buf, len, 0);
+  int n = (int)recv(fd, buf, len, 0);
+  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    return -MF_NET_TIMEOUT;
+  }
+  return n;
 }
 
 int mf_net_close(int fd) { return close(fd); }

@@ -11,6 +11,11 @@ pub(all) suberror NetError {
   Io(Int, String)
   /// Peer closed the connection mid-exchange.
   ConnectionClosed
+  /// The socket's timeout (see `TcpStream::set_recv_timeout_ms`)
+  /// expired before any data arrived. Distinct from an error so a
+  /// single-threaded node loop can treat it as "time to do housekeeping"
+  /// rather than as a failure.
+  TimedOut
 } derive(Debug, Eq)
 
 ///|
@@ -19,14 +24,25 @@ pub impl Show for NetError with fn output(self, logger) {
     BadAddress(msg) => logger.write_string("BadAddress(\{msg})")
     Io(code, op) => logger.write_string("Io(errno=\{code}, op=\{op})")
     ConnectionClosed => logger.write_string("ConnectionClosed")
+    TimedOut => logger.write_string("TimedOut")
   }
 }
 
 ///|
-/// Wraps a raw FFI result: negative means -errno.
+/// The shim's dedicated timeout code (see net_shim.c): a socket
+/// deadline that expired, not a failure.
+const NET_TIMEOUT_CODE : Int = 9999
+
+///|
+/// Wraps a raw FFI result: negative means -errno, except the shim's
+/// timeout sentinel, which becomes `TimedOut`.
 fn io_result(code : Int, op : String) -> Result[Int, NetError] {
   if code < 0 {
-    Err(Io(-code, op))
+    if -code == NET_TIMEOUT_CODE {
+      Err(TimedOut)
+    } else {
+      Err(Io(-code, op))
+    }
   } else {
     Ok(code)
   }
@@ -48,9 +64,14 @@ pub struct TcpStream {
 } derive(Debug)
 
 ///|
-/// A listening TCP socket awaiting `accept`.
+/// A listening TCP socket awaiting `accept`. `accept_timeout_ms` is
+/// carried here because the deadline is a property of the accept
+/// call, not of the socket: macOS ignores SO_RCVTIMEO for accept, so
+/// the listener holds the deadline and `accept` passes it down to a
+/// poll()-based shim call.
 pub struct TcpListener {
   fd : Int
+  mut accept_timeout_ms : Int
 } derive(Debug)
 
 ///|
@@ -120,9 +141,48 @@ pub fn TcpStream::recv(
   }
   let n = net_recv(self.fd, buf, len)
   if n < 0 {
+    if -n == NET_TIMEOUT_CODE {
+      return Err(TimedOut)
+    }
     return Err(Io(-n, "recv"))
   }
   Ok(n)
+}
+
+///|
+/// Sets a receive timeout in milliseconds (0 clears it). A single-
+/// threaded node loop uses this on its listener so `accept` returns
+/// `TimedOut` instead of blocking forever, which is what makes
+/// "serve requests, then do housekeeping" possible without threads —
+/// housekeeping is exactly the control-plane work (heartbeats, liveness
+/// sweeps, reconcile ticks) that must not be starved by an idle socket.
+pub fn TcpStream::set_recv_timeout_ms(
+  self : TcpStream,
+  ms : Int,
+) -> Result[Unit, NetError] {
+  if ms < 0 {
+    return Err(BadAddress("timeout must not be negative"))
+  }
+  match io_result(net_set_recv_timeout(self.fd, ms), "setsockopt") {
+    Ok(_) => Ok(())
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// Installs an accept deadline in milliseconds (0 = block forever).
+/// Deliberately not a socket option: macOS ignores SO_RCVTIMEO for
+/// accept, so the deadline is stored on the listener and passed to a
+/// poll()-based shim call.
+pub fn TcpListener::set_accept_timeout_ms(
+  self : TcpListener,
+  ms : Int,
+) -> Result[Unit, NetError] {
+  if ms < 0 {
+    return Err(BadAddress("timeout must not be negative"))
+  }
+  self.accept_timeout_ms = ms
+  Ok(())
 }
 
 ///|
@@ -149,7 +209,7 @@ pub fn TcpListener::bind_listen(
     Err(e) => return Err(e)
   }
   match io_result(net_bind_listen(h, h.length(), port), "bind") {
-    Ok(fd) => Ok(TcpListener::{ fd, })
+    Ok(fd) => Ok(TcpListener::{ fd, accept_timeout_ms: 0 })
     Err(e) => Err(e)
   }
 }
@@ -164,9 +224,13 @@ pub fn TcpListener::local_port(self : TcpListener) -> Result[Int, NetError] {
 }
 
 ///|
-/// Blocks until a peer connects; returns the accepted stream.
+/// Blocks until a peer connects; returns the accepted stream. With a
+/// timeout installed via `set_accept_timeout_ms` it returns `TimedOut`
+/// instead, which is what lets a single-threaded node alternate
+/// between serving and housekeeping.
 pub fn TcpListener::accept(self : TcpListener) -> Result[TcpStream, NetError] {
-  match io_result(net_accept(self.fd), "accept") {
+  match
+    io_result(net_accept_timeout(self.fd, self.accept_timeout_ms), "accept") {
     Ok(fd) => Ok(TcpStream::{ fd, })
     Err(e) => Err(e)
   }

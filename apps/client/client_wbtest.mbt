@@ -265,3 +265,49 @@ fn flip_byte(data : Bytes, index : Int, replacement : Byte) -> Bytes {
   }
   out.to_bytes()
 }
+
+///|
+test "node record round trips and rejects malformed input" {
+  let record = NodeRecord::{
+    id: "spu-a",
+    role: Spu,
+    address: "127.0.0.1:19001",
+    leo: 42L,
+  }
+  let bytes = encode_node(record)
+  match decode_node(bytes) {
+    Ok(decoded) => assert_eq(decoded, record)
+    Err(e) => abort("decode: \{e}")
+  }
+  // deterministic encoding
+  assert_eq(encode_node(record), bytes)
+  // an unknown role name is refused, not defaulted to a data node
+  // (hand-built: id="x", role="node", address="a:1", leo=0)
+  assert_true(decode_node(b"\x01x\x04node\x03a:1\x00") is Err(_))
+  let zero_id = NodeRecord::{ id: "", role: Sc, address: "a:1", leo: 0L }
+  assert_true(decode_node(encode_node(zero_id)) is Err(_))
+  let empty_addr = NodeRecord::{ id: "x", role: Sc, address: "", leo: 0L }
+  assert_true(decode_node(encode_node(empty_addr)) is Err(_))
+  // truncated payloads never yield a partial record
+  assert_true(decode_node(b"\x03spu") is Err(_))
+  assert_true(decode_node(b"") is Err(_))
+}
+
+///|
+test "the control plane's node table round trips" {
+  let nodes = [
+    NodeRecord::{ id: "spu-a", role: Spu, address: "127.0.0.1:19001", leo: 7L },
+    NodeRecord::{ id: "spu-b", role: Spu, address: "127.0.0.1:19002", leo: 0L },
+  ]
+  match decode_nodes(encode_nodes(nodes)) {
+    Ok(decoded) => assert_eq(decoded, nodes)
+    Err(e) => abort("decode nodes: \{e}")
+  }
+  match decode_nodes(encode_nodes([])) {
+    Ok(decoded) => assert_eq(decoded.length(), 0)
+    Err(e) => abort("empty table: \{e}")
+  }
+  // a corrupt entry fails the whole table rather than being skipped
+  let truncated = b"\x02\x05\x01a"
+  assert_true(decode_nodes(truncated) is Err(_))
+}
