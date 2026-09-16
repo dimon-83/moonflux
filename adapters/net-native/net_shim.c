@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -135,6 +136,61 @@ int mf_net_set_recv_timeout(int fd, int ms) {
   return 0;
 }
 
+/*
+ * Non-blocking mode and readiness polling: the pieces a single-threaded
+ * server needs to serve several connections without threads. `recv` on
+ * a non-blocking fd returns -MF_NET_WOULD_BLOCK when there is nothing
+ * to read right now — distinct from 0 (peer closed) and from an error.
+ */
+#define MF_NET_WOULD_BLOCK 9998
+
+int mf_net_set_nonblocking(int fd, int enabled) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0) return -errno;
+  if (enabled) {
+    flags |= O_NONBLOCK;
+  } else {
+    flags &= ~O_NONBLOCK;
+  }
+  if (fcntl(fd, F_SETFL, flags) < 0) return -errno;
+  return 0;
+}
+
+int mf_net_recv_some(int fd, uint8_t *buf, int len) {
+  int n = (int)recv(fd, buf, len, 0);
+  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    return -MF_NET_WOULD_BLOCK;
+  }
+  return n;
+}
+
+/*
+ * Polls `count` fds for readability. `fds` is an int array; writes 1
+ * into `ready[i]` for each readable fd. Returns the number readable, or
+ * -errno. A timeout of 0 polls without waiting.
+ */
+int mf_net_poll_readable(const int *fds, int count, int timeout_ms,
+                         int *ready) {
+  struct pollfd pfds[128];
+  if (count < 0 || count > 128) return -EINVAL;
+  for (int i = 0; i < count; i++) {
+    pfds[i].fd = fds[i];
+    pfds[i].events = POLLIN;
+    pfds[i].revents = 0;
+    ready[i] = 0;
+  }
+  int rc = poll(pfds, (nfds_t)count, timeout_ms);
+  if (rc < 0) return -errno;
+  int hits = 0;
+  for (int i = 0; i < count; i++) {
+    if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
+      ready[i] = 1;
+      hits++;
+    }
+  }
+  return hits;
+}
+
 int mf_net_send(int fd, const uint8_t *buf, int len) {
   return (int)send(fd, buf, len, 0);
 }
@@ -155,4 +211,12 @@ int mf_net_socketpair(int *pair) {
   pair[0] = fds[0];
   pair[1] = fds[1];
   return 0;
+}
+
+int mf_net_send_some(int fd, const uint8_t *buf, int len) {
+  int n = (int)send(fd, buf, len, 0);
+  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    return -MF_NET_WOULD_BLOCK;
+  }
+  return n;
 }

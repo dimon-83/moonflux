@@ -210,6 +210,12 @@ fn cmd_spu(argv : Array[String]) -> Unit {
     None => note("  no control plane configured (standalone data node)")
   }
   let rules = RuleState::new()
+  // Note: a data node still serves one connection at a time. Its peers
+  // are known and few (the control plane, and its partition's followers
+  // pulling in turn), and the hub that `serve` now uses would need the
+  // replication paths ported to stay correct. Recorded as a known
+  // limitation rather than papered over; the browser path — the one
+  // where an unknown number of clients appear — is multiplexed.
   let partition = PartitionHost::new(data_dir, identity.id, "\{host}:\{actual}")
   partition.topic = applied_topic(data_dir)
   if partition.topic.length() > 0 {

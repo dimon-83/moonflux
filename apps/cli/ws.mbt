@@ -320,12 +320,9 @@ pub fn ws_read_frame(conn : @client.Conn) -> Result[WsFrame, String] {
 }
 
 ///|
-/// Writes one unmasked frame (servers must not mask).
-pub fn ws_write_frame(
-  conn : @client.Conn,
-  opcode : Int,
-  payload : Bytes,
-) -> Result[Unit, String] {
+/// Encodes one unmasked frame (servers must not mask). Pure bytes, so
+/// the event loop can queue a reply without holding a Conn.
+pub fn ws_encode_frame(opcode : Int, payload : Bytes) -> Bytes {
   let out = @buffer.Buffer::Buffer()
   out.write_byte((0x80 | opcode).to_byte())
   let len = payload.length()
@@ -343,8 +340,17 @@ pub fn ws_write_frame(
     }
   }
   out.write_bytes(payload[0:payload.length()])
-  let bytes = out.to_bytes()
-  (conn.send)(bytes)
+  out.to_bytes()
+}
+
+///|
+/// Writes one frame to a blocking connection.
+pub fn ws_write_frame(
+  conn : @client.Conn,
+  opcode : Int,
+  payload : Bytes,
+) -> Result[Unit, String] {
+  (conn.send)(ws_encode_frame(opcode, payload))
 }
 
 ///|
@@ -422,4 +428,20 @@ pub fn prefixed_transport(head : Bytes, rest : @client.Conn) -> @client.Conn {
     },
     close: fn() { (rest.close)() },
   }
+}
+
+///|
+/// The HTTP answer a refused upgrade gets. A request that reached the
+/// right port but was not a WebSocket handshake is a client mistake,
+/// and saying so costs one line — silence costs an afternoon.
+pub fn http_bad_request(reason : String) -> Bytes {
+  let body = "not a websocket upgrade: " + reason + "\n"
+  let response = "HTTP/1.1 400 Bad Request\r\n" +
+    "Content-Type: text/plain\r\n" +
+    "Content-Length: " +
+    body.length().to_string() +
+    "\r\n" +
+    "Connection: close\r\n\r\n" +
+    body
+  @utf8.encode(response[0:response.length()])
 }

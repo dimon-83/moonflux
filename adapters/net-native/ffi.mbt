@@ -40,3 +40,27 @@ pub extern "C" fn net_set_recv_timeout(fd : Int, ms : Int) -> Int = "mf_net_set_
 
 ///|
 pub extern "C" fn net_accept_timeout(fd : Int, ms : Int) -> Int = "mf_net_accept_timeout"
+
+///|
+pub extern "C" fn net_set_nonblocking(fd : Int, enabled : Int) -> Int = "mf_net_set_nonblocking"
+
+///|
+#borrow(buf)
+pub extern "C" fn net_recv_some(
+  fd : Int,
+  buf : FixedArray[Byte],
+  len : Int,
+) -> Int = "mf_net_recv_some"
+
+///|
+#borrow(fds, ready)
+pub extern "C" fn net_poll_readable(
+  fds : FixedArray[Int],
+  count : Int,
+  timeout_ms : Int,
+  ready : FixedArray[Int],
+) -> Int = "mf_net_poll_readable"
+
+///|
+#borrow(buf)
+pub extern "C" fn net_send_some(fd : Int, buf : Bytes, len : Int) -> Int = "mf_net_send_some"

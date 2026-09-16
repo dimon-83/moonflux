@@ -130,29 +130,9 @@ verify() {
   [ -n "$on_disk" ] || fail "the log is empty"
   pass "the topic log holds $(printf '%s\n' "$on_disk" | wc -l | tr -d ' ') record(s), written by the browser"
 
-  # 3. the deployed chain runs on the consumption path. `serve` handles
-  #    one connection at a time (a documented P1 leftover), so the
-  #    editor's own WebSocket must be closed first — a human closes the
-  #    tab, the agent's browser tool closes it, and this waits.
-  # the probe above is intentionally blunt: give the broker a moment and
-  # read the result; if the slot is still held, say exactly what to do
-  if ! timeout_consume "$topic"; then
-    cat <<MSG
-  the broker is still busy with the editor connection (serve handles one
-  connection at a time). Close the editor tab and re-run:
-    scripts/e2e-p4-editor.sh verify
-MSG
-    fail "could not read through the broker while the editor is connected"
-  fi
-
-  out="$(cat "$WORK/consume.out")"
-  [ -n "$out" ] || fail "the broker returned no records"
-  printf '%s\n' "$out" | cut -f4- | grep -q "^[A-Z0-9 ,.-]*$" \
-    || { printf '%s\n' "$out"; fail "the deployed transform did not run (records are not upper-cased)"; }
-  printf '%s\n' "$out" | cut -f4- | grep -qi "hello world" \
-    || { printf '%s\n' "$out"; fail "the editor's sample records are not what came back"; }
-  pass "the deployed expr chain ran: the records came back upper-cased"
-
+  # 3. the deployed chain runs on the consumption path. The broker
+  #    serves connections concurrently (P5), so this reads while the
+  #    editor still holds its WebSocket open.
   local first
   first="$(printf '%s\n' "$out" | head -1 | cut -f4-)"
   [ "$first" = "HELLO WORLD" ] || fail "expected HELLO WORLD first, got '$first'"

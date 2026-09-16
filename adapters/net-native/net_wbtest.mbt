@@ -128,3 +128,101 @@ test "recv honours the socket timeout" {
   let _ = a.close()
   let _ = b.close()
 }
+
+///|
+test "a non-blocking recv separates empty, closed, and data" {
+  let (a, b) = match socketpair() {
+    Ok(pair) => pair
+    Err(e) => abort("socketpair: \{e}")
+  }
+  match a.set_nonblocking(true) {
+    Ok(_) => ()
+    Err(e) => abort("set nonblocking: \{e}")
+  }
+  let buf : FixedArray[Byte] = FixedArray::make(16, b'\x00')
+  // nothing written yet: WouldBlock, not an error and not EOF
+  match a.recv_some(buf, 16) {
+    Err(WouldBlock) => ()
+    Err(e) => abort("expected WouldBlock, got \{e}")
+    Ok(n) => abort("expected no data, got \{n}")
+  }
+  // data arrives: readable
+  match b.send_all(b"ping") {
+    Ok(_) => ()
+    Err(e) => abort("send: \{e}")
+  }
+  match a.recv_some(buf, 16) {
+    Ok(n) => assert_eq(n, 4)
+    Err(e) => abort("expected data, got \{e}")
+  }
+  // and drained again
+  match a.recv_some(buf, 16) {
+    Err(WouldBlock) => ()
+    Err(e) => abort("expected WouldBlock, got \{e}")
+    Ok(n) => abort("expected no data, got \{n}")
+  }
+  // peer closes: 0, which is how EOF must look
+  match b.close() {
+    Ok(_) => ()
+    Err(e) => abort("close: \{e}")
+  }
+  // (a close is only visible after the read side drains; poll then
+  // reports readable with a 0-byte read)
+  match poll_readable([a], 500) {
+    Ok(ready) => assert_eq(ready.length(), 1)
+    Err(e) => abort("poll: \{e}")
+  }
+  match a.recv_some(buf, 16) {
+    Ok(n) => assert_eq(n, 0)
+    Err(e) => abort("expected EOF, got \{e}")
+  }
+  let _ = a.close()
+}
+
+///|
+test "poll reports only the sockets that have data" {
+  // three connections, one of which is silent: the silent one must not
+  // hold up the others (this is the property the server depends on)
+  let (a1, b1) = match socketpair() {
+    Ok(pair) => pair
+    Err(e) => abort("socketpair: \{e}")
+  }
+  let (a2, _b2) = match socketpair() {
+    Ok(pair) => pair
+    Err(e) => abort("socketpair: \{e}")
+  }
+  let (a3, b3) = match socketpair() {
+    Ok(pair) => pair
+    Err(e) => abort("socketpair: \{e}")
+  }
+  match b1.send_all(b"one") {
+    Ok(_) => ()
+    Err(e) => abort("send: \{e}")
+  }
+  match b3.send_all(b"three") {
+    Ok(_) => ()
+    Err(e) => abort("send: \{e}")
+  }
+  match poll_readable([a1, a2, a3], 500) {
+    Ok(ready) => {
+      assert_eq(ready.length(), 2)
+      assert_eq(ready[0], 0)
+      assert_eq(ready[1], 2)
+    }
+    Err(e) => abort("poll: \{e}")
+  }
+  // drain a1, then a zero-timeout poll has nothing to report — and
+  // returning at all proves it did not wait (the suite would hang)
+  let buf : FixedArray[Byte] = FixedArray::make(16, b'\x00')
+  match a1.recv_some(buf, 16) {
+    Ok(n) => assert_eq(n, 3)
+    Err(e) => abort("drain: \{e}")
+  }
+  match poll_readable([a1, a2], 0) {
+    Ok(ready) => assert_eq(ready.length(), 0)
+    Err(e) => abort("poll: \{e}")
+  }
+  for s in [a1, a2, a3, b1, b3] {
+    let _ = s.close()
+  }
+}

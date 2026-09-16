@@ -137,3 +137,18 @@ pub fn Conn::memory_pair() -> (Conn, Conn) {
   }
   (make(a_inbox, b_inbox), make(b_inbox, a_inbox))
 }
+
+///|
+/// Serializes one session frame. Kept separate from `send_frame` so a
+/// caller that owns its own write path (an event loop queueing replies)
+/// can produce the same bytes without a connection.
+pub fn encode_frame_bytes(frame : Frame) -> Bytes {
+  let out = @buffer.Buffer::Buffer()
+  out.write_bytes(b"MFS")
+  out.write_byte(b'\x02')
+  out.write_byte(frame.cmd.to_byte())
+  out.write_uint_be(frame.rid.reinterpret_as_uint())
+  out.write_uint_be(frame.payload.length().reinterpret_as_uint())
+  out.write_bytes(frame.payload[0:frame.payload.length()])
+  out.to_bytes()
+}

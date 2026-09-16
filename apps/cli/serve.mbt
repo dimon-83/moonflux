@@ -27,26 +27,127 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     )
   }
   let rules = RuleState::new()
+  // The hub serves every connection from this one thread: poll them all,
+  // advance the ones with data, never wait on one while another has work.
+  // Before this, the loop handled one connection at a time and a
+  // browser's persistent socket starved every other client.
+  match listener.set_accept_timeout_ms(HUB_TICK_MS) {
+    Ok(_) => ()
+    Err(e) => fail("accept timeout: \{e}")
+  }
+  let hub = ConnectionHub::new(listener, HUB_TICK_MS)
+  let handler = HubHandler::{
+    on_frame: fn(frame) { dispatch_session_frame(frame, data_dir, rules, ws) },
+    on_ready: fn() {
+      // hot-reload checkpoint: a freshly applied spec is picked up here,
+      // exactly as it was on the single-connection path
+      rules.sync(data_dir)
+    },
+  }
+  note("serving connections concurrently (one thread, poll-driven)")
   while true {
-    match listener.accept() {
-      Ok(stream) => {
-        let conn = @native.from_stream(stream)
-        // One port, two transports. A browser speaks HTTP; the CLI
-        // speaks the frame protocol directly. The sniff happens here
-        // (it consumes four bytes, which are handed back to the frame
-        // path), so neither client needs a second port or a flag.
-        if ws {
-          match serve_websocket_connection(conn, data_dir, rules) {
-            Ok(_) => ()
-            Err(e) => warn("websocket connection ended: \{e}")
-          }
-        } else {
-          handle_connection(conn, data_dir, rules)
-        }
-        (conn.close)()
+    let live = hub.poll_once(handler, fn(kind) {
+      if kind == "websocket" {
+        note("browser connected over websocket")
       }
-      Err(e) => fail("accept: \{e}")
+    })
+    let _ = live
+  }
+}
+
+///|
+/// How long the hub waits for activity before looping (its tick, and
+/// the listener's accept deadline).
+const HUB_TICK_MS : Int = 200
+
+///|
+/// One request against a served connection. This is the single-connection
+/// path's dispatch, unchanged — the hub decides *when* it runs, not what
+/// it does, so both transports keep exactly one implementation of every
+/// command.
+fn dispatch_session_frame(
+  frame : @client.Frame,
+  data_dir : String,
+  rules : RuleState,
+  ws_enabled : Bool,
+) -> @client.Frame {
+  let _ = ws_enabled
+  match frame.cmd {
+    @client.CMD_HELLO => {
+      let (major, minor) = match @client.decode_hello(frame.payload) {
+        Ok(parts) => parts
+        Err(e) => return err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+      let _ = minor
+      if major != 1 {
+        return err_frame(
+          frame.rid,
+          @client.ERR_UNSUPPORTED_VERSION,
+          "server speaks major version 1 (frames v2); client sent \{major}",
+        )
+      }
+      @client.Frame::{
+        cmd: @client.CMD_WELCOME,
+        rid: frame.rid,
+        payload: @client.encode_hello(1, 0),
+      }
     }
+    @client.CMD_PRODUCE => {
+      let (code, payload) = dispatch_produce(frame.payload, data_dir)
+      reply_frame(frame.rid, code, payload)
+    }
+    @client.CMD_FETCH => {
+      rules.sync(data_dir)
+      let (code, payload) = dispatch_fetch(frame.payload, data_dir, rules)
+      reply_frame(frame.rid, code, payload)
+    }
+    @client.CMD_APPLY_PIPELINE =>
+      match dispatch_apply(frame.payload, data_dir) {
+        Ok(summary) => reply_frame(frame.rid, @client.CMD_OK, summary)
+        Err((code, message)) => err_frame(frame.rid, code, message)
+      }
+    @client.CMD_FETCH_COMMITTED => {
+      rules.sync(data_dir)
+      match committed_watermarks_for(frame.payload, data_dir) {
+        Ok((hw, leo)) => {
+          let (code, payload) = dispatch_fetch_committed(
+            frame.payload,
+            data_dir,
+            rules,
+            hw,
+            leo,
+          )
+          reply_frame(frame.rid, code, payload)
+        }
+        Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+    }
+    other =>
+      err_frame(
+        frame.rid,
+        @client.ERR_UNKNOWN_COMMAND,
+        "unknown command \{other}",
+      )
+  }
+}
+
+///|
+fn reply_frame(rid : Int, code : Int, payload : Bytes) -> @client.Frame {
+  if code == @client.CMD_OK {
+    @client.Frame::{ cmd: @client.CMD_OK, rid, payload }
+  } else {
+    // the single-connection path answered errors with an ERR frame
+    // carrying the code in its payload; keep that shape exactly
+    @client.Frame::{ cmd: @client.CMD_ERR, rid, payload }
+  }
+}
+
+///|
+fn err_frame(rid : Int, code : Int, message : String) -> @client.Frame {
+  @client.Frame::{
+    cmd: @client.CMD_ERR,
+    rid,
+    payload: @client.encode_error(code, message),
   }
 }
 

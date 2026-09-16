@@ -16,6 +16,9 @@ pub(all) suberror NetError {
   /// single-threaded node loop can treat it as "time to do housekeeping"
   /// rather than as a failure.
   TimedOut
+  /// A non-blocking socket had nothing to give. The event loop moves on
+  /// to the connections that do have something.
+  WouldBlock
 } derive(Debug, Eq)
 
 ///|
@@ -25,6 +28,7 @@ pub impl Show for NetError with fn output(self, logger) {
     Io(code, op) => logger.write_string("Io(errno=\{code}, op=\{op})")
     ConnectionClosed => logger.write_string("ConnectionClosed")
     TimedOut => logger.write_string("TimedOut")
+    WouldBlock => logger.write_string("WouldBlock")
   }
 }
 
@@ -34,12 +38,21 @@ pub impl Show for NetError with fn output(self, logger) {
 const NET_TIMEOUT_CODE : Int = 9999
 
 ///|
+/// The shim's "nothing to read right now" code: the socket is
+/// non-blocking and would block. Distinct from an error and from a
+/// clean EOF, which is what lets an event loop make progress on other
+/// connections instead of waiting.
+const NET_WOULD_BLOCK_CODE : Int = 9998
+
+///|
 /// Wraps a raw FFI result: negative means -errno, except the shim's
 /// timeout sentinel, which becomes `TimedOut`.
 fn io_result(code : Int, op : String) -> Result[Int, NetError] {
   if code < 0 {
     if -code == NET_TIMEOUT_CODE {
       Err(TimedOut)
+    } else if -code == NET_WOULD_BLOCK_CODE {
+      Err(WouldBlock)
     } else {
       Err(Io(-code, op))
     }
@@ -143,6 +156,9 @@ pub fn TcpStream::recv(
   if n < 0 {
     if -n == NET_TIMEOUT_CODE {
       return Err(TimedOut)
+    }
+    if -n == NET_WOULD_BLOCK_CODE {
+      return Err(WouldBlock)
     }
     return Err(Io(-n, "recv"))
   }
@@ -254,4 +270,103 @@ pub fn socketpair() -> Result[(TcpStream, TcpStream), NetError] {
     Ok(_) => Ok((TcpStream::{ fd: pair[0] }, TcpStream::{ fd: pair[1] }))
     Err(e) => Err(e)
   }
+}
+
+///|
+/// Switches the socket between blocking and non-blocking mode. The
+/// event loop needs non-blocking: it must never wait on one connection
+/// while others have data.
+pub fn TcpStream::set_nonblocking(
+  self : TcpStream,
+  enabled : Bool,
+) -> Result[Unit, NetError] {
+  match
+    io_result(
+      net_set_nonblocking(self.fd, if enabled { 1 } else { 0 }),
+      "fcntl",
+    ) {
+    Ok(_) => Ok(())
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// Reads whatever is available on a non-blocking socket: `Ok(0)` means
+/// the peer closed, `Err(WouldBlock)` means nothing right now, and a
+/// positive count is data. The three cases must stay distinguishable —
+/// the event loop's correctness depends on it.
+pub fn TcpStream::recv_some(
+  self : TcpStream,
+  buf : FixedArray[Byte],
+  len : Int,
+) -> Result[Int, NetError] {
+  if len < 0 || len > buf.length() {
+    return Err(BadAddress("recv bounds"))
+  }
+  let n = net_recv_some(self.fd, buf, len)
+  if n < 0 {
+    if -n == NET_WOULD_BLOCK_CODE {
+      return Err(WouldBlock)
+    }
+    return Err(Io(-n, "recv"))
+  }
+  Ok(n)
+}
+
+///|
+/// Polls sockets for readability with a timeout, returning the indexes
+/// that are ready (in the order given). This is the whole basis of
+/// serving many connections from one thread: wait on all of them, then
+/// advance only the ones that have something.
+///
+/// Sockets that closed or errored also report ready, so the caller
+/// discovers EOF by reading rather than by missing it forever.
+pub fn poll_readable(
+  streams : Array[TcpStream],
+  timeout_ms : Int,
+) -> Result[Array[Int], NetError] {
+  let count = streams.length()
+  if count == 0 {
+    return Ok([])
+  }
+  if count > 128 {
+    return Err(BadAddress("poll supports at most 128 sockets"))
+  }
+  let fds : FixedArray[Int] = FixedArray::make(count, 0)
+  for i in 0..<count {
+    fds[i] = streams[i].raw_fd()
+  }
+  let ready : FixedArray[Int] = FixedArray::make(count, 0)
+  let hits = net_poll_readable(fds, count, timeout_ms, ready)
+  if hits < 0 {
+    return Err(Io(-hits, "poll"))
+  }
+  let out : Array[Int] = []
+  for i in 0..<count {
+    if ready[i] != 0 {
+      out.push(i)
+    }
+  }
+  Ok(out)
+}
+
+///|
+/// Writes as much as the socket will take right now. `Ok(0)` means the
+/// send buffer is full — the caller keeps the rest and tries again on
+/// the next pass, which is how one slow reader cannot stall the loop.
+pub fn TcpStream::send_some(
+  self : TcpStream,
+  data : Bytes,
+) -> Result[Int, NetError] {
+  if data.length() == 0 {
+    return Ok(0)
+  }
+  let n = net_send_some(self.fd, data, data.length())
+  if n < 0 {
+    if -n == NET_WOULD_BLOCK_CODE {
+      return Ok(0)
+    }
+    return Err(Io(-n, "send"))
+  }
+  Ok(n)
 }

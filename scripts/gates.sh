@@ -71,6 +71,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p3-metadata.sh" scripts/e2e-p3-metadata.sh
   step "e2e-p4-readmodes.sh" scripts/e2e-p4-readmodes.sh
   step "e2e-p4-ws.sh" scripts/e2e-p4-ws.sh
+  step "e2e-p5-concurrency.sh" scripts/e2e-p5-concurrency.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 
