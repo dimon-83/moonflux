@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: Apache-2.0
+// adapters/wasmtime-native: operator host via the wasmtime C API
+// (dlopen at runtime; no link-time dependency). Requires libwasmtime
+// (brew install wasmtime); the shim resolves symbols at runtime and
+// honours MOONFLUX_WASMTIME_LIB for non-standard locations.
+//
+// Imports for tests live in the "wbtest" section.
+
+options(
+  "native-stub": ["wasmtime_shim.c"],
+)
+
+supported_targets = "native"
+
+import {
+  "moonflux/core/operator" @operator,
+  "moonflux/core/protocol" @protocol,
+}
+
+import {
+  "moonbitlang/core/encoding/utf8" @utf8,
+  "moonflux/adapters/fs-native" @fs,
+} for "wbtest"

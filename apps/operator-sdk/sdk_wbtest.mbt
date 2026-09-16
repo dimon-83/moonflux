@@ -38,7 +38,7 @@ test "buffered call: identity end to end" {
   // the same slot the wasm host fills byte-by-byte.
   let _ = alloc_input(payload.length())
   call_state.input_buf = payload
-  match run_buffered(identity()) {
+  match run_buffered(identity(), payload) {
     0 => ()
     status => abort("status \{status}: \{last_error_text()}")
   }
@@ -56,7 +56,7 @@ test "buffered call: uppercase transforms values" {
   let input = [rec("make"), rec("loud")]
   let _ = alloc_input(8)
   call_state.input_buf = encode_output(input)
-  match run_buffered(uppercase()) {
+  match run_buffered(uppercase(), call_state.input_buf) {
     0 => ()
     status => abort("status \{status}: \{last_error_text()}")
   }
@@ -96,6 +96,6 @@ test "config parse accepts objects, rejects the rest" {
 test "malformed envelope fails with status and error text" {
   let _ = alloc_input(4)
   // the zeroed slot is not a valid batch frame
-  assert_true(run_buffered(identity()) != 0)
+  assert_true(run_buffered(identity(), call_state.input_buf) != 0)
   assert_true(last_error_text() != "")
 }

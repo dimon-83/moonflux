@@ -21,7 +21,7 @@ pub fn mf_op_alloc_input(len : Int) -> Bytes {
 
 ///|
 pub fn mf_op_process(input : Bytes) -> Bytes {
-  let _ = @sdk.run_buffered(@sdk.uppercase())
+  let _ = @sdk.run_buffered(@sdk.uppercase(), input)
   @sdk.buffered_output()
 }
 

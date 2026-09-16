@@ -19,6 +19,5 @@ options(
 )
 
 import {
-  "moonbitlang/core/encoding/utf8" @utf8,
   "moonflux/apps/operator-sdk" @sdk,
 }

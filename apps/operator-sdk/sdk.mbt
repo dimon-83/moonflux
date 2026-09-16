@@ -45,7 +45,7 @@ pub fn encode_output(records : Array[@protocol.Record]) -> Bytes {
 /// bytes there, and mf_op_process receives the same pointer back as
 /// a real Bytes. Output flows the same way; its length is exposed
 /// separately because the host must not parse MoonBit object headers.
-struct CallState {
+priv struct CallState {
   mut input_buf : Bytes
   mut output_buf : Bytes
   mut last_status : Int
@@ -71,10 +71,12 @@ pub fn alloc_input(len : Int) -> Bytes {
 }
 
 ///|
-/// Runs one buffered call: decode -> apply -> encode -> output slot.
-/// Returns the status code (0 = ok).
-pub fn run_buffered(op : GuestOperator) -> Int {
-  match run_call(op, call_state.input_buf) {
+/// Runs one buffered call over the host-provided input (the pointer
+/// the host received from mf_op_alloc_input, passed back here as a
+/// guest Bytes). Output lands in the slot; returns the status code
+/// (0 = ok).
+pub fn run_buffered(op : GuestOperator, input : Bytes) -> Int {
+  match run_call(op, input) {
     Ok(output) => {
       call_state.output_buf = output
       call_state.last_status = 0

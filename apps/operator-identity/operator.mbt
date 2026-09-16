@@ -28,7 +28,7 @@ pub fn mf_op_init(config : Bytes) -> Int {
 
 ///|
 pub fn mf_op_process(input : Bytes) -> Bytes {
-  let _ = @sdk.run_buffered(@sdk.identity())
+  let _ = @sdk.run_buffered(@sdk.identity(), input)
   // the host reads the buffered output through the returned pointer
   // (same slot the sdk wrote); status/length come from their exports
   @sdk.buffered_output()
