@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-sdk: guest-side operator library (ABI v1 envelope,
+// config parse, reference behaviors). Guests inherit the kernel red
+// lines: only moonbitlang/core, no IO.
+
+import {
+  "moonbitlang/core/encoding/utf8" @utf8,
+  "moonbitlang/core/json",
+  "moonflux/core/operator" @operator,
+  "moonflux/core/protocol" @protocol,
+}

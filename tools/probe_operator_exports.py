@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Probe the exported ABI surface of built operator modules.
+
+Reads the WAT emitted by `moon build --target wasm --output-wat` and
+verifies that every mf_op_* export exists with the expected i32
+signature (the buffered-call ABI v1). Ground truth over binary
+guesswork: the WAT is the compiler's own lowering.
+"""
+import pathlib
+import re
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+EXPECTED = {
+    "mf_op_abi_version": "() -> (i32)",
+    "mf_op_alloc_input": "(i32) -> (i32)",
+    "mf_op_init": "(i32) -> (i32)",
+    "mf_op_process": "(i32) -> (i32)",
+    "mf_op_output_len": "() -> (i32)",
+    "mf_op_last_status": "() -> (i32)",
+    "mf_op_last_error": "() -> (i32)",
+}
+
+
+def probe(wat_path: pathlib.Path) -> list:
+    problems = []
+    # Line-based parse (moonc WAT): definitions start at column 0 as
+    # "(func $name (param ...) (result ...)"; export lines are
+    # '(export "name" (func $name))' and would otherwise poison a
+    # whole-text regex with bare references.
+    export_fn = {}
+    sigs = {}
+    lines = wat_path.read_text().split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r'\(export "([^"]+)" \(func \$([\w.]*)\)\)', line)
+        if m:
+            export_fn[m.group(1)] = m.group(2)
+            i += 1
+            continue
+        m = re.match(r"\(func \$([\w.]*)", line)
+        if not m or "(func $" in line.replace(line.split(")")[0] + ")", "", 1) and False:
+            i += 1
+            continue
+        # function definition: header may span lines — accumulate until
+        # prologue_end (or a balanced line for one-liners)
+        name = m.group(1)
+        buffer = line
+        i += 1
+        while i < len(lines) and "prologue_end" not in buffer and not buffer.rstrip().endswith("))"):
+            buffer += "\n" + lines[i]
+            i += 1
+        # strip a trailing bare-reference usage: definitions always
+        # contain param/result or prologue_end; skip references
+        if "(param " not in buffer and "(result " not in buffer:
+            continue
+        def vec(kind):
+            m2 = re.search(r"\(" + kind + r"[^)]*\)", buffer)
+            return re.findall(r"i32|i64|f32|f64", m2.group(0)) if m2 else []
+        sigs[name] = "({}) -> ({})".format(
+            ", ".join(vec("param")), ", ".join(vec("result"))
+        )
+        continue
+    found = []
+    for name, expected_sig in EXPECTED.items():
+        fn = export_fn.get(name)
+        if fn is None:
+            problems.append(f"{wat_path.name}: missing export {name}")
+            continue
+        sig = sigs.get(fn, "signature-not-found")
+        found.append((name, sig))
+        if sig != expected_sig:
+            problems.append(
+                f"{wat_path.name}: {name} has {sig}, expected {expected_sig}"
+            )
+    return problems
+
+
+def main() -> int:
+    problems = []
+    for wat in ROOT.glob("_build/wasm/release/build/apps/operator-*/*.wat"):
+        problems += probe(wat)
+    for wat in ROOT.glob("_build/wasm/debug/build/apps/operator-*/*.wat"):
+        problems += probe(wat)
+    if problems:
+        for p in problems:
+            print(p, file=sys.stderr)
+        return 1
+    print("operator ABI surface OK")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

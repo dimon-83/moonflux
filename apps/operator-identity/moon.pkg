@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-identity: the identity operator module (wasm guest).
+// ABI v1 surface: three pub functions exported via link.wasm.exports.
+
+options(
+  "is-main": true,
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+      ],
+    },
+  },
+)
+
+import {
+  "moonbitlang/core/encoding/utf8" @utf8,
+  "moonflux/apps/operator-sdk" @sdk,
+}

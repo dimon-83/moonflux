@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// core/operator: operator sandbox ABI v1 (kernel side). Pure
+// computation; compiles for every target.
+
+import {
+  "moonflux/core/protocol",
+}
+
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "wbtest"
