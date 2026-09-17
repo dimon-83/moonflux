@@ -35,11 +35,27 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     Ok(_) => ()
     Err(e) => fail("accept timeout: \{e}")
   }
-  // TLS is a property of the listener, not of the protocol above it, and
-  // it is **not wired yet** (P12 in progress): the adapter and the hub
-  // plumbing exist, but the handshake does not complete, so there is
-  // deliberately no flag to enter it with. See the P12 ticket.
-  let tls_context : @tls.TlsContext? = None
+  // TLS is a property of the listener, not of the protocol above it
+  // (P12): either every connection on this port is a TLS session, or none
+  // is. `--tls-cert`/`--tls-key` turn it on; `--tls-ca` together with
+  // `--tls-require-client` makes clients present certificates too.
+  let tls_context = match flags.get("tls-cert") {
+    None => None
+    Some(cert) => {
+      let key = flags.require("tls-key")
+      let ca = flags.get("tls-ca") |> unwrap_or("")
+      let require_client = flags.get("tls-require-client") is Some(_)
+      match @tls.server_context(cert, key, ca, require_client) {
+        Ok(context) => {
+          note(
+            "TLS ENABLED on this listener (certificate \{cert}\{if require_client {", clients must present a certificate" } else {""}})",
+          )
+          Some(context)
+        }
+        Err(e) => fail(e)
+      }
+    }
+  }
   let hub = match tls_context {
     None => ConnectionHub::new(listener, HUB_TICK_MS)
     Some(context) => ConnectionHub::new(listener, HUB_TICK_MS).with_tls(context)

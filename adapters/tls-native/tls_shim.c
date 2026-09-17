@@ -256,6 +256,13 @@ intptr_t mf_tls_client_ctx(const uint8_t *ca, const uint8_t *cert,
       return 0;
     }
   }
+  // **Verify by default.** OpenSSL's client default is SSL_VERIFY_NONE:
+  // load a CA bundle without this and the client accepts any certificate
+  // the server offers — the handshake succeeds, the CA is decoration,
+  // and the failure is silent. Loading a CA and not asking for
+  // verification is worse than not doing TLS at all, because it looks
+  // like it worked.
+  p_SSL_CTX_set_verify(ctx, MF_TLS_VERIFY_PEER, NULL);
   if (cert != NULL && cert[0] != '\0' && key != NULL && key[0] != '\0') {
     if (p_SSL_CTX_use_certificate_chain_file(ctx, (const char *)cert) != 1) {
       set_ssl_error("cannot load the client certificate");

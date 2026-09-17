@@ -56,6 +56,7 @@ fn cmd_consume(argv : Array[String]) -> Unit {
         addr,
         committed,
         client_token(flags),
+        tls_options(flags),
       )
     None => {
       let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
@@ -116,9 +117,10 @@ fn consume_remote(
   addr : String,
   committed : Bool,
   token : String?,
+  tls : TlsOptions?,
 ) -> Unit {
   let (host, port) = parse_listen_addr(addr)
-  let consumer = match @native.connect_consumer_with(host, port, token) {
+  let consumer = match connect_consumer_transport(host, port, token, tls) {
     Ok(consumer) => consumer
     Err(e) => fail("connect \{host}:\{port}: \{e}")
   }

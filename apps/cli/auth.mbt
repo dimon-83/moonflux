@@ -138,3 +138,95 @@ fn AuthGate::present(self : AuthGate, token : String) -> AuthOutcome {
 // TLS on the client side (P12): the flags, and the transports they
 // choose. Kept here, next to the credential plumbing, because both are
 // "how this process talks to a peer" and an operator sets them together.
+
+// ---------------------------------------------------------------------
+// TLS on the client side (P12): the flags, and the transports they
+// choose. Kept here, next to the credential plumbing, because both are
+// "how this process talks to a peer" and an operator sets them together.
+
+///|
+/// What a client needs to speak TLS: the trust anchor, and optionally a
+/// client certificate (a node that must present one).
+pub(all) struct TlsOptions {
+  ca : String
+  cert : String?
+  key : String?
+}
+
+///|
+/// Reads the TLS flags, or None when this client speaks plaintext. A
+/// client cannot "default to TLS": there is no trust anchor to default
+/// to, and silently trusting everything would be worse than being clear.
+fn tls_options(flags : Flags) -> TlsOptions? {
+  match flags.get("tls-ca") {
+    None => None
+    Some(ca) =>
+      Some(TlsOptions::{
+        ca,
+        cert: flags.get("tls-cert"),
+        key: flags.get("tls-key"),
+      })
+  }
+}
+
+///|
+/// How long a client waits for a TLS handshake before giving up.
+const CLIENT_HANDSHAKE_TIMEOUT_MS : Int = 5000
+
+///|
+/// A consumer over either transport. One place decides, so `consume`
+/// (plain, committed, partitioned, or a group member) cannot end up on a
+/// different transport than its flags asked for.
+fn connect_consumer_transport(
+  host : String,
+  port : Int,
+  token : String?,
+  tls : TlsOptions?,
+) -> Result[@client.Consumer, @client.ClientError] {
+  match tls {
+    None => @native.connect_consumer_with(host, port, token)
+    Some(options) => {
+      let conn = match
+        @native.tcp_tls(
+          host,
+          port,
+          options.ca,
+          options.cert,
+          options.key,
+          CLIENT_HANDSHAKE_TIMEOUT_MS,
+        ) {
+        Ok(conn) => conn
+        Err(e) => return Err(@client.Transport(e))
+      }
+      @client.Consumer::from_conn_with(conn, token)
+    }
+  }
+}
+
+///|
+/// A producer over either transport.
+fn connect_producer_transport(
+  host : String,
+  port : Int,
+  token : String?,
+  tls : TlsOptions?,
+) -> Result[@client.Producer, @client.ClientError] {
+  match tls {
+    None => @native.connect_producer_with(host, port, token)
+    Some(options) => {
+      let conn = match
+        @native.tcp_tls(
+          host,
+          port,
+          options.ca,
+          options.cert,
+          options.key,
+          CLIENT_HANDSHAKE_TIMEOUT_MS,
+        ) {
+        Ok(conn) => conn
+        Err(e) => return Err(@client.Transport(e))
+      }
+      @client.Producer::from_conn_with(conn, token)
+    }
+  }
+}

@@ -170,11 +170,17 @@ fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
             "dropping a connection: TLS handshake did not finish within \{HANDSHAKE_DEADLINE_MS}ms",
           )
           attached.close()
+          let _ = stream.close()
           return
         }
         Err(e) => {
           note("TLS handshake failed: \{e}")
           attached.close()
+          // and close the *socket*: freeing the session leaves the
+          // connection open, and a caller that is waiting for a reply
+          // then waits forever (a plaintext client against a TLS port is
+          // exactly that caller)
+          let _ = stream.close()
           return
         }
       }

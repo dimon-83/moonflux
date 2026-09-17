@@ -244,7 +244,7 @@ pub fn TlsSession::write_some(
   self : TlsSession,
   bytes : Bytes,
 ) -> Result[Int?, String] {
-  let rc = tls_write(self.ssl, bytes)
+  let rc = tls_write(self.ssl, bytes, bytes.length())
   if rc > 0 {
     return Ok(Some(rc))
   }
@@ -310,7 +310,7 @@ extern "C" fn tls_read(ssl : Int64, buf : FixedArray[Byte], len : Int) -> Int = 
 
 ///|
 #borrow(buf)
-extern "C" fn tls_write(ssl : Int64, buf : Bytes) -> Int = "mf_tls_write"
+extern "C" fn tls_write(ssl : Int64, buf : Bytes, len : Int) -> Int = "mf_tls_write"
 
 ///|
 extern "C" fn tls_pending(ssl : Int64) -> Int = "mf_tls_pending"
