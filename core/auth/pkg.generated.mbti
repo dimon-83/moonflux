@@ -1,0 +1,45 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/auth"
+
+import {
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn authenticate(Array[Credential], String) -> Identity?
+
+pub fn constant_time_eq(String, String) -> Bool
+
+pub fn is_node_command(Int) -> Bool
+
+pub fn parse_role(String) -> Result[Role, String]
+
+pub fn permit(Role, Int) -> Bool
+
+pub fn role_name(Role) -> String
+
+// Errors
+
+// Types and methods
+pub(all) struct Credential {
+  name : String
+  token : String
+  role : Role
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct Identity {
+  name : String
+  role : Role
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) enum Role {
+  Root
+  ReadWrite
+  ReadOnly
+  Node
+} derive(Eq, Show, @debug.Debug)
+
+// Type aliases
+
+// Traits
+

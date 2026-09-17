@@ -6,10 +6,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXE="${MOONFLUX_EXE:-$ROOT/_build/native/release/build/apps/cli/cli.exe}"
+# the debug build is what `moon build --target native` produces, so it is
+# the artifact this gate means to test (see the same note in the other
+# gates: preferring a stray release binary once tested a stale session)
+EXE="${MOONFLUX_EXE:-$ROOT/_build/native/debug/build/apps/cli/cli.exe}"
 
 if [ ! -x "$EXE" ]; then
-  EXE="$ROOT/_build/native/debug/build/apps/cli/cli.exe"
+  EXE="$ROOT/_build/native/release/build/apps/cli/cli.exe"
 fi
 if [ ! -x "$EXE" ]; then
   echo "cli executable not found; run: moon build --target native" >&2

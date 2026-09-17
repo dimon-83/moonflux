@@ -96,7 +96,11 @@ int mf_net_getsockport(int fd) {
  */
 #define MF_NET_TIMEOUT 9999
 
-int mf_net_accept(int fd) { return accept(fd, NULL, NULL); }
+int mf_net_accept(int fd) {
+  int n = accept(fd, NULL, NULL);
+  if (n < 0) return -errno;
+  return n;
+}
 
 /*
  * Accept with a deadline. SO_RCVTIMEO does NOT cover accept() on
@@ -156,10 +160,21 @@ int mf_net_set_nonblocking(int fd, int enabled) {
   return 0;
 }
 
+/*
+ * Reads what is available. Returns the byte count, -MF_NET_WOULD_BLOCK
+ * when there is nothing, or **-errno** for a real failure.
+ *
+ * The -errno convention is not decoration: returning a bare -1 makes
+ * every failure look like EPERM to the MoonBit side, which decodes -n as
+ * the errno. That is how "connection reset by peer" (54) was reported as
+ * "Io(errno=1)" — a message that names the wrong cause and sends the
+ * reader looking for a permission problem that does not exist.
+ */
 int mf_net_recv_some(int fd, uint8_t *buf, int len) {
   int n = (int)recv(fd, buf, len, 0);
-  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-    return -MF_NET_WOULD_BLOCK;
+  if (n < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return -MF_NET_WOULD_BLOCK;
+    return -errno;
   }
   return n;
 }
@@ -219,13 +234,18 @@ int mf_net_poll_writable(const int *fds, int count, int timeout_ms,
 }
 
 int mf_net_send(int fd, const uint8_t *buf, int len) {
-  return (int)send(fd, buf, len, 0);
+  int n = (int)send(fd, buf, len, 0);
+  if (n < 0) return -errno;
+  return n;
 }
 
+/* Reads a whole buffer; same conventions as mf_net_recv_some, with the
+ * socket's receive timeout reported as -MF_NET_TIMEOUT. */
 int mf_net_recv(int fd, uint8_t *buf, int len) {
   int n = (int)recv(fd, buf, len, 0);
-  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-    return -MF_NET_TIMEOUT;
+  if (n < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return -MF_NET_TIMEOUT;
+    return -errno;
   }
   return n;
 }
@@ -240,10 +260,29 @@ int mf_net_socketpair(int *pair) {
   return 0;
 }
 
+/* Writes what the socket accepts; -MF_NET_WOULD_BLOCK when its window is
+ * full, -errno for a real failure (same reason as mf_net_recv_some). */
 int mf_net_send_some(int fd, const uint8_t *buf, int len) {
   int n = (int)send(fd, buf, len, 0);
-  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-    return -MF_NET_WOULD_BLOCK;
+  if (n < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return -MF_NET_WOULD_BLOCK;
+    return -errno;
   }
   return n;
+}
+
+/*
+ * The text for an errno, for error messages built on the MoonBit side.
+ * Without it every socket failure prints as a number, and
+ * "Io(errno=54, op=recv)" makes the reader look up 54 instead of reading
+ * "connection reset by peer".
+ */
+void mf_net_strerror(int code, uint8_t *buf, int len) {
+  const char *text = strerror(code);
+  if (text == NULL) text = "unknown error";
+  int n = (int)strlen(text);
+  if (n >= len) n = len - 1;
+  if (n < 0) n = 0;
+  memcpy(buf, text, (size_t)n);
+  buf[n] = 0;
 }

@@ -53,11 +53,11 @@ fn function_set_create(argv : Array[String]) -> Unit {
     None => doc_name
   }
   match
-    control_call_with_token(
+    control_call_secure(
       remote,
       @client.CMD_FUNCTION_SET_CREATE,
       @utf8.encode(text),
-      client_token(flags),
+      peer_link(flags),
     ) {
     Ok(payload) => {
       let reply = @utf8.decode_lossy(payload[0:payload.length()])
@@ -89,11 +89,11 @@ fn function_set_get(argv : Array[String]) -> Unit {
   let remote = flags.require("remote")
   let name = flags.require("name")
   let payload = match
-    control_call_with_token(
+    control_call_secure(
       remote,
       @client.CMD_FUNCTION_SET_GET,
       @utf8.encode(name),
-      client_token(flags),
+      peer_link(flags),
     ) {
     Ok(payload) => payload
     Err(e) => fail("function-set get: \{e}")
@@ -109,11 +109,11 @@ fn function_set_list(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let remote = flags.require("remote")
   let payload = match
-    control_call_with_token(
+    control_call_secure(
       remote,
       @client.CMD_FUNCTION_SET_LIST,
       b"",
-      client_token(flags),
+      peer_link(flags),
     ) {
     Ok(payload) => payload
     Err(e) => fail("function-set list: \{e}")
@@ -151,11 +151,11 @@ fn function_set_delete(argv : Array[String]) -> Unit {
   let remote = flags.require("remote")
   let name = flags.require("name")
   match
-    control_call_with_token(
+    control_call_secure(
       remote,
       @client.CMD_FUNCTION_SET_DELETE,
       @utf8.encode(name),
-      client_token(flags),
+      peer_link(flags),
     ) {
     Ok(_) => ()
     Err(e) => fail("function-set delete: \{e}")

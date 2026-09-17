@@ -151,14 +151,14 @@ fn local_cluster_revision(data_dir : String) -> Int64 {
 /// Pulls the pipeline document from the control plane.
 fn fetch_cluster_pipeline(
   sc_addr : String,
-  token : String?,
+  link : PeerLink,
 ) -> Result[@client.ClusterPipeline, String] {
   let payload = match
-    control_call_with_token(
+    control_call_secure(
       sc_addr,
       @client.CMD_CLUSTER_PIPELINE_FETCH,
       @utf8.encode("document please"),
-      token,
+      link,
     ) {
     Ok(payload) => payload
     Err(e) => return Err(e)
@@ -175,14 +175,14 @@ fn pull_function_set(
   sc_addr : String,
   store : MetadataStore,
   name : String,
-  token : String?,
+  link : PeerLink,
 ) -> Result[Unit, String] {
   let payload = match
-    control_call_with_token(
+    control_call_secure(
       sc_addr,
       @client.CMD_FUNCTION_SET_FETCH,
       @utf8.encode(name),
-      token,
+      link,
     ) {
     Ok(payload) => payload
     Err(e) => return Err("fetch function set \{name}: \{e}")
@@ -256,7 +256,7 @@ fn adopt_cluster_pipeline(
   store : MetadataStore,
   revision : Int64,
   state : AdoptionState,
-  token : String?,
+  link : PeerLink,
 ) -> Bool {
   let local = local_cluster_revision(data_dir)
   if revision <= local {
@@ -265,7 +265,7 @@ fn adopt_cluster_pipeline(
     // should run something older
     return false
   }
-  let pipeline = match fetch_cluster_pipeline(sc_addr, token) {
+  let pipeline = match fetch_cluster_pipeline(sc_addr, link) {
     Ok(pipeline) => pipeline
     Err(e) => {
       report_adoption_failure(
@@ -301,7 +301,7 @@ fn adopt_cluster_pipeline(
     if get_function_set(store, set_name) is Ok(_) {
       continue
     }
-    match pull_function_set(sc_addr, store, set_name, token) {
+    match pull_function_set(sc_addr, store, set_name, link) {
       Ok(_) => ()
       Err(e) => {
         report_adoption_failure(

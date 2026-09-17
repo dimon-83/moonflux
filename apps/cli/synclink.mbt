@@ -21,9 +21,16 @@
 /// A connection to one peer, reused across rounds.
 pub struct SyncLink {
   address : String
-  /// the credential to present on (re)dial (P12)
-  token : String?
-  stream : @net.TcpStream
+  /// what to present on (re)dial (P12): credential and transport
+  link : PeerLink
+  /// The stream the link speaks over: a plain socket, or a TLS session
+  /// over one. The wait loop is identical for both — it polls the
+  /// descriptor and consults `pending`, which is exactly why the TLS
+  /// session is behind this interface rather than special-cased here.
+  stream : @net.Stream
+  /// the TLS context, when this link is TLS: it must outlive the session,
+  /// and nothing else holds it (the session does not own its context)
+  tls : @tls.TlsContext?
   /// bytes received beyond the last frame: the next reply may already
   /// be partially here, and dropping them would misparse the stream
   inbox : Array[Byte]
@@ -40,24 +47,18 @@ pub struct SyncLink {
 /// that is what made the multi-partition ring work at all, decision 30).
 fn SyncLink::connect(
   address : String,
-  token : String?,
+  link_auth : PeerLink,
 ) -> Result[SyncLink, String] {
   let (host, port) = parse_listen_addr(address)
-  let stream = match @net.TcpStream::connect(host, port) {
-    Ok(stream) => stream
-    Err(e) => return Err("connect \{address}: \{e}")
-  }
-  match stream.set_nonblocking(true) {
-    Ok(_) => ()
-    Err(e) => {
-      let _ = stream.close()
-      return Err("nonblocking: \{e}")
-    }
+  let (stream, tls) = match dial_stream(host, port, link_auth) {
+    Ok(parts) => parts
+    Err(e) => return Err(e)
   }
   let link = SyncLink::{
     address,
-    token,
+    link: link_auth,
     stream,
+    tls,
     inbox: [],
     opens: 1,
     rounds: 0,
@@ -103,7 +104,7 @@ fn SyncLink::connect(
   }
   // the credential, once per link (P12): the handshake is the part the
   // link exists to pay for once, and authentication is part of it
-  match token {
+  match link_auth.token {
     Some(token) => {
       match
         send_all(
@@ -138,6 +139,45 @@ fn SyncLink::connect(
     None => ()
   }
   Ok(link)
+}
+
+///|
+/// Dials a peer over the transport this node's link asks for: a plain
+/// socket, or a TLS session over one (P12). Both come back non-blocking,
+/// because everything above waits by polling.
+fn dial_stream(
+  host : String,
+  port : Int,
+  link : PeerLink,
+) -> Result[(@net.Stream, @tls.TlsContext?), String] {
+  match link.tls {
+    None => {
+      let stream = match @net.TcpStream::connect(host, port) {
+        Ok(stream) => stream
+        Err(e) => return Err("connect \{host}:\{port}: \{e}")
+      }
+      match stream.set_nonblocking(true) {
+        Ok(_) => Ok((stream.stream(), None))
+        Err(e) => {
+          let _ = stream.close()
+          Err("nonblocking: \{e}")
+        }
+      }
+    }
+    Some(options) =>
+      match
+        @native.tcp_tls_stream(
+          host,
+          port,
+          options.ca,
+          options.cert,
+          options.key,
+          HANDSHAKE_TIMEOUT_MS,
+        ) {
+        Ok((stream, context)) => Ok((stream, Some(context)))
+        Err(e) => Err(e)
+      }
+  }
 }
 
 ///|
@@ -186,7 +226,7 @@ fn SyncLink::call(
 /// observable in a log rather than invisible.
 fn SyncLink::redial(self : SyncLink) -> Result[SyncLink, String] {
   let opens = self.opens + 1
-  match SyncLink::connect(self.address, self.token) {
+  match SyncLink::connect(self.address, self.link) {
     Ok(fresh) => {
       fresh.opens = opens
       Ok(fresh)
@@ -197,7 +237,11 @@ fn SyncLink::redial(self : SyncLink) -> Result[SyncLink, String] {
 
 ///|
 fn SyncLink::close(self : SyncLink) -> Unit {
-  let _ = self.stream.close()
+  (self.stream.close)()
+  match self.tls {
+    Some(context) => context.free()
+    None => ()
+  }
 }
 
 ///|
@@ -206,13 +250,13 @@ fn SyncLink::close(self : SyncLink) -> Unit {
 /// peer's window is full — the loop gives it time and tries again.
 fn send_all(
   pump : () -> Unit,
-  stream : @net.TcpStream,
+  stream : @net.Stream,
   bytes : Bytes,
   deadline : Int64,
 ) -> Result[Unit, String] {
   let mut sent = 0
   while sent < bytes.length() {
-    match stream.send_some(bytes[sent:bytes.length()].to_owned()) {
+    match (stream.send_some)(bytes[sent:bytes.length()].to_owned()) {
       Ok(0) => return Err("peer closed while writing")
       Ok(n) => sent = sent + n
       Err(WouldBlock) => {
@@ -220,7 +264,7 @@ fn send_all(
         if now_ms() > deadline {
           return Err("write deadline")
         }
-        let _ = @net.poll_readable([stream], 10)
+        let _ = @net.poll_fds([(stream.fd)()], 10, true)
       }
       Err(e) => return Err("\{e}")
     }
@@ -235,7 +279,7 @@ fn send_all(
 /// that arrives while nobody is asking — survives.
 fn await_frame(
   pump : () -> Unit,
-  stream : @net.TcpStream,
+  stream : @net.Stream,
   inbox : Array[Byte],
   deadline : Int64,
 ) -> Result[@client.Frame, String] {
@@ -270,14 +314,20 @@ fn await_frame(
     if now_ms() > deadline {
       return Err("deadline")
     }
-    let ready = match @net.poll_readable([stream], 10) {
-      Ok(ready) => ready
-      Err(e) => return Err("\{e}")
+    // decrypted bytes count as readable: a TLS session can hold a whole
+    // reply while its socket has nothing left to report
+    if (stream.pending)() > 0 {
+      // fall through to the read below without waiting
+    } else {
+      let ready = match @net.poll_fds([(stream.fd)()], 10, false) {
+        Ok(ready) => ready
+        Err(e) => return Err("\{e}")
+      }
+      if ready.length() == 0 {
+        continue
+      }
     }
-    if ready.length() == 0 {
-      continue
-    }
-    match stream.recv_some(chunk, chunk.length()) {
+    match (stream.recv_some)(chunk, chunk.length()) {
       Ok(0) => return Err("peer closed")
       Ok(n) => {
         for i = 0; i < n; i = i + 1 {

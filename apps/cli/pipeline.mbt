@@ -193,10 +193,11 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
       Err(e) => fail("read \{spec_path}: \{e}")
     }
     let payload = match
-      control_call(
+      control_call_secure(
         sc_addr,
         @client.CMD_CLUSTER_PIPELINE_APPLY,
         @utf8.encode(text),
+        peer_link(flags),
       ) {
       Ok(payload) => payload
       Err(e) => fail("pipeline apply: \{e}")

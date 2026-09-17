@@ -41,11 +41,11 @@ fn topic_create(argv : Array[String]) -> Unit {
   }
   let wire = @client.WireTopic::{ name, partitions, replication_factor: rf }
   let payload = match
-    control_call_with_token(
+    control_call_secure(
       remote,
       @client.CMD_TOPIC_CREATE,
       @client.encode_wire_topic(wire),
-      client_token(flags),
+      peer_link(flags),
     ) {
     Ok(payload) => payload
     Err(e) => fail("topic create: \{e}")
@@ -66,12 +66,7 @@ fn topic_list(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let remote = flags.require("remote")
   let payload = match
-    control_call_with_token(
-      remote,
-      @client.CMD_TOPIC_LIST,
-      b"",
-      client_token(flags),
-    ) {
+    control_call_secure(remote, @client.CMD_TOPIC_LIST, b"", peer_link(flags)) {
     Ok(payload) => payload
     Err(e) => fail("topic list: \{e}")
   }
@@ -95,11 +90,11 @@ fn topic_delete(argv : Array[String]) -> Unit {
   let name = flags.require("name")
   let wire = @client.WireTopic::{ name, partitions: 0, replication_factor: 0 }
   match
-    control_call_with_token(
+    control_call_secure(
       remote,
       @client.CMD_TOPIC_DELETE,
       @client.encode_wire_topic(wire),
-      client_token(flags),
+      peer_link(flags),
     ) {
     Ok(_) => ()
     Err(e) => fail("topic delete: \{e}")

@@ -60,6 +60,166 @@ pub fn tcp(host : String, port : Int) -> Result[Conn, String] {
 }
 
 ///|
+/// Adapts any stream to the transport contract, with a deadline: a read
+/// that gets nothing for `timeout_ms` fails instead of waiting. Plain
+/// sockets already had this (`tcp_with_timeout` sets SO_RCVTIMEO); a TLS
+/// session has no such socket option, so the wait has to be a deadline
+/// the loop enforces (P12/T59). Without it, a node talking TLS to a hung
+/// peer waits forever — and "no node may hang another" is the property
+/// this deadline design exists for. `timeout_ms <= 0` means no deadline,
+/// which is what a client with nothing else to serve asks for.
+pub fn conn_over_stream(stream : @net.Stream, timeout_ms : Int) -> Conn {
+  Conn::{
+    send: fn(bytes) {
+      let deadline = if timeout_ms > 0 {
+        deadline_after(timeout_ms)
+      } else {
+        0L
+      }
+      let mut sent = 0
+      while sent < bytes.length() {
+        match (stream.send_some)(bytes[sent:bytes.length()].to_owned()) {
+          Ok(0) => return Err("peer closed while sending")
+          Ok(n) => sent = sent + n
+          Err(@net.WouldBlock) => {
+            let _ = @net.poll_fds([(stream.fd)()], 50, true)
+            if timeout_ms > 0 && past_deadline(deadline) {
+              return Err("send timed out after \{timeout_ms}ms")
+            }
+          }
+          Err(e) => return Err("\{e}")
+        }
+      }
+      Ok(())
+    },
+    recv_exact: fn(n) {
+      let deadline = if timeout_ms > 0 {
+        deadline_after(timeout_ms)
+      } else {
+        0L
+      }
+      let buf : FixedArray[Byte] = FixedArray::make(n, b'\x00')
+      let mut filled = 0
+      while filled < n {
+        match (stream.recv_some)(buf, n - filled) {
+          Ok(0) => return Err("connection closed after \{filled} of \{n} bytes")
+          Ok(got) => filled = filled + got
+          Err(@net.WouldBlock) => {
+            let _ = @net.poll_fds([(stream.fd)()], 50, false)
+            if timeout_ms > 0 && past_deadline(deadline) {
+              return Err("read timed out after \{timeout_ms}ms")
+            }
+          }
+          Err(e) => return Err("\{e}")
+        }
+      }
+      Ok(Bytes::from_array(buf[0:n]))
+    },
+    close: fn() { (stream.close)() },
+  }
+}
+
+///|
+/// The stream a TLS session presents to the layers above it (P12). The
+/// session owns decrypted bytes that the socket does not report, so
+/// `pending` matters: a poll loop that watched only the socket would
+/// sleep through them.
+pub fn tls_stream_over(
+  socket : @net.TcpStream,
+  session : @tls.TlsSession,
+) -> @net.Stream {
+  @net.Stream::{
+    fd: fn() { socket.raw_fd() },
+    recv_some: fn(buf, len) {
+      match session.read_some(buf, len) {
+        Ok(Some(got)) => Ok(got)
+        // "wants more" is what a plain socket calls would-block, so the
+        // three states the event loop distinguishes stay distinguishable
+        Ok(None) => Err(@net.WouldBlock)
+        Err(e) => Err(@net.Io(0, e))
+      }
+    },
+    send_some: fn(bytes) {
+      match session.write_some(bytes) {
+        Ok(Some(got)) => Ok(got)
+        Ok(None) => Err(@net.WouldBlock)
+        Err(e) => Err(@net.Io(0, e))
+      }
+    },
+    pending: fn() { session.pending() },
+    set_nonblocking: fn(enabled) { socket.set_nonblocking(enabled) },
+    close: fn() {
+      session.close()
+      let _ = socket.close()
+    },
+  }
+}
+
+///|
+/// Negotiates TLS on an already-accepted socket and returns the blocking
+/// `Conn` over it — what a handler that serves one connection to
+/// completion needs (the control plane's accept loop). The handshake is
+/// bounded: a peer that connects and then says nothing is dropped, not
+/// waited on.
+pub fn accept_tls_conn(
+  stream : @net.TcpStream,
+  context : @tls.TlsContext,
+  handshake_timeout_ms : Int,
+  io_timeout_ms : Int,
+) -> Result[Conn, String] {
+  let session = match context.attach(stream.raw_fd()) {
+    Ok(session) => session
+    Err(e) => return Err(e)
+  }
+  let deadline = deadline_after(handshake_timeout_ms)
+  let mut done = false
+  let mut failure = ""
+  while !done {
+    match session.accept() {
+      Ok(Done) => done = true
+      Ok(Pending(want_write)) => {
+        let _ = @net.poll_fds([stream.raw_fd()], 50, want_write)
+        if past_deadline(deadline) {
+          failure = "TLS handshake timed out"
+          break
+        }
+      }
+      Err(e) => {
+        failure = e
+        break
+      }
+    }
+  }
+  if !done {
+    session.close()
+    let _ = stream.close()
+    return Err(failure)
+  }
+  Ok(conn_over_stream(tls_stream_over(stream, session), io_timeout_ms))
+}
+
+///|
+/// Dials a peer, negotiates TLS, and hands back the **non-blocking**
+/// stream — what the replication link needs, because it waits by polling
+/// the node's own loop rather than by blocking (P10's shape, now over
+/// TLS). The caller owns the returned context: it must outlive the
+/// session, so the link keeps it and frees it when it closes.
+pub fn tcp_tls_stream(
+  host : String,
+  port : Int,
+  ca : String,
+  cert : String?,
+  key : String?,
+  handshake_timeout_ms : Int,
+) -> Result[(@net.Stream, @tls.TlsContext), String] {
+  match tls_handshake(host, port, ca, cert, key, handshake_timeout_ms) {
+    Ok((socket, session, context)) =>
+      Ok((tls_stream_over(socket, session), context))
+    Err(e) => Err(e)
+  }
+}
+
+///|
 /// Opens a connection whose reads give up after `timeout_ms`.
 ///
 /// Node-to-node calls need this. Both peers are single-threaded
@@ -170,7 +330,9 @@ fn past_deadline(deadline : Int64) -> Bool {
 ///|
 /// Dials `host:port` and negotiates TLS. `ca` is the trust anchor;
 /// `cert`/`key` are an optional client certificate (for a node that must
-/// present one).
+/// present one). `timeout_ms = 0` means "no read deadline": a client with
+/// nothing else to serve may wait, and only an explicit deadline (a node
+/// talking to a peer) should expire.
 pub fn tcp_tls(
   host : String,
   port : Int,
@@ -179,6 +341,53 @@ pub fn tcp_tls(
   key : String?,
   handshake_timeout_ms : Int,
 ) -> Result[Conn, String] {
+  tls_conn_with_timeout(host, port, ca, cert, key, handshake_timeout_ms, 0)
+}
+
+///|
+/// The same dial with a deadline on every read and write that follows.
+/// Node-to-node calls need this: the handshake being bounded is not
+/// enough when the peer can go quiet *after* it.
+pub fn tls_conn_with_timeout(
+  host : String,
+  port : Int,
+  ca : String,
+  cert : String?,
+  key : String?,
+  handshake_timeout_ms : Int,
+  io_timeout_ms : Int,
+) -> Result[Conn, String] {
+  let (socket, session, context) = match
+    tls_handshake(host, port, ca, cert, key, handshake_timeout_ms) {
+    Ok(parts) => parts
+    Err(e) => return Err(e)
+  }
+  let conn = conn_over_stream(tls_stream_over(socket, session), io_timeout_ms)
+  // the context this call created is freed when the connection closes:
+  // nobody else holds it, and the session is only valid while it lives
+  Ok(Conn::{
+    send: conn.send,
+    recv_exact: conn.recv_exact,
+    close: fn() {
+      (conn.close)()
+      context.free()
+    },
+  })
+}
+
+///|
+/// Dials a peer, negotiates TLS, and hands back the pieces. The blocking
+/// `Conn` and the non-blocking `Stream` constructors above are two views
+/// of this one result, so the handshake — the part with the subtlety —
+/// exists once.
+fn tls_handshake(
+  host : String,
+  port : Int,
+  ca : String,
+  cert : String?,
+  key : String?,
+  timeout_ms : Int,
+) -> Result[(@net.TcpStream, @tls.TlsSession, @tls.TlsContext), String] {
   let context = match @tls.client_context(ca, cert, key) {
     Ok(context) => context
     Err(e) => return Err(e)
@@ -190,6 +399,8 @@ pub fn tcp_tls(
       return Err("connect \{host}:\{port}: \{e}")
     }
   }
+  // non-blocking from here on: the handshake loop waits by polling and
+  // enforcing its own deadline, and every read after it does the same
   match stream.set_nonblocking(true) {
     Ok(_) => ()
     Err(e) => {
@@ -208,7 +419,7 @@ pub fn tcp_tls(
   }
   // the certificate must name the host we asked for
   session.set_host(host)
-  let deadline = deadline_after(handshake_timeout_ms)
+  let deadline = deadline_after(timeout_ms)
   let mut done = false
   let mut failure = ""
   while !done {
@@ -233,68 +444,5 @@ pub fn tcp_tls(
     context.free()
     return Err("TLS to \{host}:\{port}: \{failure}")
   }
-  Ok(tls_conn(stream, session, context))
-}
-
-///|
-/// The `Conn` a TLS session presents: the same three calls as
-/// `wrap_stream`, with the session in the middle. The context is kept
-/// alive by the closures, because it must outlive the session.
-fn tls_conn(
-  socket : @net.TcpStream,
-  session : @tls.TlsSession,
-  context : @tls.TlsContext,
-) -> Conn {
-  let read_buf : FixedArray[Byte] = FixedArray::make(65536, b'\x00')
-  Conn::{
-    send: fn(bytes) {
-      let mut sent = 0
-      while sent < bytes.length() {
-        match session.write_some(bytes[sent:bytes.length()].to_owned()) {
-          Ok(Some(0)) => return Err("peer closed while sending")
-          Ok(Some(n)) => sent = sent + n
-          Ok(None) => {
-            let _ = @net.poll_fds([socket.raw_fd()], 50, false)
-          }
-          Err(e) => return Err(e)
-        }
-      }
-      Ok(())
-    },
-    recv_exact: fn(n) {
-      let buf : FixedArray[Byte] = FixedArray::make(n, b'\x00')
-      let mut filled = 0
-      while filled < n {
-        let need = n - filled
-        match
-          session.read_some(
-            buf,
-            if need < buf.length() {
-              need
-            } else {
-              buf.length()
-            },
-          ) {
-          Ok(Some(0)) =>
-            return Err("connection closed after \{filled} of \{n} bytes")
-          Ok(Some(got)) => {
-            for i = 0; i < got; i = i + 1 {
-              read_buf[filled + i] = buf[i]
-            }
-            filled = filled + got
-          }
-          Ok(None) => {
-            let _ = @net.poll_fds([socket.raw_fd()], 50, false)
-          }
-          Err(e) => return Err(e)
-        }
-      }
-      Ok(Bytes::from_array(read_buf[0:n]))
-    },
-    close: fn() {
-      session.close()
-      let _ = socket.close()
-      context.free()
-    },
-  }
+  Ok((stream, session, context))
 }

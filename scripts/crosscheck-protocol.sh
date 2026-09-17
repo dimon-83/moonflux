@@ -13,8 +13,8 @@ echo "[1/3] vectors_gen.mbt vs testdata/protocol_vectors.json"
 python3 tools/gen_protocol_vectors.py --check
 
 echo "[2/3] vectortool output vs checked-in vectors"
-VECTOOL="$ROOT/_build/native/release/build/apps/vectortool/vectortool.exe"
-[ -x "$VECTOOL" ] || VECTOOL="$ROOT/_build/native/debug/build/apps/vectortool/vectortool.exe"
+VECTOOL="$ROOT/_build/native/debug/build/apps/vectortool/vectortool.exe"
+[ -x "$VECTOOL" ] || VECTOOL="$ROOT/_build/native/release/build/apps/vectortool/vectortool.exe"
 if [ ! -x "$VECTOOL" ]; then
   echo "vectortool not built; run: moon build --target native" >&2
   exit 1

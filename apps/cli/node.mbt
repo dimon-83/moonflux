@@ -88,31 +88,25 @@ fn load_or_create_identity(
 }
 
 ///|
-/// The control-plane client used by an spu: one short-lived
-/// connection per call (register / heartbeat), handshake included.
-/// Short-lived on purpose — a persistent control channel is a
+/// The control-plane client: one short-lived connection per call
+/// (register / heartbeat / leader view / confirm / asset pull), handshake
+/// included. Short-lived on purpose — a persistent control channel is a
 /// reconnect state machine, and this milestone's job is the cluster
 /// semantics, not a connection cache.
-fn control_call(
-  sc_addr : String,
-  cmd : Int,
-  payload : Bytes,
-) -> Result[Bytes, String] {
-  control_call_with_timeout(sc_addr, cmd, payload, CONTROL_CALL_TIMEOUT_MS)
-}
-
-///|
-/// The same call, presenting a credential (P12). Every control call in
-/// this codebase goes through here, so a node with a token configured
-/// authenticates wherever it is talking — to the control plane and to a
-/// partition's leader alike.
-fn control_call_with_token(
+///
+/// Every control call in this codebase goes through here and *presents
+/// this process's link* (P12): a credential, a TLS session, or both. The
+/// call that took no link was deleted when the last caller was converted
+/// — a helper that dials without authenticating is a footgun, not a
+/// convenience, because the caller that forgets looks exactly like the
+/// caller that meant it.
+fn control_call_secure(
   addr : String,
   cmd : Int,
   payload : Bytes,
-  token : String?,
+  link : PeerLink,
 ) -> Result[Bytes, String] {
-  control_call_full(addr, cmd, payload, CONTROL_CALL_TIMEOUT_MS, token)
+  control_call_full(addr, cmd, payload, CONTROL_CALL_TIMEOUT_MS, link)
 }
 
 ///|
@@ -134,32 +128,42 @@ const PEER_CALL_TIMEOUT_MS : Int = 2000
 const CONNECT_TIMEOUT_MS : Int = 300
 
 ///|
-fn control_call_with_timeout(
-  addr : String,
-  cmd : Int,
-  payload : Bytes,
-  timeout_ms : Int,
-) -> Result[Bytes, String] {
-  control_call_full(addr, cmd, payload, timeout_ms, None)
-}
-
-///|
 fn control_call_full(
   addr : String,
   cmd : Int,
   payload : Bytes,
   timeout_ms : Int,
-  token : String?,
+  link : PeerLink,
 ) -> Result[Bytes, String] {
   let (host, port) = parse_listen_addr(addr)
   // a deadline, not a wait: every node is a single-threaded loop, so
   // a busy peer must fail this call rather than block this node's
-  // whole tick
-  let conn = match @native.tcp_with_timeout(host, port, timeout_ms) {
-    Ok(conn) => conn
-    Err(e) => return Err("connect \{addr}: \{e}")
+  // whole tick. The TLS branch passes the same deadline into the
+  // connection itself — the handshake being bounded says nothing about
+  // the peer going quiet *after* it, which is the failure mode a
+  // replication peer actually has.
+  let conn = match link.tls {
+    None =>
+      match @native.tcp_with_timeout(host, port, timeout_ms) {
+        Ok(conn) => conn
+        Err(e) => return Err("connect \{addr}: \{e}")
+      }
+    Some(options) =>
+      match
+        @native.tls_conn_with_timeout(
+          host,
+          port,
+          options.ca,
+          options.cert,
+          options.key,
+          NODE_HANDSHAKE_TIMEOUT_MS,
+          timeout_ms,
+        ) {
+        Ok(conn) => conn
+        Err(e) => return Err("connect \{addr}: \{e}")
+      }
   }
-  let result = control_call_on(conn, cmd, payload, token)
+  let result = control_call_on(conn, cmd, payload, link.token)
   (conn.close)()
   result
 }
@@ -240,14 +244,14 @@ fn report_to_control(
   record : @client.NodeRecord,
   reports : Array[@client.PartitionReport],
   cmd : Int,
-  token : String?,
+  link : PeerLink,
 ) -> Result[Bytes, String] {
   let payload = match
-    control_call_with_token(
+    control_call_secure(
       sc_addr,
       cmd,
       @client.encode_node_full(record, reports),
-      token,
+      link,
     ) {
     Ok(payload) => payload
     Err(e) => return Err(e)
@@ -380,15 +384,15 @@ fn cmd_spu(argv : Array[String]) -> Unit {
     data_dir,
     identity.id,
     "\{host}:\{actual}",
-    client_token(flags),
+    peer_link(flags),
   )
   let sc_addr = match sc {
     Some(addr) => addr
     None => ""
   }
-  // this node's credential (P12): presented to the control plane and to
-  // every partition's leader, because either may require it
-  let sc_token = client_token(flags)
+  // this node's link (P12): presented to the control plane and to every
+  // partition's leader, because either may require it
+  let sc_link = peer_link(flags)
   hosts.applied_topic = applied_topic(data_dir)
   if sc is None {
     hosts.self_place("no control plane configured")
@@ -404,7 +408,15 @@ fn cmd_spu(argv : Array[String]) -> Unit {
   // gives up (P7 measured exactly that: 500ms poll vs 300ms
   // deadline, every replication call timing out). The heartbeat keeps
   // its own 500ms cadence through the gate below.
-  let hub = ConnectionHub::new(listener, POLL_TICK_MS)
+  //
+  // TLS on the data port (P12): replication and client traffic both
+  // arrive here, and both are configured by the same flags, so a node
+  // cannot end up serving one of them in the clear by accident.
+  let hub = match tls_listener(flags) {
+    None => ConnectionHub::new(listener, POLL_TICK_MS)
+    Some(context) =>
+      ConnectionHub::new(listener, POLL_TICK_MS).with_tls(context)
+  }
   let auth_config = AuthConfig::load(data_dir)
   announce_auth_mode(data_dir, auth_config)
   let handler = HubHandler::{
@@ -452,7 +464,7 @@ fn cmd_spu(argv : Array[String]) -> Unit {
             @client.CMD_REGISTER
           }
           match
-            report_to_control(sc_addr, record, hosts.reports(), cmd, sc_token) {
+            report_to_control(sc_addr, record, hosts.reports(), cmd, sc_link) {
             Ok(payload) => {
               if not(registered) {
                 registered = true
@@ -486,7 +498,7 @@ fn cmd_spu(argv : Array[String]) -> Unit {
                         file_metadata_store(data_dir),
                         revision,
                         adoption,
-                        sc_token,
+                        sc_link,
                       )
                     }
                     None => ()
@@ -530,6 +542,51 @@ fn cmd_spu(argv : Array[String]) -> Unit {
 }
 
 ///|
+/// How long a control connection may spend in its TLS handshake. Shorter
+/// than the hub's 2s on purpose: the control plane serves one connection
+/// at a time, so a peer that stalls in the handshake delays the *whole*
+/// control plane — and a node that misses its heartbeat window gets
+/// declared offline and triggers an election it did not need. A healthy
+/// handshake on loopback is sub-millisecond, so this is still ~500x
+/// headroom.
+///
+/// The structural fix (a poll-driven control plane that serves many
+/// connections, like the data hub) is a larger refactor and is recorded
+/// as a follow-up in the P12 ticket; this bound is what keeps the
+/// consequence of *not* having it small.
+const CONTROL_HANDSHAKE_DEADLINE_MS : Int = 500
+
+///|
+/// The `Conn` for an accepted control connection, `None` when the TLS
+/// handshake failed (the connection is dropped, and the caller closes
+/// the socket). The control plane serves one connection at a time, so
+/// this is the blocking-with-a-deadline form rather than a session the
+/// poll loop drives — a peer that opens a socket and says nothing costs
+/// one handshake timeout, not the process.
+fn control_conn(
+  stream : @net.TcpStream,
+  tls : @tls.TlsContext?,
+) -> @client.Conn? {
+  match tls {
+    None => Some(@native.from_stream(stream))
+    Some(context) =>
+      match
+        @native.accept_tls_conn(
+          stream,
+          context,
+          CONTROL_HANDSHAKE_DEADLINE_MS,
+          HOUSEKEEPING_INTERVAL_MS,
+        ) {
+        Ok(conn) => Some(conn)
+        Err(e) => {
+          note("dropping a control connection: \{e}")
+          None
+        }
+      }
+  }
+}
+
+///|
 /// `moonflux sc --listen host:port --data-dir D`
 ///
 /// The control plane: accepts node reports, keeps the table, and
@@ -567,14 +624,24 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   // other mode this process runs in
   let control_auth = AuthConfig::load(data_dir)
   announce_auth_mode(data_dir, control_auth)
+  // and the transport this port speaks (P12). The control port is where
+  // a forged REGISTER or SYNC_ACK would land, so it is the port whose
+  // credentials matter most; TLS is configured here for the same reason.
+  let control_tls = tls_listener(flags)
   let store = file_metadata_store(data_dir)
   let placement = PlacementState::new(data_dir)
   while true {
     match listener.accept() {
       Ok(stream) => {
-        handle_control_connection(
-          stream, table, placement, store, groups, asset, control_auth,
-        )
+        // the handshake happens before the handler sees anything: a
+        // peer that cannot complete it never reaches a command
+        match control_conn(stream, control_tls) {
+          None => ()
+          Some(conn) =>
+            handle_control_connection(
+              conn, table, placement, store, groups, asset, control_auth,
+            )
+        }
         let _ = stream.close()
       }
       Err(TimedOut) => ()
@@ -806,7 +873,7 @@ fn NodeTable::snapshot(self : NodeTable) -> Array[@client.NodeRecord] {
 /// port get a structured refusal — the control plane is not a broker,
 /// and silently proxying would hide a misconfigured client.
 fn handle_control_connection(
-  stream : @net.TcpStream,
+  conn : @client.Conn,
   table : NodeTable,
   placement : PlacementState,
   store : MetadataStore,
@@ -814,7 +881,6 @@ fn handle_control_connection(
   asset : ClusterAsset,
   auth_config : AuthConfig,
 ) -> Unit {
-  let conn = @native.from_stream(stream)
   let hello = match conn.recv_first() {
     @client.Got(frame) => frame
     @client.Eof => return
@@ -1230,13 +1296,16 @@ struct PartitionHost {
   /// group is consuming this partition — which is *not* the same as a
   /// group sitting at zero, and retention must not conflate them.
   mut group_floor : Int64?
-  /// the follower's persistent link to this partition's leader (P10).
-  /// Dropped on any error, redialled on the next round; `None` means
-  /// "not connected", which is the normal state for a leader.
-  mut link : SyncLink?
-  /// the credential this node presents to its leader (P12); copied from
-  /// the table so the host can dial without reaching back up
-  mut token : String?
+  /// the follower's persistent connection to this partition's leader
+  /// (P10). Dropped on any error, redialled on the next round; `None`
+  /// means "not connected", which is the normal state for a leader.
+  /// Named `sync` because `link_auth` below is a different thing: how
+  /// this node identifies *itself*, not where it is connected.
+  mut sync : SyncLink?
+  /// how this node identifies itself to its peers (P12): credential and
+  /// transport. Passed in rather than defaulted, so a host that forgot
+  /// it cannot reach a leader unauthenticated.
+  link_auth : PeerLink
 }
 
 ///|
@@ -1244,6 +1313,7 @@ fn PartitionHost::new(
   data_dir : String,
   node_id : String,
   address : String,
+  link_auth : PeerLink,
   topic : String,
   partition : Int,
 ) -> PartitionHost {
@@ -1261,8 +1331,8 @@ fn PartitionHost::new(
     reported_failure: false,
     nominated: "",
     group_floor: None,
-    link: None,
-    token: None,
+    sync: None,
+    link_auth,
   }
 }
 
@@ -1423,8 +1493,8 @@ fn PartitionHost::replicate_once(
   // worth paying once, and with per-partition fan-out the connection
   // churn was the largest remaining per-tick cost (decision 30's
   // follow-up). A dropped link is redialled next round.
-  if self.link is None {
-    self.link = match SyncLink::connect(self.leader_addr, self.token) {
+  if self.sync is None {
+    self.sync = match SyncLink::connect(self.leader_addr, self.link_auth) {
       Ok(link) => {
         note(
           "sync link to \{self.leader_addr} for \{self.label()} open (\{link.opens} dial(s) this incarnation)",
@@ -1443,7 +1513,7 @@ fn PartitionHost::replicate_once(
       }
     }
   }
-  let link = match self.link {
+  let link = match self.sync {
     Some(link) => link
     None => return
   }
@@ -1467,7 +1537,7 @@ fn PartitionHost::replicate_once(
     Ok(window) => window
     Err(e) => {
       link.close()
-      self.link = None
+      self.sync = None
       if self.caught_up || !self.reported_failure {
         self.caught_up = false
         self.reported_failure = true
@@ -1532,7 +1602,7 @@ fn PartitionHost::replicate_once(
     }
     Err(e) => {
       link.close()
-      self.link = None
+      self.sync = None
       if self.caught_up {
         self.caught_up = false
         note(
@@ -1617,15 +1687,15 @@ fn ask_leader(
   sc_addr : String,
   topic : String,
   partition : Int,
-  token : String?,
+  link : PeerLink,
 ) -> Result[@client.PartitionView, String] {
   let ref = @client.PartitionRef::{ topic, partition }
   let payload = match
-    control_call_with_token(
+    control_call_secure(
       sc_addr,
       @client.CMD_LEADER,
       @client.encode_partition_ref(ref),
-      token,
+      link,
     ) {
     Ok(payload) => payload
     Err(e) => return Err(e)
@@ -1742,18 +1812,18 @@ fn confirm_leadership(
   topic : String,
   partition : Int,
   candidate : String,
-  token : String?,
+  link : PeerLink,
 ) -> Result[Unit, String] {
   let confirmation = @client.Confirmation::{
     partition: @client.PartitionRef::{ topic, partition },
     candidate,
   }
   match
-    control_call_with_token(
+    control_call_secure(
       sc_addr,
       @client.CMD_CONFIRM,
       @client.encode_confirmation(confirmation),
-      token,
+      link,
     ) {
     Ok(_) => Ok(())
     Err(e) => Err(e)
@@ -1773,9 +1843,10 @@ struct HostTable {
   data_dir : String
   node_id : String
   address : String
-  /// the credential this node presents to peers (P12): the table is the
-  /// per-node context, so the token lives here and each host copies it
-  token : String?
+  /// the link this node presents to peers (P12): the table is the
+  /// per-node context, so the credential and the transport live here and
+  /// each host copies them
+  link : PeerLink
   /// the topic the applied pipeline writes to ("" = none). Placement
   /// wins whenever a control plane declares this topic; when nobody
   /// declares it, this node is the only holder there is, and that is
@@ -1790,9 +1861,9 @@ fn HostTable::new(
   data_dir : String,
   node_id : String,
   address : String,
-  token : String?,
+  link : PeerLink,
 ) -> HostTable {
-  HostTable::{ data_dir, node_id, address, token, applied_topic: "", hosts: [] }
+  HostTable::{ data_dir, node_id, address, link, applied_topic: "", hosts: [] }
 }
 
 ///|
@@ -1810,10 +1881,10 @@ fn HostTable::self_place(self : HostTable, reason : String) -> Unit {
         self.data_dir,
         self.node_id,
         self.address,
+        self.link,
         self.applied_topic,
         0,
       )
-      host.token = self.token
       host.adopt_view(@client.PartitionView::{
         leader: self.address,
         replicas: [self.address],
@@ -1883,12 +1954,12 @@ fn HostTable::adopt(
         self.data_dir,
         self.node_id,
         self.address,
+        self.link,
         assignment.topic,
         assignment.partition,
       )
       host.adopt_view(view)
       host.group_floor = group_floor
-      host.token = self.token
       self.hosts.push(host)
       note(
         "hosting \{host.label()} (leader \{assignment.leader}, \{assignment.replicas.length()} replica(s))",
@@ -1921,7 +1992,7 @@ fn HostTable::ensure(
     }
     return None
   }
-  match ask_leader(sc_addr, topic, partition, self.token) {
+  match ask_leader(sc_addr, topic, partition, self.link) {
     Ok(view) => {
       if view.replicas.length() == 0 &&
         topic == self.applied_topic &&
@@ -2080,7 +2151,7 @@ fn HostTable::tick_one(
               host.topic,
               host.partition,
               host.address,
-              self.token,
+              self.link,
             ) {
             Ok(_) => ()
             Err(e) => note("warning: could not confirm leadership: \{e}")

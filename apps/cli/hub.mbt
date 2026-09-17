@@ -212,7 +212,7 @@ fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
     Some(ready) =>
       self.conns.push(HubConnection::{
         socket: stream,
-        stream: tls_stream(stream, ready),
+        stream: @native.tls_stream_over(stream, ready),
         tls: Some(ready),
         inbox: b"",
         decoded: b"",
@@ -707,40 +707,5 @@ fn unwrap_ws_frame(conn : HubConnection) -> Result[Bool, String] {
       Ok(true)
     }
     other => Err("unsupported websocket opcode \{other}")
-  }
-}
-
-///|
-/// The stream a TLS session presents to everything above it. Built here
-/// because the hub owns the socket-to-session swap; the protocol
-/// handlers never learn which kind they got.
-fn tls_stream(
-  socket : @net.TcpStream,
-  session : @tls.TlsSession,
-) -> @net.Stream {
-  @net.Stream::{
-    fd: fn() { socket.raw_fd() },
-    recv_some: fn(buf, len) {
-      match session.read_some(buf, len) {
-        Ok(Some(n)) => Ok(n)
-        // "wants more" is what a plain socket calls would-block, so the
-        // three states the loop distinguishes stay distinguishable
-        Ok(None) => Err(@net.WouldBlock)
-        Err(e) => Err(@net.Io(0, e))
-      }
-    },
-    send_some: fn(bytes) {
-      match session.write_some(bytes) {
-        Ok(Some(n)) => Ok(n)
-        Ok(None) => Err(@net.WouldBlock)
-        Err(e) => Err(@net.Io(0, e))
-      }
-    },
-    pending: fn() { session.pending() },
-    set_nonblocking: fn(enabled) { socket.set_nonblocking(enabled) },
-    close: fn() {
-      session.close()
-      let _ = socket.close()
-    },
   }
 }

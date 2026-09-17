@@ -11,8 +11,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EXE="${MOONFLUX_EXE:-$ROOT/_build/native/release/build/apps/cli/cli.exe}"
-[ -x "$EXE" ] || EXE="$ROOT/_build/native/debug/build/apps/cli/cli.exe"
+# The debug build is what `moon build --target native` (and `moon test`)
+# produce, so it is the artifact every gate here means to test. A release
+# binary is only a fallback: preferring it once meant a gate silently
+# tested a build from an earlier session.
+EXE="${MOONFLUX_EXE:-$ROOT/_build/native/debug/build/apps/cli/cli.exe}"
+[ -x "$EXE" ] || EXE="$ROOT/_build/native/release/build/apps/cli/cli.exe"
 [ -x "$EXE" ] || { echo "cli executable not found; run: moon build --target native" >&2; exit 1; }
 
 WORK="$(mktemp -d /tmp/moonflux-p5-operator.XXXXXX)"

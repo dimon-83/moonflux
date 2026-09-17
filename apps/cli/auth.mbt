@@ -135,14 +135,10 @@ fn AuthGate::present(self : AuthGate, token : String) -> AuthOutcome {
 }
 
 // ---------------------------------------------------------------------
-// TLS on the client side (P12): the flags, and the transports they
-// choose. Kept here, next to the credential plumbing, because both are
-// "how this process talks to a peer" and an operator sets them together.
-
-// ---------------------------------------------------------------------
-// TLS on the client side (P12): the flags, and the transports they
-// choose. Kept here, next to the credential plumbing, because both are
-// "how this process talks to a peer" and an operator sets them together.
+// TLS (P12): the flags, and the transports they choose. Kept here, next
+// to the credential plumbing, because both answer the same operator
+// question — "how does this process talk to a peer" — and an operator
+// sets them together.
 
 ///|
 /// What a client needs to speak TLS: the trust anchor, and optionally a
@@ -154,18 +150,50 @@ pub(all) struct TlsOptions {
 }
 
 ///|
-/// Reads the TLS flags, or None when this client speaks plaintext. A
-/// client cannot "default to TLS": there is no trust anchor to default
-/// to, and silently trusting everything would be worse than being clear.
+/// Reads the TLS configuration, or None when this process speaks
+/// plaintext. A client cannot "default to TLS": there is no trust anchor
+/// to default to, and silently trusting everything would be worse than
+/// being clear.
+///
+/// A flag wins and the environment fills the gap, which is the precedent
+/// `--token`/`MOONFLUX_TOKEN` already set. It matters for callers with no
+/// flag parser at all — a group member's coordinator calls, a node's
+/// background pulls — where the alternative is threading a transport
+/// parameter through a dozen functions that have no opinion about it.
 fn tls_options(flags : Flags) -> TlsOptions? {
-  match flags.get("tls-ca") {
+  tls_options_from(
+    flag_or_env(flags, "tls-ca", "MOONFLUX_TLS_CA"),
+    flag_or_env(flags, "tls-cert", "MOONFLUX_TLS_CERT"),
+    flag_or_env(flags, "tls-key", "MOONFLUX_TLS_KEY"),
+  )
+}
+
+///|
+/// A flag if it was given, the environment otherwise.
+fn flag_or_env(flags : Flags, flag : String, variable : String) -> String? {
+  match flags.get(flag) {
+    Some(value) => Some(value)
+    None => @env.get_env_var(variable)
+  }
+}
+
+///|
+/// The environment's TLS configuration (same variables, no flags).
+fn env_tls_options() -> TlsOptions? {
+  tls_options_from(
+    @env.get_env_var("MOONFLUX_TLS_CA"),
+    @env.get_env_var("MOONFLUX_TLS_CERT"),
+    @env.get_env_var("MOONFLUX_TLS_KEY"),
+  )
+}
+
+///|
+/// One place decides what a trust anchor plus an optional client
+/// certificate mean, so every reader above agrees.
+fn tls_options_from(ca : String?, cert : String?, key : String?) -> TlsOptions? {
+  match ca {
     None => None
-    Some(ca) =>
-      Some(TlsOptions::{
-        ca,
-        cert: flags.get("tls-cert"),
-        key: flags.get("tls-key"),
-      })
+    Some(ca) => Some(TlsOptions::{ ca, cert, key })
   }
 }
 
@@ -228,5 +256,62 @@ fn connect_producer_transport(
       }
       @client.Producer::from_conn_with(conn, token)
     }
+  }
+}
+
+// ---------------------------------------------------------------------
+// Node-to-node (P12/T59). A node both serves and dials, so it has two
+// sides to configure, and they must be configured *together*: a node
+// that authenticates outbound but serves unauthenticated is a security
+// face with a hole in it, and one that serves TLS but dials plaintext
+// cannot reach its own peers.
+
+///|
+/// How this node talks to a peer: the credential it presents and the
+/// transport it presents it over. One value threaded through every
+/// outbound call (control plane, leader, peer), so "which of my calls
+/// authenticate?" has one answer instead of a per-call-site answer.
+pub(all) struct PeerLink {
+  token : String?
+  tls : TlsOptions?
+}
+
+///|
+/// The link this process presents when it dials (`--token`, `--tls-ca`,
+/// and optionally `--tls-cert`/`--tls-key` when peers require mutual
+/// TLS). The same flags a client reads, because it is the same question:
+/// a node is a client of its peers.
+fn peer_link(flags : Flags) -> PeerLink {
+  PeerLink::{ token: client_token(flags), tls: tls_options(flags) }
+}
+
+///|
+/// How long a node's control/peer call may spend in the TLS handshake.
+/// Shorter than the client's patience: a node has a tick to keep, and a
+/// peer that cannot finish a handshake in this long is not going to.
+const NODE_HANDSHAKE_TIMEOUT_MS : Int = 1000
+
+///|
+/// The listener side: `--tls-cert`/`--tls-key` turn TLS on for this
+/// process's port, `--tls-ca` (with `--tls-require-client`) makes peers
+/// present a certificate too. Returns None for plaintext — a listener
+/// cannot "default to TLS" either, and an operator who forgot the flags
+/// should get a loud plaintext server rather than a silent one.
+fn tls_listener(flags : Flags) -> @tls.TlsContext? {
+  let cert = match flags.get("tls-cert") {
+    None => return None
+    Some(cert) => cert
+  }
+  let key = flags.require("tls-key")
+  let ca = flags.get("tls-ca") |> unwrap_or("")
+  let require_client = flags.get("tls-require-client") is Some(_)
+  match @tls.server_context(cert, key, ca, require_client) {
+    Ok(context) => {
+      note(
+        "TLS ENABLED on this listener (certificate \{cert}\{if require_client {", peers must present a certificate" } else {""}})",
+      )
+      Some(context)
+    }
+    Err(e) => fail(e)
   }
 }

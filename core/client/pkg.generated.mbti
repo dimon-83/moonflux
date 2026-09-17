@@ -10,6 +10,8 @@ import {
 // Values
 pub const CMD_APPLY_PIPELINE : Int = 19
 
+pub const CMD_AUTH : Int = 35
+
 pub const CMD_CLUSTER_PIPELINE_APPLY : Int = 32
 
 pub const CMD_CLUSTER_PIPELINE_FETCH : Int = 33
@@ -76,7 +78,11 @@ pub const CMD_TOPIC_LIST : Int = 16
 
 pub const CMD_WELCOME : Int = 2
 
+pub const ERR_AUTH_REQUIRED : Int = 9
+
 pub const ERR_BAD_PAYLOAD : Int = 3
+
+pub const ERR_FORBIDDEN : Int = 10
 
 pub const ERR_GROUP : Int = 8
 
@@ -204,6 +210,8 @@ pub fn encode_wire_topic(WireTopic) -> Bytes
 
 pub fn encode_wire_topics(Array[WireTopic]) -> Bytes
 
+pub fn handshake_with(Conn, String?) -> Result[(Int, Int), ClientError]
+
 pub fn parse_node_role(String) -> Result[NodeRole, String]
 
 pub fn role_name(NodeRole) -> String
@@ -255,6 +263,7 @@ pub fn Consumer::fetch(Self, String, Int64, Int) -> Result[Array[@log.LogEntry],
 pub fn Consumer::fetch_committed(Self, String, Int64, Int) -> Result[(Array[@log.LogEntry], Int64, Int64), ClientError]
 pub fn Consumer::fetch_partition(Self, String, Int, Int64, Int) -> Result[Array[@log.LogEntry], ClientError]
 pub fn Consumer::from_conn(Conn) -> Result[Self, ClientError]
+pub fn Consumer::from_conn_with(Conn, String?) -> Result[Self, ClientError]
 pub fn Consumer::session_version(Self) -> (Int, Int)
 
 pub(all) enum FirstRead {
@@ -347,6 +356,7 @@ pub struct Producer {
 }
 pub fn Producer::close(Self) -> Unit
 pub fn Producer::from_conn(Conn) -> Result[Self, ClientError]
+pub fn Producer::from_conn_with(Conn, String?) -> Result[Self, ClientError]
 pub fn Producer::send(Self, String, Array[@protocol.Record]) -> Result[(Int64, Int), ClientError]
 pub fn Producer::send_partition(Self, String, Int, Array[@protocol.Record]) -> Result[(Int64, Int), ClientError]
 pub fn Producer::session_version(Self) -> (Int, Int)

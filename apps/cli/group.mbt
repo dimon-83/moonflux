@@ -17,16 +17,22 @@ fn group_request(
   cmd : Int,
   payload : Bytes,
 ) -> Result[Bytes, String] {
-  control_call_with_token(sc_addr, cmd, payload, group_token())
+  control_call_secure(sc_addr, cmd, payload, group_link())
 }
 
 ///|
-/// The credential a group member presents. Read once here rather than
-/// threaded through every call: a group member has exactly one, and the
-/// alternative is a token parameter on a dozen functions whose only
-/// opinion about it is "pass it on".
-fn group_token() -> String? {
-  @env.get_env_var("MOONFLUX_TOKEN")
+/// The link a group member presents. Read once here rather than threaded
+/// through every call: a member has exactly one, and the alternative is a
+/// transport parameter on a dozen functions whose only opinion about it
+/// is "pass it on". It reads the environment for the same reason
+/// `MOONFLUX_TOKEN` is an environment variable at all — a member may be a
+/// CLI invocation with flags, or a process configured by its
+/// environment, and both must reach a TLS broker.
+fn group_link() -> PeerLink {
+  PeerLink::{
+    token: @env.get_env_var("MOONFLUX_TOKEN"),
+    tls: env_tls_options(),
+  }
 }
 
 ///|

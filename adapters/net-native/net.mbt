@@ -25,7 +25,8 @@ pub(all) suberror NetError {
 pub impl Show for NetError with fn output(self, logger) {
   match self {
     BadAddress(msg) => logger.write_string("BadAddress(\{msg})")
-    Io(code, op) => logger.write_string("Io(errno=\{code}, op=\{op})")
+    Io(code, op) =>
+      logger.write_string("Io(errno=\{code} \{errno_text(code)}, op=\{op})")
     ConnectionClosed => logger.write_string("ConnectionClosed")
     TimedOut => logger.write_string("TimedOut")
     WouldBlock => logger.write_string("WouldBlock")
@@ -43,6 +44,20 @@ const NET_TIMEOUT_CODE : Int = 9999
 /// clean EOF, which is what lets an event loop make progress on other
 /// connections instead of waiting.
 const NET_WOULD_BLOCK_CODE : Int = 9998
+
+///|
+/// The text of an errno ("connection reset by peer"). A number alone
+/// sends the reader off to look it up; the errno was surfaced so that it
+/// could be read.
+fn errno_text(code : Int) -> String {
+  let buf : FixedArray[Byte] = FixedArray::make(128, b'\x00')
+  net_strerror(code, buf, buf.length())
+  let mut end = 0
+  while end < buf.length() && buf[end] != b'\x00' {
+    end = end + 1
+  }
+  @utf8.decode_lossy(Bytes::from_array(buf[:end]))
+}
 
 ///|
 /// Wraps a raw FFI result: negative means -errno, except the shim's

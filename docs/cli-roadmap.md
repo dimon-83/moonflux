@@ -4,9 +4,11 @@
 > 本文档盘点现状、对标 Fluvio CLI 命令面（评估报告第二章各节实录）、给出缺口的分阶段映射与设计原则。
 > **边界声明**：本规划不改变当前 P2（WASM 算子沙箱）进行中的工作；各命令批次在实际启动时按惯例立 ticket（`.scratch/moonflux-p{N}/issues/`）。
 
-## 1. 现状（已交付，P0/P0′/P1 门禁全绿）
+## 1. 现状（已交付，P0–P12 门禁全绿）
 
-单二进制多子命令形态（`apps/cli`，AGENTS.md §1.2 的"单程序多子命令"设计），构建产物 `_build/native/release/build/apps/cli/cli.exe`：
+单二进制多子命令形态（`apps/cli`，AGENTS.md §1.2 的"单程序多子命令"设计），构建产物
+`_build/native/debug/build/apps/cli/cli.exe`（`moon build --target native` 的产物；门禁脚本默认测它，
+`MOONFLUX_EXE` 可覆盖——**别**把门禁指向一个恰好存在的 release 二进制，那曾让一次门禁跑在上一轮的构建上）：
 
 | 命令 | 语义 | 门禁证据 |
 | :--- | :--- | :--- |
@@ -19,6 +21,19 @@
 
 - 实现文件：`apps/cli/{main,produce,consume,serve,pipeline,rules,store}.mbt`；数据布局 `<data-dir>/topics/<topic>/partition-0.log`，应用状态 `<data-dir>/topology.json`。
 - 已知现状缺陷见 §5 勘误（含 `usage()` 帮助文本滞后）。
+
+### 1.1 安全面 flags（P12，决策 35）
+
+凭据与传输是**进程级**配置，落在每个需要出网/收网的命令上，语义一致：
+
+| flag | 作用 | 环境变量回退 |
+| :--- | :--- | :--- |
+| `--token T` | 该连接展示的凭据（角色由服务端的凭据表决定，客户端不声明角色） | `MOONFLUX_TOKEN` |
+| `--tls-ca P` | 信任锚；**出现即启用 TLS**（没有"--tls 开关"式的旗标：没有锚就没有可默认的信任） | `MOONFLUX_TLS_CA` |
+| `--tls-cert P` / `--tls-key P` | 本进程的证书与私钥（双向 TLS 时服务端要求）；节点进程同时用它们**服务**自己的端口 | `MOONFLUX_TLS_CERT` / `MOONFLUX_TLS_KEY` |
+| `--tls-require-client` | **仅服务端**（`serve` / `spu` / `sc`）：要求对端出示证书 | — |
+
+要点：① 客户端**永远校验证书**（`VERIFY_PEER` + 主机名钉住）——"装了 CA 却不校验"比不做 TLS 更糟；② 没有凭据/CA 时行为与 P11 完全一致，但启动**明说**当前模式；③ 节点进程（`spu`/`sc`）用同一套 flags 既服务又出站，`PeerLink{token, tls}` 贯穿所有节点间调用；④ 消费组成员（`consume --group`）从环境读同一组变量——成员可能是 CLI 调用，也可能是被环境配置的进程，两者都要能连上 TLS 控制面。
 
 ## 2. 对标基准：Fluvio CLI 命令面（评估报告 §2.x 实录）
 

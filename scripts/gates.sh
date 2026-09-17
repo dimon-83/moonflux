@@ -50,6 +50,11 @@ step "moon test --target wasm-gc" moon test --target wasm-gc
 # 3. operator artifacts + ABI surface
 step "build-operators.sh" scripts/build-operators.sh
 
+# The E2E gates below must test *this* build. They default to the debug
+# binary for the same reason, and exporting it here makes that explicit
+# rather than incidental.
+export MOONFLUX_EXE="$ROOT/_build/native/debug/build/apps/cli/cli.exe"
+
 # 4. gates
 #
 # Not in this list: scripts/e2e-p4-editor.sh. Its first half is
@@ -79,6 +84,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p8-storage.sh" scripts/e2e-p8-storage.sh
   step "e2e-p9-groups.sh" scripts/e2e-p9-groups.sh
   step "e2e-p11-assets.sh" scripts/e2e-p11-assets.sh
+  step "e2e-p12-security.sh" scripts/e2e-p12-security.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

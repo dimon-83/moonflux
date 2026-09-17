@@ -73,3 +73,12 @@ extern "C" fn net_poll_readable(
 ///|
 #borrow(buf)
 pub extern "C" fn net_send_some(fd : Int, buf : Bytes, len : Int) -> Int = "mf_net_send_some"
+
+///|
+/// The text of an errno, for error messages.
+#borrow(buf)
+pub extern "C" fn net_strerror(
+  code : Int,
+  buf : FixedArray[Byte],
+  len : Int,
+) -> Unit = "mf_net_strerror"
