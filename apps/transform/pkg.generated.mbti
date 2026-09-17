@@ -3,6 +3,7 @@ package "moonflux/apps/transform"
 
 import {
   "dimon-83/mbel/engine",
+  "moonbitlang/core/debug",
   "moonflux/core/protocol",
 }
 
@@ -13,15 +14,29 @@ pub const BUDGET_MAX_NODES : Int = 10000
 
 pub const BUDGET_MAX_STEPS : Int = 100000
 
+pub const MAX_ERROR_CHARS : Int = 512
+
 pub fn apply(Transform, @protocol.Record) -> Result[@protocol.Record, String]
 
 pub fn apply_chain(Array[Transform], @protocol.Record) -> Result[@protocol.Record, String]
 
+pub fn check_purity(String) -> Result[Unit, String]
+
 pub fn compile(String) -> Result[Transform, String]
+
+pub fn compile_with(String, Array[RuleFunction]) -> Result[Transform, String]
+
+pub fn validate_functions(Array[RuleFunction]) -> Result[Unit, String]
 
 // Errors
 
 // Types and methods
+pub(all) struct RuleFunction {
+  name : String
+  params : Array[String]
+  body : String
+} derive(Eq, Show, @debug.Debug)
+
 pub struct Transform {
   source : String
   expr : @engine.Expression

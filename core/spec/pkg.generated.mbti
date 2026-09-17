@@ -47,7 +47,7 @@ pub(all) struct TopicSpec {
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) enum TransformSpec {
-  ExprTransform(String)
+  ExprTransform(String, String)
   WasmTransform(String, String)
 } derive(Eq, Show, @debug.Debug)
 

@@ -61,7 +61,12 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
   })
   for i, t in spec.transforms {
     let (capability, detail) = match t {
-      ExprTransform(expr) => ("mbel", "expr transform: \{expr}")
+      ExprTransform(expr, functions) =>
+        if functions == "" {
+          ("mbel", "expr transform: \{expr}")
+        } else {
+          ("mbel", "expr transform: \{expr} (functions \{functions})")
+        }
       WasmTransform(module_id, config) =>
         ("wasm", "wasm operator: \{module_id} config=\{config}")
     }

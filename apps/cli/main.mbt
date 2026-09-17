@@ -67,6 +67,7 @@ fn usage() -> Unit {
   )
   println("  sc       --listen host:port [--data-dir D]")
   println("  topic    create|list|delete ...")
+  println("  function-set create|get|list|delete ...")
   println("  operator verify|describe|list ...")
   println("  cluster  nodes   --remote host:port")
   println("  cluster  status  --remote host:port")
@@ -156,6 +157,7 @@ fn main {
     text == "sc" ||
     text == "cluster" ||
     text == "topic" ||
+    text == "function-set" ||
     text == "operator"
   }
 
@@ -180,6 +182,7 @@ fn main {
     "sc" => cmd_sc(rest)
     "cluster" => cmd_cluster(rest)
     "topic" => cmd_topic(rest)
+    "function-set" => cmd_function_set(rest)
     "operator" => cmd_operator(rest)
     _ => usage()
   }

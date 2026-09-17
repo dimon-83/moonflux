@@ -122,7 +122,7 @@ fn control_call_on(
     conn.send_frame(@client.Frame::{
       cmd: @client.CMD_HELLO,
       rid: 0,
-      payload: @client.encode_hello(@client.PROTOCOL_VERSION, 0),
+      payload: @client.encode_hello(1, 0),
     }) {
     Ok(_) => ()
     Err(e) => return Err("hello: \{e}")
@@ -573,7 +573,7 @@ fn handle_control_connection(
   let _ = conn.send_frame(@client.Frame::{
     cmd: @client.CMD_WELCOME,
     rid: hello.rid,
-    payload: @client.encode_hello(@client.PROTOCOL_VERSION, 0),
+    payload: @client.encode_hello(1, 0),
   })
   while true {
     let frame = match conn.recv_frame() {
@@ -645,6 +645,11 @@ fn handle_control_connection(
               Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
             }
           Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        }
+      cmd if is_function_set_command(cmd) =>
+        match dispatch_function_set(frame, store) {
+          Ok(payload) => Ok(payload)
+          Err((_code, message)) => Err((@client.ERR_BAD_PAYLOAD, message))
         }
       @client.CMD_CONFIRM =>
         match @client.decode_confirmation(frame.payload) {
@@ -1196,7 +1201,7 @@ fn handle_data_connection(
   let _ = conn.send_frame(@client.Frame::{
     cmd: @client.CMD_WELCOME,
     rid: hello.rid,
-    payload: @client.encode_hello(@client.PROTOCOL_VERSION, 0),
+    payload: @client.encode_hello(1, 0),
   })
   while true {
     let frame = match conn.recv_frame() {

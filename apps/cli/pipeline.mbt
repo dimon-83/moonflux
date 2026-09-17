@@ -76,11 +76,15 @@ fn load_applied(data_dir : String) -> Applied? {
 }
 
 ///|
-/// Persists the compiled state: pipeline name + the spec document.
+/// Persists the compiled state: pipeline name + the spec document, and
+/// the rule-asset revisions the apply resolved (the spec pins a *name*;
+/// the topology records what that name meant at apply time, so drift
+/// between a running pipeline and the store is visible).
 fn persist_applied(
   data_dir : String,
   name : String,
   spec_json : Json,
+  function_sets : Array[(String, Int64)],
 ) -> Result[Unit, String] {
   // Clock lives in the apps layer (kernel red line: core never reads
   // the wall clock); the timestamp records when apply compiled+saved.
@@ -89,6 +93,15 @@ fn persist_applied(
   doc_map["applied_at"] = Json::number(
     @env.now().reinterpret_as_int64().to_double(),
   )
+  let set_items : Array[Json] = []
+  for pair in function_sets {
+    let (set_name, revision) = pair
+    let item : Map[String, Json] = {}
+    item["name"] = Json::string(set_name)
+    item["revision"] = Json::number(revision.to_double())
+    set_items.push(Json::object(item))
+  }
+  doc_map["functions"] = Json::array(set_items)
   doc_map["spec"] = spec_json
   let doc = Json::object(doc_map)
   let text = doc.stringify(indent=2)
@@ -166,14 +179,22 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
   let (spec, spec_json) = load_spec_doc(spec_path)
   let new_topology = @pipeline.compile(spec)
   // publish-time static check: every transform must compile before
-  // the topology is persisted (AGENTS §8) — bad rules never apply
+  // the topology is persisted (AGENTS §8) — bad rules never apply,
+  // and a function-set reference that does not resolve is exactly
+  // such a bad rule
+  let store = file_metadata_store(data_dir)
   for t in spec.transforms {
-    match compile_node(t) {
+    match compile_node(store, t) {
       Ok(_) => ()
       Err(e) => fail("transform rejected: \{e}")
     }
   }
-  match persist_applied(data_dir, new_topology.pipeline, spec_json) {
+  let function_sets = match resolved_function_sets(spec, store) {
+    Ok(sets) => sets
+    Err(e) => fail("transform rejected: \{e}")
+  }
+  match
+    persist_applied(data_dir, new_topology.pipeline, spec_json, function_sets) {
     Ok(_) => ()
     Err(e) => fail(e)
   }
@@ -208,10 +229,12 @@ fn pipeline_run(argv : Array[String]) -> Unit {
       fail("applied pipeline is '\{applied.pipeline}', not '\{want}'")
     }
   }
-  // dynamic rule chain: compiled once for this run (P1 capability)
+  // dynamic rule chain: compiled once for this run (P1 capability),
+  // with this data dir's function sets resolved for the referenced ones
+  let store = file_metadata_store(data_dir)
   let chain : Array[CompiledNode] = []
   for t in applied.spec.transforms {
-    match compile_node(t) {
+    match compile_node(store, t) {
       Ok(node) => chain.push(node)
       Err(e) => fail("transform rejected: \{e}")
     }

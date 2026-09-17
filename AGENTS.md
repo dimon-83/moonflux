@@ -48,7 +48,9 @@
 | P1 | **连接器与外设**：Source/Sink 框架 + HTTP/文件/MQ + mbel 表达式 transforms + 客户端 SDK 雏形 | ≥3 个真实数据源接入跑通；改规则秒级生效 | ✅ 2026-09-15（`scripts/e2e-p1-connectors.sh`、`scripts/e2e-p1-rules.sh`；MQTT/Kafka 留后续） |
 | P2 | WASM 算子沙箱：guest SDK + ABI + 全算子 + 双后端测试矩阵 | 算子语义与参考实现对拍一致 | ✅ 2026-09-16（`scripts/crosscheck-operators.sh`：native vs wasm 字节级一致 + trap/拒绝/超预算 fail-closed；`scripts/build-operators.sh` 构建门禁） |
 | P3 | 复制 + 选主 + 元数据调和（本地多进程优先） | 故障注入通过（宕机/恢复/水位一致性） | ✅ 2026-09-16（`scripts/e2e-p3-{replication,failover,nodes,metadata}.sh`；`scripts/gates.sh` 含全部 19 步） |
-| P4 | 客户端 SDK 完备 + Web 编辑器 + 部署形态（本地优先，K8s 可选） | 端到端：拖拽一条管道 → 运行 → 消费到数据 | 未启动 |
+| P4 | 客户端 SDK 完备 + Web 编辑器 + 部署形态（本地优先，K8s 可选） | 端到端：拖拽一条管道 → 运行 → 消费到数据 | ✅ 2026-09-17（`scripts/e2e-p4-{readmodes,ws}.sh`；编辑器闭环 `scripts/e2e-p4-editor.sh`，浏览器阶段由 agent/人驱动） |
+| P5 | 并发与运维面：连接多路复用 + 多分区存储与数据路径 + 算子管理命令面 | 并发/多分区/算子管理三组门禁全绿 | ✅ 2026-09-17（`scripts/e2e-p5-{concurrency,partitions,operator}.sh`；**如实标注**：非 0 分区的复制仍在，矩阵 #10） |
+| P6 | 规则资产：mbel 函数集（版本化规则资产 + 命令面 + spec 引用） | 函数集全生命周期门禁：部署→引用→发布期拦截→变换→更新 re-apply 生效 | ✅ 2026-09-17（`scripts/e2e-p6-functions.sh`，10 条断言） |
 
 - 详细路线图与依据见 README「路线图」与报告 3.4 / 4.4 / 6.4。
 - 阶段推进以**门禁**为准；门禁必须可证伪、可复现（对拍脚本 / 基准 / 故障注入），不得以"看起来能跑"代替。
@@ -70,6 +72,15 @@
 - **内核包的再导出边界**（实测）：`pub using` 只能在源码里（不能进 moon.pkg）、可再导出类型与函数但**不可**再导出枚举构造器、**不可**为外部类型定义方法；需要构造器的调用方直接 import 内核包。
 - **已知缺口（最高优先级）**：`serve` 单连接串行（P1 遗留）——浏览器的长连接会饿死 CLI 与其它客户端；多路复用是下一步首位。
 
+
+**P6 规则资产纪律（改函数集/表达式相关代码前先读；决策依据见 README 决策 27–28）**
+
+- **函数集是可信资产，不是沙箱**：宿主侧 mbel 表达式体函数以"经评审的平台资产"为前提（与表达式规则同级）；**不可信标量函数的终态是 ABI v2 标量调用**（设计稿 [`docs/operator-abi-v2-scalar.md`](docs/operator-abi-v2-scalar.md)，尚未实现）——不得声称现有路径可承载不可信输入。
+- **校验分两层，不得含糊**（实测边界，ticket 36 §评估校核）：资产级 = 名字白名单 + 结构 + **纯度**（mbel 的名字/参数/函数体规则由注册委派给 mbel 作为唯一权威）；类型检查只覆盖**被引用闭包**（mbel 按调用点推断参数类型，"整集合类型校验"不可得）。发布期两道闸（静态检查 + Vm 编译）都在 apply 时执行。
+- **纯度黑名单 = `now`**：`builtin/time.mbt` 中唯一读宿主时钟者（`date`/`duration` 是字符串解析、`timezone` 被裁到 UTC）；扫描方向是宁可误拒（字符串字面量里的 `now` 也会被拒）。新增不确定性内建时**必须同步黑名单**并留痕。
+- **表达式语法面以 `?:` 为准**：顶层表达式不支持 `if {}` 块（Vm 编译阶段拒绝；`if` 仅在函数体内可用）。门禁已钉住两侧。
+- **版本在 apply 时绑定**：spec 引用集合**名**，`topology.json` 记录解析到的 revision；集合更新**不自动生效**，re-apply 才换绑——这条是"spec 即不可变部署"的推论，不得改成隐式热更新。
+- **错误文本有界**：错误出口截断到 `apps/transform` 的 `MAX_ERROR_CHARS`（实测深递归错误约 4.4 KB/次，逐记录失败会放大）。
 
 ## 3. 目录与包结构（MoonBit 约定）
 
@@ -144,6 +155,14 @@ moonflux/
 - **双预算**：记录数上限 + 指令数（fuel）上限随 tier 收紧；预算超限报 `BudgetExceeded`，**不**报裸 trap。fuel 是确定性计量（无时钟），重放同一批数据得到同一结果——这条与内核红线同源。
 - **失败一律 fail-closed**：算子拒绝 / trap / 预算超限都必须变成结构化错误，且**已产出的一半批次绝不落 Sink**（`scripts/crosscheck-operators.sh` 的 fail-closed 四条腿是这条纪律的门禁）。
 - **语义变更必须对拍**：任何算子语义调整都要有 native-vs-wasm 的字节级证据；测试向量放数据文件（`scripts/testdata/operator-golden.txt`，由 `tools/gen_operator_golden.py` 生成），手改即失败。
+
+### 8.2 函数集纪律（P6 起）
+
+- **资产即文档**：函数集以一份 JSON 文档部署（`function-set create --file fns.json`），字段名与 mbel JSON v1 对齐（`name`/`params`/`body`/`description`）；**未知字段一律拒绝**——一个说了平台会忽略的话的资产，是在欺骗它的评审人。
+- **参数必须声明**：资产不暴露 mbel 的自由标识符自动提取（`params: None`）——body 里的拼写错误必须在发布期失败，而不是静默变成一个参数。
+- **一个集合一个 revision**：同名 create 就是该资产的新修订（revision 单调 +1，回复说明是 deployed 还是 updated）；集合内重名、关键字名、聚合名冲突、参数重复、空 body 均由 mbel 的注册校验拒绝（唯一权威，勿另写一套规则）。
+- **逐节点资产**：函数集存在节点自己的元数据文档里（与 topic 声明同库同版本号），集群内不做分发——与现行"逐节点 apply"一致；跨节点一致性由 apply 时绑定 revision 来核对。
+- **改了资产必须 re-apply**：门禁 `scripts/e2e-p6-functions.sh` 的第 6 条腿钉住"更新后未 re-apply 行为不变"——不要把这个行为"优化"掉。
 
 ## 9. 不做清单（Anti-patterns）
 

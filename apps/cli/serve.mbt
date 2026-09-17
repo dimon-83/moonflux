@@ -135,6 +135,13 @@ fn dispatch_session_frame(
         Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
       }
     }
+    // rule assets: a standalone broker owns its own function sets,
+    // because it compiles its own applies (P6)
+    cmd if is_function_set_command(cmd) =>
+      match dispatch_function_set(frame, file_metadata_store(data_dir)) {
+        Ok(payload) => reply_frame(frame.rid, @client.CMD_OK, payload)
+        Err((code, message)) => err_frame(frame.rid, code, message)
+      }
     other =>
       err_frame(
         frame.rid,
@@ -309,6 +316,11 @@ fn handle_connection(
           Err(e) => err_reply(@client.ERR_BAD_PAYLOAD, e)
         }
       }
+      cmd if is_function_set_command(cmd) =>
+        match dispatch_function_set(frame, file_metadata_store(data_dir)) {
+          Ok(payload) => (@client.CMD_OK, payload)
+          Err((code, message)) => (code, @client.encode_error(code, message))
+        }
       other =>
         (
           @client.CMD_ERR,
@@ -609,15 +621,21 @@ fn dispatch_apply(
       return Err((@client.ERR_BAD_PAYLOAD, "invalid spec: \{sb.to_string()}"))
     }
   }
-  // publish-time static check: every transform must compile
+  // publish-time static check: every transform must compile, with any
+  // function set it references resolved from this node's store
+  let store = file_metadata_store(data_dir)
   for t in spec.transforms {
-    match compile_node(t) {
+    match compile_node(store, t) {
       Ok(_) => ()
       Err(e) => return Err((@client.ERR_TRANSFORM, e))
     }
   }
+  let function_sets = match resolved_function_sets(spec, store) {
+    Ok(sets) => sets
+    Err(e) => return Err((@client.ERR_TRANSFORM, e))
+  }
   let topology = @pipeline.compile(spec)
-  match persist_applied(data_dir, topology.pipeline, json) {
+  match persist_applied(data_dir, topology.pipeline, json, function_sets) {
     Ok(_) => ()
     Err(e) => return Err((@client.ERR_STORAGE, e))
   }

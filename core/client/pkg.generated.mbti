@@ -18,6 +18,16 @@ pub const CMD_FETCH : Int = 4
 
 pub const CMD_FETCH_COMMITTED : Int = 18
 
+pub const CMD_FETCH_PARTITION : Int = 21
+
+pub const CMD_FUNCTION_SET_CREATE : Int = 22
+
+pub const CMD_FUNCTION_SET_DELETE : Int = 25
+
+pub const CMD_FUNCTION_SET_GET : Int = 24
+
+pub const CMD_FUNCTION_SET_LIST : Int = 23
+
 pub const CMD_HEARTBEAT : Int = 8
 
 pub const CMD_HELLO : Int = 1
@@ -31,6 +41,8 @@ pub const CMD_OFFSET_INFO : Int = 13
 pub const CMD_OK : Int = 5
 
 pub const CMD_PRODUCE : Int = 3
+
+pub const CMD_PRODUCE_PARTITION : Int = 20
 
 pub const CMD_REGISTER : Int = 7
 
@@ -80,7 +92,13 @@ pub fn decode_offset_info(Bytes) -> Result[(Int64, Int64), String]
 
 pub fn decode_partition_ref(Bytes) -> Result[PartitionRef, String]
 
+pub fn decode_partition_ref_opt(Bytes) -> Result[PartitionRef, String]
+
 pub fn decode_partition_view(Bytes) -> Result[PartitionView, String]
+
+pub fn decode_partitioned_fetch(Bytes) -> Result[(String, Int, Int64, Int), String]
+
+pub fn decode_partitioned_produce(Bytes) -> Result[(String, Int, Bytes), String]
 
 pub fn decode_sync_ack(Bytes) -> Result[SyncAck, String]
 
@@ -111,6 +129,10 @@ pub fn encode_offset_info(Int64, Int64) -> Bytes
 pub fn encode_partition_ref(PartitionRef) -> Bytes
 
 pub fn encode_partition_view(PartitionView) -> Bytes
+
+pub fn encode_partitioned_fetch(String, Int, Int64, Int) -> Bytes
+
+pub fn encode_partitioned_produce(String, Int, Bytes) -> Bytes
 
 pub fn encode_sync_ack(SyncAck) -> Bytes
 
@@ -158,6 +180,7 @@ pub struct Consumer {
 pub fn Consumer::close(Self) -> Unit
 pub fn Consumer::fetch(Self, String, Int64, Int) -> Result[Array[@log.LogEntry], ClientError]
 pub fn Consumer::fetch_committed(Self, String, Int64, Int) -> Result[(Array[@log.LogEntry], Int64, Int64), ClientError]
+pub fn Consumer::fetch_partition(Self, String, Int, Int64, Int) -> Result[Array[@log.LogEntry], ClientError]
 pub fn Consumer::from_conn(Conn) -> Result[Self, ClientError]
 pub fn Consumer::session_version(Self) -> (Int, Int)
 
@@ -205,6 +228,7 @@ pub struct Producer {
 pub fn Producer::close(Self) -> Unit
 pub fn Producer::from_conn(Conn) -> Result[Self, ClientError]
 pub fn Producer::send(Self, String, Array[@protocol.Record]) -> Result[(Int64, Int), ClientError]
+pub fn Producer::send_partition(Self, String, Int, Array[@protocol.Record]) -> Result[(Int64, Int), ClientError]
 pub fn Producer::session_version(Self) -> (Int, Int)
 
 pub(all) struct SyncAck {

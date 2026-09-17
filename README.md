@@ -48,6 +48,7 @@
 | **立项评估报告 v1.6** | [`docs/fluvio-moonbit-evaluation.md`](docs/fluvio-moonbit-evaluation.md) | 七章：Fluvio 全景 / 功能详解 / 分层路径与能力缺口 / Native×WASM 后端 / mbel 评估 / 可视化编辑器 / 结论路线图 |
 | 对标参考工作规约 | [`docs/fluvio-reference-guide.md`](docs/fluvio-reference-guide.md) | 在 Fluvio 参考仓库内作业（研究/对照/互操作测试）时的 agent 硬规则（自 fluvio 仓库迁入） |
 | 兼容性矩阵 | [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) | 每个对标语义的验证状态与证据入口（图例单一真相） |
+| 算子 ABI v2 设计稿 | [`docs/operator-abi-v2-scalar.md`](docs/operator-abi-v2-scalar.md) | 不可信标量函数的沙箱路线（只设计不实现，决策 28） |
 | 算子沙箱取证 | [`docs/p2-wasm-host-spike.md`](docs/p2-wasm-host-spike.md) | wasmtime 进程内宿主的探针实证与落地实录（类型镜像尺寸、后台编译 panic） |
 | CLI 命令工具规划 | [`docs/cli-roadmap.md`](docs/cli-roadmap.md) | 命令面现状盘点 + 对标 Fluvio CLI 的分阶段映射（决策 13） |
 | mbel 表达式引擎 | [`../mbel`](../mbel) | v0.3.3；moonflux 动态规则层的候选内核（评估与生产化清单见报告第五章） |
@@ -64,6 +65,8 @@
 | **P3** | 分布式能力 | 复制（ISR 等价语义）+ 选主 + 元数据调和（本地多进程优先） | ✅ 达成（2026-09-16）：`scripts/e2e-p3-{replication,failover,nodes,metadata}.sh` 全绿——HW 只在副本确认后推进、宕机/恢复后水位一致、静默 leader 被替换（提名→自我提升→确认）、旧 leader 回归自降并字节级追平、`kill -9` 后记录数守恒 |
 | **P4** | 全平台体验 | 客户端 SDK 完备（native + js 浏览器）、Web 拖拽编辑器、部署形态（**本地单/多进程优先，K8s 可选**） | ✅ 达成（2026-09-17）：真实浏览器里 compose → deploy → run → consume 跑通（`scripts/e2e-p4-editor.sh`，4 条断言；浏览器阶段由 agent/人驱动）；客户端内核化后同一份逻辑在 native 与 wasm-gc 双后端有测试 |
 | **P5** | 并发与运维面 | 连接多路复用 + 多分区存储 + 算子管理命令面 | ✅ 达成（2026-09-17）：并发（六腿）、多分区（五腿）、算子管理（四腿）门禁全绿；**如实标注**：非 0 分区的复制与索引/retention 仍在（矩阵 #10） |
+
+| **P6** | 规则资产 | mbel 函数集：版本化规则资产（`function-set` 命令面）+ spec 按名引用 + 发布期静态检查与纯度策略 | ✅ 达成（2026-09-17）：`scripts/e2e-p6-functions.sh` 10 条断言全绿——部署/列表带单调 revision、引用缺失或越界函数在 apply 被拒、不纯函数体在部署被拒、更新后**必须 re-apply** 才换绑（revision 记入 `topology.json`）；**如实标注**：不可信标量函数不在本路径（ABI v2 设计稿见决策 28） |
 
 > **为什么 Native 先行**（2026-09-15 修订）：数据源（Source）与数据汇（Sink）需要**独立的外部读写能力**——网络 / 文件 / 协议 / MQ / 硬件直采，**WASM 沙箱不能自主 IO**，只能做宿主中介的计算；连接器与数据面又是平台的第一梯队能力，因此承载它们的 Native 必须先行。WASM 保留为"数据路径内算子沙箱"（可编程差异化），在 P2 落地；**内核全后端可编译的纪律由 CI 矩阵从第一天保持**（不依赖 WASM 先行来倒逼，见 AGENTS.md §4/§5）。
 >
@@ -115,6 +118,9 @@ moonflux/
 25. **并发由事件循环提供，不是线程（2026-09-17，P5）**：`serve` 的 accept-处理-关闭循环改为 `ConnectionHub`（`apps/cli/hub.mbt`）——poll 所有连接，只推进有数据的那个；**半个帧留在缓冲里等下一轮**，写侧按 socket 可写性排空（`send_some` 返回 0 即"满了，下一轮再写"），因此一个只连不读或只写不读的对端都不能拖慢别人。适配层为此新增 `set_nonblocking` / `recv_some` / `send_some` / `poll_readable`，其中**"would-block ≠ EOF ≠ 错误"三者可区分**是正确性前提（有单测钉住）。**不引入线程/async**：节点仍是"服务 + 定时家务"的单线程循环（AGENTS §1.2）。**慢客户端策略**：outbox 超 8MiB 判定对端不读并带日志断开（不能让它吃内存）。**`spu`/`sc` 仍有意单连接**（对端已知且少：控制面 + 该分区 follower 轮流拉取），已在代码注明而非默默不同。
 26. **跨语言与工具链的三条实测事实（2026-09-17，P4/P5 期间）**：js 目标里 **`Int64` 是 BigInt**（传 number 会在内核内抛异常并静默中断调用方——浏览器编辑器踩过）、**`Bytes` 是 `Uint8Array`**；**wasm-gc 模块无法被 JS 直接调用**（其 `Bytes`/`String` 是自身 GC 堆内的引用类型、不导出线性内存、无宿主胶水），因此要给浏览器 API 就用 `is-main` + `link: { "js": { "exports": [...] } }` 编译到 js（库包不产出 js 制品）；`pub using` 只能在源码里、可再导出类型与函数但**不可**再导出枚举构造器，且**不可**为外部类型定义方法（传输构造器因此是自由函数）。这些是工具链事实而非偏好，写进 AGENTS 的纪律块以避免重复踩。
 
+27. **函数集 = 版本化规则资产（2026-09-17，P6）**：mbel 的表达式体自定义函数以**资产**形态进入平台——一份 JSON 文档部署到节点（`function-set create|get|list|delete`，协议命令 22–25），集合带**单调 revision**，spec 的表达式节点按**名**引用（`$.spec.transforms[i].functions`），apply 时解析并绑定：解析到的 revision 写进 `topology.json`，更新集合**必须 re-apply** 才生效。**与算子体系治理同构**（工件化 / 版本化 / 发布期校验 / 预算 / fail-closed），区别只在运行时位置（宿主侧 mbel vs wasmtime 沙箱），而这个区别由**信任边界**决定：函数集是经评审的平台资产（**不可信标量函数的终态是决策 28 的 ABI v2**，本路径不得被当作沙箱用）。**校验分两层并留痕**（实测，ticket 36 §评估校核）：*资产级* = 名字白名单 + 结构 + 纯度（mbel 的名字/参数/函数体规则以注册委派给 mbel 为唯一权威）；*类型* = 只覆盖被引用闭包——mbel 按调用点推断参数类型，"整集合类型校验"不可得，故不承诺。**纯度**：拒绝 `now`（`builtin/time.mbt` 中唯一读宿主时钟者；`date`/`duration` 是字符串解析、`timezone` 裁到 UTC），文本 token 扫描、宁可误拒。**语法面实测**：顶层表达式用三元 `?:`，`if {}` 块只在函数体内合法（Vm 编译阶段拒绝）——门禁两侧都钉。**两个工程发现**：深递归错误文本约 4.4 KB/次，错误出口统一截断到 `apps/transform.MAX_ERROR_CHARS`；`node.mbt` 的 HELLO 曾把*帧*版本号当*协议主版本*发送（`serve` 校验时暴露，已修）。
+28. **ABI v2 标量调用设计稿（2026-09-17，P6；只设计不实现）**：不可信标量函数的路线是 ABI v1 的**加法扩展**——7 个批导出不动，新增可选标量导出（`mf_op_scalar_abi_version` / `mf_op_eval`），宿主侧按 `{函数名 → 模块, 预算}` 注册表逐调用执行，request 首版为 JSON `{"fn","args"}`；确定性仍由 guest 无导入**结构性**保证。**触发条件**：出现"用户提交的标量函数"需求（多租户扩展）。设计、开放问题与不实现声明见 [`docs/operator-abi-v2-scalar.md`](docs/operator-abi-v2-scalar.md)；**本里程碑不实现 ABI v2、不做 mbel-in-guest、不做函数集集群分发、编辑器不加函数集 UI**。
+
 ## 待办（下一步）
 
 - [x] `git init` 与远端仓库（如需）（远端待配）
@@ -123,6 +129,9 @@ moonflux/
 - [x] P1 达成：mbel 表达式 transforms 接入消费路径 + 版本化协议服务化 + 连接器框架（2026-09-15）
 - [x] P2 达成：算子 guest SDK + ABI v1 + wasmtime 进程内宿主 + native-vs-wasm 对拍门禁（2026-09-16）
 - [x] P3 达成：复制（LRS 等价语义）+ 选主 + 元数据调和，本地多进程最小集群（`sc` + `spu`×2），故障注入门禁全绿（2026-09-16）
+- [x] P4 达成：客户端内核化 + 同端口 WS 网关 + Web 拖拽编辑器（真实浏览器闭环）（2026-09-17）
+- [x] P5 达成：连接多路复用 + 多分区存储与数据路径 + 算子管理命令面（2026-09-17）
+- [x] P6 达成：mbel 函数集作为版本化规则资产（命令面 + spec 引用 + 发布期拦截 + re-apply 换绑），`scripts/e2e-p6-functions.sh` 10 条断言全绿（2026-09-17）
 - [x] P4 达成：浏览器传输（WS 网关）+ 客户端内核化 + Web 编辑器（真实浏览器端到端门禁）（2026-09-17）
 - [x] P5 之首：连接多路复用（poll 事件循环；P4 编辑器门禁的断言阶段已可在浏览器连接打开时通过）（2026-09-17）
 - [x] P5 达成：连接多路复用 + 多分区存储与按分区读写 + 算子管理 CLI（2026-09-17）

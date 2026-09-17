@@ -100,3 +100,158 @@ test "the local backend round trips through a file" {
   }
   let _ = @fs.remove_file("\{dir}/metadata.json")
 }
+
+// ---------------------------------------------------------------------
+// Function sets (P6): rule assets. The rules under test are the asset
+// lifecycle (revision monotonic, upsert reporting, delete misses) and
+// the validation that decides what may become an asset at all.
+
+///|
+fn fn_def(
+  name : String,
+  params : Array[String],
+  body : String,
+) -> ClusterMetadataFunction {
+  ClusterMetadataFunction::{ name, params, body, description: None }
+}
+
+///|
+test "a function set is created at revision 1 and updated in place" {
+  let store = memory_metadata_store()
+  let first = match
+    create_function_set(store, "pricing", [
+      fn_def("tax", ["price", "rate"], "price * rate"),
+    ]) {
+    Ok(set) => set
+    Err(e) => abort("create: \{e}")
+  }
+  assert_eq(first.revision, 1L)
+  // an update is a new revision of the same asset, not a second asset
+  let second = match
+    create_function_set(store, "pricing", [
+      fn_def("tax", ["price"], "price * 1.2"),
+    ]) {
+    Ok(set) => set
+    Err(e) => abort("update: \{e}")
+  }
+  assert_eq(second.revision, 2L)
+  let listed = match list_function_sets(store) {
+    Ok(sets) => sets
+    Err(e) => abort("list: \{e}")
+  }
+  assert_eq(listed.length(), 1)
+  assert_eq(listed[0].revision, 2L)
+  assert_eq(listed[0].functions[0].body, "price * 1.2")
+}
+
+///|
+test "function sets and topics share one document and one version" {
+  let store = memory_metadata_store()
+  let _ = create_topic(store, decl("orders", 1, 1))
+  let _ = create_function_set(store, "pricing", [fn_def("tax", ["p"], "p")])
+  // a topic write must not drop the function sets, and vice versa
+  let after_delete = match delete_topic(store, "orders") {
+    Ok(metadata) => metadata
+    Err(e) => abort("delete: \{e}")
+  }
+  assert_eq(after_delete.function_sets.length(), 1)
+  assert_eq(after_delete.version, 3L)
+  let _ = delete_function_set(store, "pricing")
+  let listed = match list_function_sets(store) {
+    Ok(sets) => sets
+    Err(e) => abort("list: \{e}")
+  }
+  assert_eq(listed.length(), 0)
+}
+
+///|
+test "validation refuses bad assets and writes nothing" {
+  let store = memory_metadata_store()
+  // names go through the project's one whitelist
+  assert_true(
+    create_function_set(store, "Pricing V2", [fn_def("tax", ["p"], "p")])
+    is Err(Rejected(_)),
+  )
+  assert_true(
+    create_function_set(store, "", [fn_def("tax", ["p"], "p")])
+    is Err(Rejected(_)),
+  )
+  // an empty set is not an asset
+  assert_true(create_function_set(store, "empty", []) is Err(Rejected(_)))
+  // mbel's name and parameter rules are the authority
+  assert_true(
+    create_function_set(store, "kws", [fn_def("if", ["p"], "p")])
+    is Err(Rejected(_)),
+  )
+  assert_true(
+    create_function_set(store, "dups", [
+      fn_def("tax", ["p"], "p"),
+      fn_def("tax", ["q"], "q"),
+    ])
+    is Err(Rejected(_)),
+  )
+  assert_true(
+    create_function_set(store, "badbody", [fn_def("tax", ["p"], "upper(")])
+    is Err(Rejected(_)),
+  )
+  // purity: the clock builtin may appear nowhere in a rule asset
+  assert_true(
+    create_function_set(store, "impure", [fn_def("tax", ["p"], "now")])
+    is Err(Rejected(_)),
+  )
+  // and none of those attempts left a set behind
+  assert_eq(
+    match list_function_sets(store) {
+      Ok(sets) => sets.length()
+      Err(_) => -1
+    },
+    0,
+  )
+}
+
+///|
+test "the asset document is parsed with unknown fields refused" {
+  let good = "{\"name\":\"pricing\",\"version\":1,\"functions\":[{\"name\":\"tax\",\"params\":[\"p\"],\"body\":\"p * 1.2\",\"description\":\"vat\"}]}"
+  match parse_function_set_asset(good) {
+    Ok((name, functions)) => {
+      assert_eq(name, "pricing")
+      assert_eq(functions.length(), 1)
+      assert_eq(functions[0].params, ["p"])
+      assert_eq(functions[0].description, Some("vat"))
+    }
+    Err(e) => abort("parse: \{e}")
+  }
+  // a document that says something the platform ignores is refused:
+  // an asset must not lie to its reviewer
+  let unknown = "{\"name\":\"pricing\",\"env\":{},\"functions\":[]}"
+  assert_true(parse_function_set_asset(unknown) is Err(Rejected(_)))
+  let bad_field = "{\"name\":\"pricing\",\"functions\":[{\"name\":\"tax\",\"bo dy\":\"p\"}]}"
+  assert_true(parse_function_set_asset(bad_field) is Err(Rejected(_)))
+  let not_json = "{"
+  assert_true(parse_function_set_asset(not_json) is Err(Corrupt(_)))
+  // mbel's playground version marker is accepted, and only as 1
+  let v2 = "{\"name\":\"pricing\",\"version\":2,\"functions\":[{\"name\":\"tax\",\"params\":[\"p\"],\"body\":\"p\"}]}"
+  assert_true(parse_function_set_asset(v2) is Err(Rejected(_)))
+}
+
+///|
+test "function sets survive a file round trip" {
+  let dir = "/tmp/moonflux_metadata_fnset_test"
+  let _ = @fs.remove_file(dir)
+  let store = file_metadata_store(dir)
+  let _ = create_function_set(store, "pricing", [
+    fn_def("tax", ["price", "rate"], "price * rate"),
+  ])
+  let reopened = file_metadata_store(dir)
+  let got = match get_function_set(reopened, "pricing") {
+    Ok(set) => set
+    Err(e) => abort("get: \{e}")
+  }
+  assert_eq(got.name, "pricing")
+  assert_eq(got.revision, 1L)
+  assert_eq(got.functions[0].params, ["price", "rate"])
+  // a miss is a rejection, not an empty asset
+  assert_true(get_function_set(reopened, "nope") is Err(Rejected(_)))
+  assert_true(delete_function_set(reopened, "nope") is Err(Rejected(_)))
+  let _ = @fs.remove_file("\{dir}/metadata.json")
+}

@@ -40,7 +40,11 @@ pub(all) enum SourceSpec {
 /// sandbox ABI (per batch, P2) with the operator's own JSON config.
 /// Both execute on the consumption path.
 pub(all) enum TransformSpec {
-  ExprTransform(String)
+  /// expression + the function set it may call ("" = no set). The
+  /// reference sits on the node that uses it, not on the spec as a
+  /// whole: a pipeline's transforms are independently authored, and a
+  /// global key would quietly apply to nodes that never call it.
+  ExprTransform(String, String)
   /// module path + operator config (compact JSON text, "{}" = none)
   WasmTransform(String, String)
 } derive(Debug, Eq, Show)
@@ -292,7 +296,7 @@ fn parse_body(
           reject_unknown_keys(
             path,
             t,
-            ["type", "expr", "module", "config"],
+            ["type", "expr", "functions", "module", "config"],
             errors,
           )
           match t.get("type") {
@@ -306,7 +310,32 @@ fn parse_body(
                       message: "expr must not be empty",
                     })
                   } else {
-                    out.push(ExprTransform(expr))
+                    // the function-set reference is optional; when
+                    // present it must name something, and the apply
+                    // is what checks the name resolves (P6)
+                    let functions = match t.get("functions") {
+                      None => ""
+                      Some(String(name)) =>
+                        if name.length() == 0 {
+                          errors.push(SpecError::{
+                            path: "\{path}.functions",
+                            code: "bad-value",
+                            message: "functions must name a function set",
+                          })
+                          ""
+                        } else {
+                          name
+                        }
+                      Some(_) => {
+                        errors.push(SpecError::{
+                          path: "\{path}.functions",
+                          code: "bad-type",
+                          message: "functions must be a string (a function set name)",
+                        })
+                        ""
+                      }
+                    }
+                    out.push(ExprTransform(expr, functions))
                   }
                 _ =>
                   errors.push(SpecError::{

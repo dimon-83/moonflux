@@ -25,14 +25,76 @@ fn RuleState::new() -> RuleState {
 }
 
 ///|
-/// Compiles one spec transform node into a runnable node.
-fn compile_node(t : @spec.TransformSpec) -> Result[CompiledNode, String] {
+/// Resolves the function sets a spec's expression transforms
+/// reference, in name order: `(name, revision)` pairs, which is what
+/// the applied topology records so an operator can see which revision
+/// a running pipeline was compiled against.
+/// A reference that does not resolve fails the apply — publish time,
+/// never mid-stream.
+fn resolved_function_sets(
+  spec : @spec.PipelineSpec,
+  store : MetadataStore,
+) -> Result[Array[(String, Int64)], String] {
+  let names : Array[String] = []
+  for t in spec.transforms {
+    let name = match t {
+      @spec.ExprTransform(_expr, functions) => functions
+      @spec.WasmTransform(_module_id, _config) => ""
+    }
+    if name != "" {
+      let mut seen = false
+      for other in names {
+        if other == name {
+          seen = true
+        }
+      }
+      if !seen {
+        names.push(name)
+      }
+    }
+  }
+  names.sort_by(fn(a, b) { a.compare(b) })
+  let out : Array[(String, Int64)] = []
+  for name in names {
+    match get_function_set(store, name) {
+      Ok(set) => out.push((name, set.revision))
+      Err(e) => return Err("function set \{name}: \{e}")
+    }
+  }
+  Ok(out)
+}
+
+///|
+/// Compiles one spec transform node into a runnable node. An
+/// expression node that references a function set resolves it from the
+/// local metadata store first: the set's functions are registered
+/// before the publish-time static check, so a reference to a name the
+/// set does not define is rejected at apply (README 决策 30).
+fn compile_node(
+  store : MetadataStore,
+  t : @spec.TransformSpec,
+) -> Result[CompiledNode, String] {
   match t {
-    ExprTransform(expr) =>
-      match @transform.compile(expr) {
+    ExprTransform(expr, set_name) => {
+      let functions : Array[@transform.RuleFunction] = []
+      if set_name != "" {
+        let set = match get_function_set(store, set_name) {
+          Ok(set) => set
+          Err(e) => return Err("function set \{set_name}: \{e}")
+        }
+        for f in set.functions {
+          functions.push(@transform.RuleFunction::{
+            name: f.name,
+            params: f.params,
+            body: f.body,
+          })
+        }
+      }
+      match @transform.compile_with(expr, functions) {
         Ok(compiled) => Ok(Mbel(compiled))
         Err(e) => Err("transform \"\{expr}': \{e}")
       }
+    }
     WasmTransform(module_id, config) => {
       let engine = @wasmtime.operator_engine(fn(path) {
         match @fs.read_file(path) {
@@ -125,9 +187,10 @@ fn load_chain_from_topology(
     Some(applied) => applied
     None => return Ok(("", []))
   }
+  let store = file_metadata_store(data_dir)
   let chain : Array[CompiledNode] = []
   for t in applied.spec.transforms {
-    match compile_node(t) {
+    match compile_node(store, t) {
       Ok(node) => chain.push(node)
       Err(e) => return Err(e)
     }

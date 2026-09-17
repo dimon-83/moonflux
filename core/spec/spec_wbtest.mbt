@@ -24,9 +24,34 @@ test "spec with one expr transform validates (execution is P1)" {
   match parse_spec(text) {
     Ok(spec) => {
       assert_eq(spec.transforms.length(), 1)
-      assert_true(spec.transforms[0] is ExprTransform(".value | upper()"))
+      assert_true(spec.transforms[0] is ExprTransform(".value | upper()", ""))
     }
     Err(errors) => abort("transform spec rejected: \{errors}")
+  }
+}
+
+///|
+test "an expr transform may reference a function set" {
+  let text = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"in.txt\"},\"transforms\":[{\"type\":\"expr\",\"expr\":\"shout(value)\",\"functions\":\"pricing\"}],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(text) {
+    Ok(spec) =>
+      assert_true(
+        spec.transforms[0] is ExprTransform("shout(value)", "pricing"),
+      )
+    Err(errors) => abort("transform spec rejected: \{errors}")
+  }
+  // an empty name is a mistake, not a shorthand: the reference must
+  // resolve, and resolution is what apply checks
+  let empty = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"in.txt\"},\"transforms\":[{\"type\":\"expr\",\"expr\":\"value\",\"functions\":\"\"}],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(empty) {
+    Err(errors) => assert_eq(errors[0].code, "bad-value")
+    Ok(_) => abort("empty functions name accepted")
+  }
+  // a non-string is a type error, reported at its own path
+  let wrong_type = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"in.txt\"},\"transforms\":[{\"type\":\"expr\",\"expr\":\"value\",\"functions\":42}],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(wrong_type) {
+    Err(errors) => assert_eq(errors[0].code, "bad-type")
+    Ok(_) => abort("non-string functions accepted")
   }
 }
 

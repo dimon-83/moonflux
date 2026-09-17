@@ -117,6 +117,23 @@ pub const CMD_PRODUCE_PARTITION = 20
 pub const CMD_FETCH_PARTITION = 21
 
 ///|
+/// Function-set assets (P6): the rule assets a pipeline's expression
+/// transforms can reference. Same additive pattern as the topic verbs —
+/// a control-plane asset with create/list/get/delete, carried as JSON
+/// text so the asset document is the payload (nothing about the
+/// document shape belongs in the frame layer).
+pub const CMD_FUNCTION_SET_CREATE = 22
+
+///|
+pub const CMD_FUNCTION_SET_LIST = 23
+
+///|
+pub const CMD_FUNCTION_SET_GET = 24
+
+///|
+pub const CMD_FUNCTION_SET_DELETE = 25
+
+///|
 /// Deploys a pipeline document to the broker: the same work
 /// `pipeline apply` does locally (validate, compile, persist), so the
 /// editor can close its loop - drag a pipeline, deploy it, produce,
