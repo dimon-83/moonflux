@@ -22,9 +22,10 @@ fn cmd_cluster(argv : Array[String]) -> Unit {
     "status" => cluster_status(rest)
     "leader" => cluster_leader(rest)
     "offsets" => cluster_offsets(rest)
+    "segments" => cluster_segments(rest)
     _ =>
       fail(
-        "cluster: unknown verb '\{verb}' (known: nodes, status, leader, offsets)",
+        "cluster: unknown verb '\{verb}' (known: nodes, status, leader, offsets, segments)",
       )
   }
 }
@@ -128,6 +129,39 @@ fn parse_partition_flag(text : String) -> Int {
     Ok(n) if n >= 0 => n
     _ => fail("--partition expects a non-negative integer, got \{text}")
   }
+}
+
+///|
+/// `moonflux cluster segments --topic T [--partition N] --remote <node>`
+/// — the partition's segments, oldest first: which offsets each covers
+/// and how many bytes it costs. Asked of the node that holds the
+/// partition, because the disk is that node's fact (P8).
+fn cluster_segments(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let remote = flags.require("remote")
+  let topic = flags.require("topic")
+  let partition = match flags.get("partition") {
+    Some(text) => parse_partition_flag(text)
+    None => 0
+  }
+  let ref = @client.PartitionRef::{ topic, partition }
+  let payload = match
+    control_call(
+      remote,
+      @client.CMD_SEGMENTS,
+      @client.encode_partition_ref(ref),
+    ) {
+    Ok(payload) => payload
+    Err(e) => fail("cluster segments: \{e}")
+  }
+  let segments = match @client.decode_wire_segments(payload) {
+    Ok(segments) => segments
+    Err(e) => fail("cluster segments: \{e}")
+  }
+  for seg in segments {
+    println("\{seg.base}\t\{seg.records}\t\{seg.bytes}")
+  }
+  cli_exit(0)
 }
 
 ///|

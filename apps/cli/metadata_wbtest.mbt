@@ -255,3 +255,39 @@ test "function sets survive a file round trip" {
   assert_true(delete_function_set(reopened, "nope") is Err(Rejected(_)))
   let _ = @fs.remove_file("\{dir}/metadata.json")
 }
+
+///|
+test "the storage policy knobs read the environment" {
+  // The app reads its policy from the environment (P8). The gate sets
+  // these on a real process; here the process sets them on itself, so
+  // the test proves the wiring without depending on the ambient
+  // environment it happens to run in.
+  @env.set_env_var("MOONFLUX_ROLL_BYTES", "41")
+  @env.set_env_var("MOONFLUX_INDEX_EVERY", "7")
+  @env.set_env_var("MOONFLUX_RETAIN_BYTES", "4096")
+  @env.set_env_var("MOONFLUX_RETAIN_MS", "60000")
+  @env.set_env_var("MOONFLUX_ROLL_MS", "30000")
+  assert_eq(roll_bytes(), 41)
+  assert_eq(index_every_records(), 7)
+  let policy = retention_policy()
+  assert_eq(policy.max_bytes, 4096)
+  assert_eq(policy.max_age_ms, 60000L)
+  assert_eq(roll_after_ms(), 30000L)
+  // nonsense falls back to the default rather than to something
+  // surprising: a typo must not silently turn rolling off or on
+  @env.set_env_var("MOONFLUX_ROLL_BYTES", "not a number")
+  assert_eq(roll_bytes(), DEFAULT_ROLL_BYTES)
+  @env.set_env_var("MOONFLUX_RETAIN_BYTES", "-5")
+  assert_eq(retention_policy().max_bytes, 0)
+  // and with the knobs removed the policy is simply off
+  @env.unset_env_var("MOONFLUX_ROLL_BYTES")
+  @env.unset_env_var("MOONFLUX_INDEX_EVERY")
+  @env.unset_env_var("MOONFLUX_RETAIN_BYTES")
+  @env.unset_env_var("MOONFLUX_RETAIN_MS")
+  @env.unset_env_var("MOONFLUX_ROLL_MS")
+  assert_eq(roll_bytes(), DEFAULT_ROLL_BYTES)
+  assert_eq(index_every_records(), 64)
+  assert_eq(retention_policy().max_bytes, 0)
+  assert_eq(retention_policy().max_age_ms, 0L)
+  assert_eq(roll_after_ms(), 0L)
+}

@@ -451,7 +451,7 @@ struct LogSegment {
   base : Int64
   file : SegmentFile
   mut size : Int
-  created_ms : Int64
+  mut created_ms : Int64
   /// sparse anchors, ascending; [0] is always (base, 0)
   mut anchors : Array[IndexAnchor]
   /// whether the on-disk index matches `anchors`
@@ -764,10 +764,15 @@ fn SegmentedLog::segment_index_for(self : SegmentedLog, offset : Int64) -> Int? 
 
 ///|
 /// Rolls to a fresh segment when the active one has reached the
-/// threshold. Rolling happens **after** a successful append, so a
-/// boundary is always a frame boundary and a crash here leaves an
-/// empty segment that `open_store` drops.
-fn SegmentedLog::maybe_roll(self : SegmentedLog) -> Result[Unit, LogError] {
+/// threshold — checked **before** a frame is written, which is both the
+/// standard formulation ("this segment is full, start the next") and
+/// the only one that survives a log that is reopened per request: a
+/// roll *after* the last append leaves an empty trailing segment, and
+/// the next open drops it as a crash artifact, so the next batch would
+/// land back in the old segment and the threshold would never take
+/// effect. Rolling before the write keeps the old segment exactly as
+/// full as it was.
+fn SegmentedLog::roll_if_full(self : SegmentedLog) -> Result[Unit, LogError] {
   if self.roll_bytes <= 0 {
     return Ok(())
   }
@@ -998,6 +1003,10 @@ pub fn SegmentedLog::append(
   if frame.length() > @protocol.MAX_BATCH_BYTES {
     return Err(BatchTooLarge)
   }
+  match self.roll_if_full() {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
   let seg = self.active()
   self.maybe_anchor()
   let new_size = match (seg.file.append)(frame) {
@@ -1011,10 +1020,7 @@ pub fn SegmentedLog::append(
     Ok(_) => ()
     Err(e) => return Err(e)
   }
-  match self.maybe_roll() {
-    Ok(_) => Ok(base)
-    Err(e) => Err(e)
-  }
+  Ok(base)
 }
 
 ///|
@@ -1233,6 +1239,12 @@ pub fn SegmentedLog::append_raw(
           return Err(OffsetOutOfRange)
         }
         let after = reader.position()
+        // roll before each frame, exactly as the leader did when it
+        // stored them: the two nodes segment identically
+        match self.roll_if_full() {
+          Ok(_) => ()
+          Err(e) => return Err(e)
+        }
         let seg = self.active()
         self.maybe_anchor()
         let new_size = match (seg.file.append)(bytes[before:after].to_owned()) {
@@ -1248,10 +1260,6 @@ pub fn SegmentedLog::append_raw(
         // caught this: rolling silently reused base 0)
         self.next_offset = next
         match (seg.file.flush)() {
-          Ok(_) => ()
-          Err(e) => return Err(e)
-        }
-        match self.maybe_roll() {
           Ok(_) => ()
           Err(e) => return Err(e)
         }
@@ -1291,6 +1299,164 @@ fn SegmentedLog::drop_segments_after(
     }
   }
   Ok(dropped_bytes)
+}
+
+///|
+/// When the log may drop its oldest data. Both bounds are policy:
+/// zero means "no bound", and the caller supplies the clock — the
+/// kernel never reads one (AGENTS §5).
+pub(all) struct RetentionPolicy {
+  /// Keep at most this many bytes of segments. 0 = unbounded.
+  max_bytes : Int
+  /// Drop segments older than this. 0 = unbounded.
+  max_age_ms : Int64
+} derive(Debug, Eq, Show)
+
+///|
+/// What retention removed. Reported per segment, because "the log got
+/// smaller" is not an operable statement — an operator needs to know
+/// which offsets left and how much disk that freed.
+pub(all) struct RetainReport {
+  removed : Array[SegmentSummary]
+  removed_records : Int64
+  removed_bytes : Int
+} derive(Debug, Eq, Show)
+
+///|
+/// Applies retention: whole segments whose **end offset is at or below
+/// `floor`** may be dropped, oldest first, until the byte bound is met
+/// and/or the age bound excludes them. `floor` is the caller's
+/// judgement about what nobody needs any more (the committed prefix in
+/// this project); the kernel refuses to guess it, because guessing
+/// wrong here destroys data.
+///
+/// The active segment is never dropped: a log whose write target just
+/// disappeared is not a smaller log, it is a broken one.
+pub fn SegmentedLog::apply_retention(
+  self : SegmentedLog,
+  floor : Int64,
+  now_ms : Int64,
+  policy : RetentionPolicy,
+) -> Result[RetainReport, LogError] {
+  let empty = RetainReport::{
+    removed: [],
+    removed_records: 0L,
+    removed_bytes: 0,
+  }
+  if policy.max_bytes <= 0 && policy.max_age_ms <= 0 {
+    return Ok(empty)
+  }
+  // the stamps come from the store (mtime), refreshed on this cadence
+  // rather than guessed when a segment is created: the kernel has no
+  // clock to stamp with
+  match self.refresh_created_stamps() {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
+  let mut total = 0
+  for seg in self.segments {
+    total += seg.size
+  }
+  let removed : Array[SegmentSummary] = []
+  let mut removed_bytes = 0
+  let mut removed_records : Int64 = 0L
+  // the active segment is never dropped: a log whose write target just
+  // disappeared is not a smaller log, it is a broken one
+  while self.segments.length() > 1 {
+    let seg = self.segments[0]
+    // this segment's end is the next one's base — bases are the chain
+    let end = self.segments[1].base
+    if end > floor {
+      // replication (or the caller's floor) still wants this data
+      break
+    }
+    let over_bytes = policy.max_bytes > 0 &&
+      total - removed_bytes > policy.max_bytes
+    let too_old = policy.max_age_ms > 0 &&
+      now_ms - seg.created_ms >= policy.max_age_ms
+    if !over_bytes && !too_old {
+      break
+    }
+    match (self.store.remove)(seg.base) {
+      Ok(_) => ()
+      Err(e) => return Err(e)
+    }
+    removed.push(SegmentSummary::{
+      base: seg.base,
+      records: end - seg.base,
+      bytes: seg.size,
+    })
+    removed_bytes += seg.size
+    removed_records += end - seg.base
+    let kept : Array[LogSegment] = []
+    for i = 1; i < self.segments.length(); i = i + 1 {
+      kept.push(self.segments[i])
+    }
+    self.segments.clear()
+    for kept_seg in kept {
+      self.segments.push(kept_seg)
+    }
+  }
+  Ok(RetainReport::{ removed, removed_records, removed_bytes })
+}
+
+///|
+/// Re-reads the creation stamps from the store. Called on the retention
+/// cadence: the store owns the wall clock (file mtime), and a segment
+/// created inline by a roll has no stamp of its own until this runs.
+fn SegmentedLog::refresh_created_stamps(
+  self : SegmentedLog,
+) -> Result[Unit, LogError] {
+  let infos = match (self.store.list)() {
+    Ok(infos) => infos
+    Err(e) => return Err(e)
+  }
+  for info in infos {
+    for i = 0; i < self.segments.length(); i = i + 1 {
+      if self.segments[i].base == info.base {
+        self.segments[i].created_ms = info.created_ms
+      }
+    }
+  }
+  Ok(())
+}
+
+///|
+/// Rolls when the active segment is older than `max_age_ms` and has
+/// content. Called from housekeeping, so the clock is the caller's.
+pub fn SegmentedLog::roll_due(
+  self : SegmentedLog,
+  now_ms : Int64,
+  max_age_ms : Int64,
+) -> Result[Bool, LogError] {
+  if max_age_ms <= 0 {
+    return Ok(false)
+  }
+  match self.refresh_created_stamps() {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
+  let active = self.active()
+  if active.size == 0 {
+    return Ok(false)
+  }
+  if now_ms - active.created_ms < max_age_ms {
+    return Ok(false)
+  }
+  let file = match (self.store.open_segment)(self.next_offset) {
+    Ok(file) => file
+    Err(e) => return Err(e)
+  }
+  self.save_index(active)
+  self.segments.push(LogSegment::{
+    base: self.next_offset,
+    file,
+    size: 0,
+    created_ms: now_ms,
+    anchors: [IndexAnchor::{ offset: self.next_offset, position: 0 }],
+    index_saved: true,
+  })
+  Ok(true)
 }
 
 ///|

@@ -720,3 +720,170 @@ test "index anchors are frame boundaries and cover every segment" {
     assert_true(index_bytes.length() < 200)
   }
 }
+
+// ---------------------------------------------------------------------
+// Retention (P8/T46). The rule under test is the one that destroys
+// data, so its guards get the most attention: whole segments only,
+// never the active one, and never past the floor the caller supplies.
+
+///|
+test "retention drops whole segments below the floor and reports them" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  for i = 0; i < 12; i = i + 1 {
+    let _ = log.append([rec("r\{i}")])
+  }
+  let bases = store.bases()
+  assert_true(bases.length() >= 3)
+  let before = log.segment_summaries()
+  assert_eq(log.first_offset(), 0L)
+  // the floor is everything committed *except* the newest record: with
+  // one record per segment (roll threshold 40), that keeps exactly the
+  // segment holding the uncommitted record
+  let floor = log.high_watermark() - 1L
+  let mut survivor_base = before[0].base
+  let mut survivors = 0
+  for summary in before {
+    if summary.base + summary.records > floor {
+      if survivors == 0 {
+        survivor_base = summary.base
+      }
+      survivors += 1
+    }
+  }
+  let report = match
+    log.apply_retention(floor, 0L, @log.RetentionPolicy::{
+      max_bytes: 1,
+      max_age_ms: 0L,
+    }) {
+    Ok(report) => report
+    Err(e) => abort("retention: \{e}")
+  }
+  // every segment whose end is at or below the floor went, and each
+  // removal is named
+  assert_eq(report.removed.length(), before.length() - survivors)
+  assert_true(report.removed_bytes > 0)
+  assert_true(report.removed_records > 0)
+  // what survives is exactly the segments above the floor
+  assert_eq(store.bases().length(), survivors)
+  assert_eq(log.first_offset(), survivor_base)
+  // reads below the new start are refused — "it is gone" is not
+  // "it is empty"
+  assert_true(log.read(0L, 1) is Err(OffsetOutOfRange))
+  // and the survivors still read correctly, from the first one on
+  let entries = match log.read(survivor_base, 100) {
+    Ok(entries) => entries
+    Err(e) => abort("read after retention: \{e}")
+  }
+  let surviving_records = log
+    .segment_summaries()
+    .fold(init=0, fn(acc, summary) { acc + summary.records.to_int() })
+  assert_eq(entries.length(), surviving_records)
+  assert_eq(entries[0].offset, survivor_base)
+}
+
+///|
+test "the floor stops retention, and the active segment is never dropped" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  for i = 0; i < 12; i = i + 1 {
+    let _ = log.append([rec("f\{i}")])
+  }
+  let summaries = log.segment_summaries()
+  assert_true(summaries.length() >= 3)
+  // floor = the end of the first segment: only that one may go
+  let floor = summaries[0].base + summaries[0].records
+  let report = match
+    log.apply_retention(floor, 0L, @log.RetentionPolicy::{
+      max_bytes: 1,
+      max_age_ms: 0L,
+    }) {
+    Ok(report) => report
+    Err(e) => abort("retention: \{e}")
+  }
+  assert_eq(report.removed.length(), 1)
+  assert_eq(report.removed[0].base, summaries[0].base)
+  // a floor at zero removes nothing at all
+  let none = match
+    log.apply_retention(0L, 0L, @log.RetentionPolicy::{
+      max_bytes: 1,
+      max_age_ms: 0L,
+    }) {
+    Ok(report) => report
+    Err(e) => abort("retention: \{e}")
+  }
+  assert_eq(none.removed.length(), 0)
+  // and a policy that is off removes nothing, whatever the floor says
+  let off = match
+    log.apply_retention(log.high_watermark(), 0L, @log.RetentionPolicy::{
+      max_bytes: 0,
+      max_age_ms: 0L,
+    }) {
+    Ok(report) => report
+    Err(e) => abort("retention: \{e}")
+  }
+  assert_eq(off.removed.length(), 0)
+}
+
+///|
+test "age-based retention and rolling use the store's stamps" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  for i = 0; i < 8; i = i + 1 {
+    let _ = log.append([rec("t\{i}")])
+  }
+  let bases = store.bases()
+  assert_true(bases.length() >= 2)
+  // stamp the sealed segments as old, the active one as fresh
+  for i = 0; i < bases.length() - 1; i = i + 1 {
+    store.set_created_ms(bases[i], 1000L)
+  }
+  store.set_created_ms(bases[bases.length() - 1], 5000L)
+  let report = match
+    log.apply_retention(log.high_watermark(), 6000L, @log.RetentionPolicy::{
+      max_bytes: 0,
+      max_age_ms: 2000L,
+    }) {
+    Ok(report) => report
+    Err(e) => abort("retention: \{e}")
+  }
+  // the old sealed segments went; the fresh active one stayed
+  assert_true(report.removed.length() >= 1)
+  assert_eq(store.bases().length(), 1)
+  // age-based rolling needs an active segment with data in it: rolling
+  // an empty segment would produce nothing. Use a non-rolling log so
+  // the active segment holds everything.
+  let rolling_store = @log.MemorySegmentStore::new()
+  let rolling = match
+    @log.SegmentedLog::open_store_configured(rolling_store.store(), 0, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  for i = 0; i < 4; i = i + 1 {
+    let _ = rolling.append([rec("y\{i}")])
+  }
+  // a fresh segment does not roll
+  rolling_store.set_created_ms(0L, 6000L)
+  assert_eq(rolling.roll_due(6000L, 2000L), Ok(false))
+  // a stale one does, and the new segment starts at the log's end
+  rolling_store.set_created_ms(0L, 1000L)
+  assert_eq(rolling.roll_due(6000L, 2000L), Ok(true))
+  assert_eq(rolling_store.bases().length(), 2)
+  assert_eq(rolling.high_watermark(), 4L)
+  assert_eq(rolling.segment_summaries()[1].base, 4L)
+  assert_eq(rolling.segment_summaries()[1].records, 0L)
+  // and an empty active segment never rolls
+  assert_eq(rolling.roll_due(9000L, 1L), Ok(false))
+}

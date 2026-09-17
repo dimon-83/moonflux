@@ -45,6 +45,11 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     },
   }
   note("serving connections concurrently (one thread, poll-driven)")
+  // storage housekeeping (P8): a standalone broker owns its partitions
+  // alone, so its committed prefix is its own log end — the floor for
+  // retention is that end, and the policy is off unless an operator
+  // asked for it (README 决策 31)
+  let mut last_housekeeping : Int64 = -1L
   while true {
     let live = hub.poll_once(handler, fn(kind) {
       if kind == "websocket" {
@@ -52,8 +57,29 @@ fn cmd_serve(argv : Array[String]) -> Unit {
       }
     })
     let _ = live
+    let now = @env.now().reinterpret_as_int64()
+    if last_housekeeping < 0L || now - last_housekeeping >= HOUSEKEEPING_MS {
+      last_housekeeping = now
+      let topic = applied_topic(data_dir)
+      if topic.length() > 0 {
+        let floor = match open_topic_log(data_dir, topic) {
+          Ok(log) => log.high_watermark()
+          Err(_) => 0L
+        }
+        match retain_partition(data_dir, topic, 0, floor, now) {
+          Ok(_) => ()
+          Err(e) => note("warning: \{e}")
+        }
+      }
+    }
   }
 }
+
+///|
+/// How often storage housekeeping runs (retention, age-based rolling).
+/// Slower than the hub tick on purpose: these are disk decisions, and
+/// once a second is already far more often than a policy needs.
+const HOUSEKEEPING_MS : Int64 = 1000L
 
 ///|
 /// How long the hub waits for activity before looping (its tick, and
@@ -135,6 +161,16 @@ fn dispatch_session_frame(
         Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
       }
     }
+    @client.CMD_SEGMENTS => {
+      let ref = match @client.decode_partition_ref(frame.payload) {
+        Ok(ref) => ref
+        Err(e) => return err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+      match segment_view(data_dir, ref) {
+        Ok(payload) => reply_frame(frame.rid, @client.CMD_OK, payload)
+        Err((code, message)) => err_frame(frame.rid, code, message)
+      }
+    }
     // rule assets: a standalone broker owns its own function sets,
     // because it compiles its own applies (P6)
     cmd if is_function_set_command(cmd) =>
@@ -149,6 +185,27 @@ fn dispatch_session_frame(
         "unknown command \{other}",
       )
   }
+}
+
+///|
+/// The partition's segments, as the wire carries them.
+fn segment_view(
+  data_dir : String,
+  ref : @client.PartitionRef,
+) -> Result[Bytes, (Int, String)] {
+  let log = match open_partition_log(data_dir, ref.topic, ref.partition) {
+    Ok(log) => log
+    Err(e) => return Err((@client.ERR_STORAGE, e))
+  }
+  let wire : Array[@client.WireSegment] = []
+  for summary in log.segment_summaries() {
+    wire.push(@client.WireSegment::{
+      base: summary.base,
+      records: summary.records,
+      bytes: summary.bytes,
+    })
+  }
+  Ok(@client.encode_wire_segments(wire))
 }
 
 ///|

@@ -69,6 +69,17 @@ pub(all) struct RecoveryReport {
   discarded_bytes : Int
 } derive(Eq, Show, @debug.Debug)
 
+pub(all) struct RetainReport {
+  removed : Array[SegmentSummary]
+  removed_records : Int64
+  removed_bytes : Int
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct RetentionPolicy {
+  max_bytes : Int
+  max_age_ms : Int64
+} derive(Eq, Show, @debug.Debug)
+
 pub(all) struct SegmentFile {
   read : (Int, Int) -> Result[Bytes, LogError]
   append : (Bytes) -> Result[Int, LogError]
@@ -106,6 +117,7 @@ pub struct SegmentedLog {
 } derive(@debug.Debug)
 pub fn SegmentedLog::append(Self, Array[@protocol.Record]) -> Result[Int64, LogError]
 pub fn SegmentedLog::append_raw(Self, Bytes, Int) -> Result[Unit, LogError]
+pub fn SegmentedLog::apply_retention(Self, Int64, Int64, RetentionPolicy) -> Result[RetainReport, LogError]
 pub fn SegmentedLog::first_offset(Self) -> Int64
 pub fn SegmentedLog::high_watermark(Self) -> Int64
 pub fn SegmentedLog::open(SegmentFile) -> Result[Self, LogError]
@@ -113,6 +125,7 @@ pub fn SegmentedLog::open_store(SegmentStore, Int) -> Result[Self, LogError]
 pub fn SegmentedLog::open_store_configured(SegmentStore, Int, Int) -> Result[Self, LogError]
 pub fn SegmentedLog::read(Self, Int64, Int) -> Result[Array[LogEntry], LogError]
 pub fn SegmentedLog::read_raw(Self, Int64, Int) -> Result[RawWindow, LogError]
+pub fn SegmentedLog::roll_due(Self, Int64, Int64) -> Result[Bool, LogError]
 pub fn SegmentedLog::segment_summaries(Self) -> Array[SegmentSummary]
 pub fn SegmentedLog::truncate_to(Self, Int64) -> Result[TruncateReport, LogError]
 pub fn SegmentedLog::truncate_to_boundary(Self, Int64) -> Result[TruncateReport, LogError]

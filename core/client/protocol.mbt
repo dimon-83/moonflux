@@ -134,6 +134,60 @@ pub const CMD_FUNCTION_SET_GET = 24
 pub const CMD_FUNCTION_SET_DELETE = 25
 
 ///|
+/// Storage introspection (P8): the segments a partition is made of.
+/// Additive like every other read-only question — the answer is the
+/// node's own view of its disk, asked of whoever holds the partition.
+pub const CMD_SEGMENTS = 26
+
+///|
+/// One segment as the wire reports it.
+pub(all) struct WireSegment {
+  base : Int64
+  records : Int64
+  bytes : Int
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_wire_segments(segments : Array[WireSegment]) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_leb128(segments.length())
+  for seg in segments {
+    buf.write_leb128(seg.base)
+    buf.write_leb128(seg.records)
+    buf.write_leb128(seg.bytes)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_wire_segments(
+  payload : Bytes,
+) -> Result[Array[WireSegment], String] {
+  let reader = @codec.Reader::new(payload)
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated segment count")
+  }
+  let out : Array[WireSegment] = []
+  for _i = 0; _i < count; _i = _i + 1 {
+    let base = match reader.read_uleb128() {
+      Ok(base) => base.reinterpret_as_int64()
+      Err(_) => return Err("truncated segment base")
+    }
+    let records = match reader.read_uleb128() {
+      Ok(records) => records.reinterpret_as_int64()
+      Err(_) => return Err("truncated segment record count")
+    }
+    let bytes = match reader.read_uleb128_len() {
+      Ok(bytes) => bytes
+      Err(_) => return Err("truncated segment byte count")
+    }
+    out.push(WireSegment::{ base, records, bytes })
+  }
+  Ok(out)
+}
+
+///|
 /// Deploys a pipeline document to the broker: the same work
 /// `pipeline apply` does locally (validate, compile, persist), so the
 /// editor can close its loop - drag a pipeline, deploy it, produce,

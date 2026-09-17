@@ -46,6 +46,8 @@ pub const CMD_PRODUCE_PARTITION : Int = 20
 
 pub const CMD_REGISTER : Int = 7
 
+pub const CMD_SEGMENTS : Int = 26
+
 pub const CMD_SYNC_ACK : Int = 12
 
 pub const CMD_SYNC_FETCH : Int = 11
@@ -110,6 +112,8 @@ pub fn decode_sync_request(Bytes) -> Result[SyncRequest, String]
 
 pub fn decode_sync_response(Bytes) -> Result[SyncResponse, String]
 
+pub fn decode_wire_segments(Bytes) -> Result[Array[WireSegment], String]
+
 pub fn decode_wire_topic(Bytes) -> Result[WireTopic, String]
 
 pub fn decode_wire_topics(Bytes) -> Result[Array[WireTopic], String]
@@ -147,6 +151,8 @@ pub fn encode_sync_ack(SyncAck) -> Bytes
 pub fn encode_sync_request(SyncRequest) -> Bytes
 
 pub fn encode_sync_response(SyncResponse) -> Bytes
+
+pub fn encode_wire_segments(Array[WireSegment]) -> Bytes
 
 pub fn encode_wire_topic(WireTopic) -> Bytes
 
@@ -271,6 +277,12 @@ pub(all) struct SyncResponse {
   high_watermark : Int64
   log_end_offset : Int64
   frames : Bytes
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct WireSegment {
+  base : Int64
+  records : Int64
+  bytes : Int
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct WireTopic {

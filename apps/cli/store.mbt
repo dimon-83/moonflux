@@ -57,6 +57,84 @@ fn roll_bytes() -> Int {
 const DEFAULT_ROLL_BYTES : Int = 1048576
 
 ///|
+/// The retention policy in force (P8/T46). Both bounds default to 0 =
+/// off, because deletion is never a default: an operator asks for it.
+fn retention_policy() -> @log.RetentionPolicy {
+  let max_bytes = match @env.get_env_var("MOONFLUX_RETAIN_BYTES") {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) if n > 0 => n
+        _ => 0
+      }
+    None => 0
+  }
+  let max_age_ms = match @env.get_env_var("MOONFLUX_RETAIN_MS") {
+    Some(text) =>
+      match (try? @string.parse_int64(text[0:text.length()])) {
+        Ok(n) if n > 0L => n
+        _ => 0L
+      }
+    None => 0L
+  }
+  @log.RetentionPolicy::{ max_bytes, max_age_ms }
+}
+
+///|
+/// Age-based rolling (P8/T46): 0 = size-based rolling only.
+fn roll_after_ms() -> Int64 {
+  match @env.get_env_var("MOONFLUX_ROLL_MS") {
+    Some(text) =>
+      match (try? @string.parse_int64(text[0:text.length()])) {
+        Ok(n) if n > 0L => n
+        _ => 0L
+      }
+    None => 0L
+  }
+}
+
+///|
+/// One retention pass over a partition's log: roll if the active
+/// segment has aged out, then drop whole segments that are both below
+/// `floor` and outside the policy. Returns the number of segments
+/// dropped, so a caller can log it — deletion is never silent.
+///
+/// `floor` is the caller's judgement, and the caller in this codebase
+/// passes the committed prefix: data no replica needs any more. A
+/// consumer reading below the resulting start gets a structured
+/// `OffsetOutOfRange`, not an empty window (README 决策 31).
+fn retain_partition(
+  data_dir : String,
+  topic : String,
+  partition : Int,
+  floor : Int64,
+  now_ms : Int64,
+) -> Result[Int, String] {
+  let log = match open_partition_log(data_dir, topic, partition) {
+    Ok(log) => log
+    Err(e) => return Err(e)
+  }
+  match log.roll_due(now_ms, roll_after_ms()) {
+    Ok(true) =>
+      note(
+        "rolled \{topic}[\{partition}] at offset \{log.high_watermark()} (segment age policy)",
+      )
+    Ok(false) => ()
+    Err(e) => note("warning: cannot roll \{topic}[\{partition}]: \{e}")
+  }
+  let policy = retention_policy()
+  let report = match log.apply_retention(floor, now_ms, policy) {
+    Ok(report) => report
+    Err(e) => return Err("retention \{topic}[\{partition}]: \{e}")
+  }
+  for summary in report.removed {
+    note(
+      "retained away \{topic}[\{partition}] segment at \{summary.base} (\{summary.records} records, \{summary.bytes} bytes); earliest readable offset is now \{log.first_offset()}",
+    )
+  }
+  Ok(report.removed.length())
+}
+
+///|
 /// How many records may pass between index anchors (P8/T45). Same
 /// reasoning as the roll threshold: policy, so it is configurable, and
 /// the storage gate sets it small to exercise the index.
@@ -123,10 +201,12 @@ fn open_partition_log(
       index_every_records(),
     ) {
     Ok(log) => {
-      // never silent: recovery that discarded bytes is surfaced
+      // never silent: recovery that discarded bytes is surfaced — and
+      // through `note`, which flushes, because a warning a running
+      // process never writes to its log is a warning nobody sees
       if !(log.recovery.reason is Clean) {
-        println(
-          "warning: topic \{topic} recovery discarded \{log.recovery.discarded_bytes} bytes (\{log.recovery.reason}); watermark restored to \{log.high_watermark()}",
+        note(
+          "warning: topic \{topic}[\{partition}] recovery discarded \{log.recovery.discarded_bytes} bytes (\{log.recovery.reason}); watermark restored to \{log.high_watermark()}",
         )
       }
       Ok(log)

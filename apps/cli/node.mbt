@@ -1763,6 +1763,11 @@ fn HostTable::host_count(self : HostTable) -> Int {
 /// fanning out per partition, a pass that never polled made peers wait
 /// a whole deadline per partition (P7 measured this: three nodes, all
 /// of them pulling at once, handshakes timing out).
+///
+/// It is also where storage housekeeping happens (P8/T46) — and only
+/// on the **leader**: the committed prefix is the leader's answer, and a
+/// follower keeps what it holds. The floor is that prefix (hw), so
+/// retention can never delete data a replica still needs.
 fn HostTable::tick_one(
   self : HostTable,
   sc_addr : String,
@@ -1772,6 +1777,25 @@ fn HostTable::tick_one(
   let host = self.hosts[i]
   if host.is_leader() {
     host.sync_leader_leo()
+    if host.topic.length() > 0 {
+      // the floor is this partition's committed prefix: nothing below
+      // it is needed by any replica (README 决策 31)
+      let floor = match host.ledger {
+        Some(ledger) => ledger.offset_info().high_watermark
+        None => 0L
+      }
+      match
+        retain_partition(
+          self.data_dir,
+          host.topic,
+          host.partition,
+          floor,
+          now_ms(),
+        ) {
+        Ok(_) => ()
+        Err(e) => note("warning: \{e}")
+      }
+    }
   } else if host.topic.length() > 0 {
     if host.nominated == host.address && !host.is_leader() {
       let view = @client.PartitionView::{
@@ -2131,6 +2155,21 @@ fn dispatch_data_frame(
         Ok((hw, leo)) => (@client.CMD_OK, @client.encode_offset_info(hw, leo))
         Err(e) =>
           (@client.CMD_ERR, @client.encode_error(@client.ERR_WRONG_ROLE, e))
+      }
+    }
+    @client.CMD_SEGMENTS => {
+      let ref = match @client.decode_partition_ref(frame.payload) {
+        Ok(ref) => ref
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+          )
+      }
+      match segment_view(data_dir, ref) {
+        Ok(payload) => (@client.CMD_OK, payload)
+        Err((code, message)) =>
+          (@client.CMD_ERR, @client.encode_error(code, message))
       }
     }
     @client.CMD_OFFSET_INFO => {
