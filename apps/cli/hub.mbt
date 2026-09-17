@@ -32,7 +32,15 @@ const MAX_OUTBOX_BYTES : Int = 8 * 1024 * 1024
 ///|
 /// One served connection.
 pub struct HubConnection {
-  stream : @net.TcpStream
+  /// The plain socket under this connection: kept for polling, even
+  /// when the bytes themselves travel through a TLS session.
+  socket : @net.TcpStream
+  /// What the layers above actually read and write: a plain socket, or a
+  /// TLS session over it (P12), decided once when the connection is
+  /// adopted.
+  stream : @net.Stream
+  /// The TLS session while it is being negotiated, and afterwards.
+  tls : @tls.TlsSession?
   /// bytes read from the socket, not yet consumed by the parser
   mut inbox : Bytes
   /// for WebSocket connections: payload bytes unwrapped from WS frames,
@@ -87,6 +95,10 @@ pub(all) struct HubHandler {
 /// The hub: an accept backlog plus every connection currently open.
 pub struct ConnectionHub {
   listener : @net.TcpListener
+  /// Present when this listener speaks TLS (P12). The hub does not care
+  /// beyond "attach a session and drive it": TLS is a property of the
+  /// transport, and the protocol above is identical.
+  tls : @tls.TlsContext?
   mut conns : Array[HubConnection]
   /// the longest frame header + the largest payload this server accepts
   max_frame : Int
@@ -100,6 +112,7 @@ pub fn ConnectionHub::new(
 ) -> ConnectionHub {
   ConnectionHub::{
     listener,
+    tls: None,
     conns: [],
     max_frame: @client.MAX_FRAME_PAYLOAD + 13,
     poll_timeout_ms,
@@ -107,9 +120,68 @@ pub fn ConnectionHub::new(
 }
 
 ///|
-/// Registers an accepted stream as a connection (non-blocking from its
-/// first byte: the hub never blocks on one peer).
+/// The same hub, speaking TLS on this listener.
+pub fn ConnectionHub::with_tls(
+  self : ConnectionHub,
+  tls : @tls.TlsContext,
+) -> ConnectionHub {
+  ConnectionHub::{
+    listener: self.listener,
+    tls: Some(tls),
+    conns: self.conns,
+    max_frame: self.max_frame,
+    poll_timeout_ms: self.poll_timeout_ms,
+  }
+}
+
+///|
+/// Registers an accepted stream as a connection.
+///
+/// The TLS handshake is the one blocking moment, and it is *bounded*: it
+/// runs here on the blocking socket with a receive deadline, and only
+/// then does the connection go non-blocking for the rest of its life.
+/// Driving it cooperatively from the poll loop was the first design, and
+/// it stalled — both peers can end up polling for the direction the other
+/// has already taken — while a deadline is what actually stops a peer
+/// that opens a socket and says nothing.
 fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
+  let mut session : @tls.TlsSession? = None
+  match self.tls {
+    None => ()
+    Some(context) => {
+      match stream.set_recv_timeout_ms(HANDSHAKE_DEADLINE_MS) {
+        Ok(_) => ()
+        Err(e) => {
+          note("dropping a connection: cannot set a handshake deadline (\{e})")
+          return
+        }
+      }
+      let attached = match context.attach(stream.raw_fd()) {
+        Ok(attached) => attached
+        Err(e) => {
+          note("dropping a connection: \{e}")
+          return
+        }
+      }
+      match attached.accept() {
+        Ok(Done) => session = Some(attached)
+        Ok(Pending(_)) => {
+          note(
+            "dropping a connection: TLS handshake did not finish within \{HANDSHAKE_DEADLINE_MS}ms",
+          )
+          attached.close()
+          return
+        }
+        Err(e) => {
+          note("TLS handshake failed: \{e}")
+          attached.close()
+          return
+        }
+      }
+      // the session's reads are poll-driven from here on
+      let _ = stream.set_recv_timeout_ms(0)
+    }
+  }
   match stream.set_nonblocking(true) {
     Ok(_) => ()
     Err(e) => {
@@ -117,16 +189,38 @@ fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
       return
     }
   }
-  self.conns.push(HubConnection::{
-    stream,
-    inbox: b"",
-    decoded: b"",
-    outbox: b"",
-    phase: Handshake,
-    kind: "tcp",
-    identity: None,
-  })
+  let plain = stream.stream()
+  match session {
+    None =>
+      self.conns.push(HubConnection::{
+        socket: stream,
+        stream: plain,
+        tls: None,
+        inbox: b"",
+        decoded: b"",
+        outbox: b"",
+        phase: Handshake,
+        kind: "tcp",
+        identity: None,
+      })
+    Some(ready) =>
+      self.conns.push(HubConnection::{
+        socket: stream,
+        stream: tls_stream(stream, ready),
+        tls: Some(ready),
+        inbox: b"",
+        decoded: b"",
+        outbox: b"",
+        phase: Handshake,
+        kind: "tls",
+        identity: None,
+      })
+  }
 }
+
+///|
+/// How long a TLS handshake may take before the connection is dropped.
+const HANDSHAKE_DEADLINE_MS : Int = 2000
 
 ///|
 /// One pass: accept whatever is pending, read what is readable, answer
@@ -168,11 +262,11 @@ pub fn ConnectionHub::poll_once(
     return 0
   }
   // 2. find out which connections have something
-  let streams : Array[@net.TcpStream] = []
+  let fds : Array[Int] = []
   for conn in self.conns {
-    streams.push(conn.stream)
+    fds.push((conn.stream.fd)())
   }
-  let ready = match @net.poll_readable(streams, self.poll_timeout_ms) {
+  let ready = match @net.poll_fds(fds, self.poll_timeout_ms, false) {
     Ok(ready) => ready
     Err(e) => {
       note("poll: \{e}")
@@ -211,14 +305,14 @@ pub fn ConnectionHub::poll_once(
       // best effort, and deliberately before the close: a refusal or a
       // closing handshake is written here rather than vanishing
       let _ = flush(conn)
-      let _ = conn.stream.close()
+      (conn.stream.close)()
       continue
     }
     match flush(conn) {
       Ok(_) => alive.push(conn)
       Err(e) => {
         note("connection (\{conn.kind}) dropped while writing: \{e}")
-        let _ = conn.stream.close()
+        (conn.stream.close)()
       }
     }
   }
@@ -233,7 +327,7 @@ pub fn ConnectionHub::poll_once(
 fn read_available(conn : HubConnection) -> Result[Unit, String] {
   let buf : FixedArray[Byte] = FixedArray::make(8192, b'\x00')
   while true {
-    match conn.stream.recv_some(buf, buf.length()) {
+    match (conn.stream.recv_some)(buf, buf.length()) {
       Ok(0) => {
         conn.phase = Closed
         return Ok(())
@@ -493,7 +587,7 @@ fn queue(conn : HubConnection, bytes : Bytes) -> Unit {
 /// would reintroduce exactly the starvation this hub exists to remove.
 fn flush(conn : HubConnection) -> Result[Unit, String] {
   while conn.outbox.length() > 0 {
-    match conn.stream.send_some(conn.outbox) {
+    match (conn.stream.send_some)(conn.outbox) {
       Ok(0) => return Ok(()) // socket buffer full; try next pass
       Ok(n) => conn.outbox = conn.outbox[n:conn.outbox.length()].to_owned()
       Err(WouldBlock) => return Ok(())
@@ -607,5 +701,40 @@ fn unwrap_ws_frame(conn : HubConnection) -> Result[Bool, String] {
       Ok(true)
     }
     other => Err("unsupported websocket opcode \{other}")
+  }
+}
+
+///|
+/// The stream a TLS session presents to everything above it. Built here
+/// because the hub owns the socket-to-session swap; the protocol
+/// handlers never learn which kind they got.
+fn tls_stream(
+  socket : @net.TcpStream,
+  session : @tls.TlsSession,
+) -> @net.Stream {
+  @net.Stream::{
+    fd: fn() { socket.raw_fd() },
+    recv_some: fn(buf, len) {
+      match session.read_some(buf, len) {
+        Ok(Some(n)) => Ok(n)
+        // "wants more" is what a plain socket calls would-block, so the
+        // three states the loop distinguishes stay distinguishable
+        Ok(None) => Err(@net.WouldBlock)
+        Err(e) => Err(@net.Io(0, e))
+      }
+    },
+    send_some: fn(bytes) {
+      match session.write_some(bytes) {
+        Ok(Some(n)) => Ok(n)
+        Ok(None) => Err(@net.WouldBlock)
+        Err(e) => Err(@net.Io(0, e))
+      }
+    },
+    pending: fn() { session.pending() },
+    set_nonblocking: fn(enabled) { socket.set_nonblocking(enabled) },
+    close: fn() {
+      session.close()
+      let _ = socket.close()
+    },
   }
 }

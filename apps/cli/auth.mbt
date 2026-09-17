@@ -133,3 +133,8 @@ fn AuthGate::present(self : AuthGate, token : String) -> AuthOutcome {
     None => Rejected("unknown credential")
   }
 }
+
+// ---------------------------------------------------------------------
+// TLS on the client side (P12): the flags, and the transports they
+// choose. Kept here, next to the credential plumbing, because both are
+// "how this process talks to a peer" and an operator sets them together.

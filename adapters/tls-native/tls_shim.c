@@ -14,6 +14,7 @@
 #include <dlfcn.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct ssl_ctx_st SSL_CTX;
@@ -56,6 +57,8 @@ static int (*p_SSL_shutdown)(SSL *);
 static unsigned long (*p_ERR_get_error)(void);
 static void (*p_ERR_error_string_n)(unsigned long, char *, size_t);
 static int (*p_OPENSSL_init_ssl)(uint64_t, const void *);
+static int (*p_SSL_set1_host)(SSL *, const char *);
+static long (*p_SSL_get_verify_result)(const SSL *);
 
 static const char *const k_candidates[] = {
     "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib",
@@ -85,6 +88,20 @@ static char last_error[512] = "";
 
 static void set_error(const char *text) {
   snprintf(last_error, sizeof(last_error), "%s", text);
+  last_error[sizeof(last_error) - 1] = '\0';
+}
+
+// Like set_ssl_error, but names the file the shim was given — a path
+// that never reached C intact looks exactly like a missing file from
+// here, and the difference is worth seeing without a debugger.
+static void set_ssl_error2(const char *prefix, const char *path) {
+  unsigned long code = p_ERR_get_error ? p_ERR_get_error() : 0;
+  char detail[256] = "";
+  if (code != 0 && p_ERR_error_string_n) {
+    p_ERR_error_string_n(code, detail, sizeof(detail));
+  }
+  snprintf(last_error, sizeof(last_error), "%s [%s]: %s", prefix,
+           path == NULL ? "(null)" : path, detail);
   last_error[sizeof(last_error) - 1] = '\0';
 }
 
@@ -163,6 +180,8 @@ int32_t mf_tls_init(void) {
   RESOLVE(p_ERR_error_string_n, crypto_handle, "ERR_error_string_n");
   // optional: older builds may not export it, and it is only a nicety
   *(void **)(&p_OPENSSL_init_ssl) = dlsym(ssl_handle, "OPENSSL_init_ssl");
+  *(void **)(&p_SSL_set1_host) = dlsym(ssl_handle, "SSL_set1_host");
+  *(void **)(&p_SSL_get_verify_result) = dlsym(ssl_handle, "SSL_get_verify_result");
 #undef RESOLVE
 
   set_error("");
@@ -184,32 +203,33 @@ void mf_tls_last_error(uint8_t *buf, int32_t len) {
 
 /// A server context. `verify_client` != 0 requires a client certificate
 /// signed by `ca` (mutual TLS: what node-to-node traffic uses).
-void *mf_tls_server_ctx(const uint8_t *cert, int32_t cert_len, const uint8_t *key,
-                        int32_t key_len, const uint8_t *ca, int32_t ca_len,
-                        int32_t verify_client) {
-  (void)cert_len;
-  (void)key_len;
-  (void)ca_len;
+intptr_t mf_tls_server_ctx(const uint8_t *cert, const uint8_t *key,
+                           const uint8_t *ca, int32_t verify_client) {
+  // Arguments are NUL-terminated paths, not length-carrying buffers: the
+  // OpenSSL file APIs take C strings, and a length parameter nobody
+  // reads is a parameter that can be passed in the wrong order (which is
+  // exactly what happened: the C side took six arguments, the MoonBit
+  // side declared four, and the shim read a length as a pointer).
   SSL_CTX *ctx = p_SSL_CTX_new(p_TLS_server_method());
   if (ctx == NULL) {
     set_error("SSL_CTX_new failed");
-    return NULL;
+    return 0;
   }
   if (p_SSL_CTX_use_certificate_chain_file(ctx, (const char *)cert) != 1) {
-    set_ssl_error("cannot load the certificate");
+    set_ssl_error2("cannot load the certificate", (const char *)cert);
     p_SSL_CTX_free(ctx);
-    return NULL;
+    return 0;
   }
   if (p_SSL_CTX_use_PrivateKey_file(ctx, (const char *)key, 1 /* PEM */) != 1) {
-    set_ssl_error("cannot load the private key");
+    set_ssl_error2("cannot load the private key", (const char *)key);
     p_SSL_CTX_free(ctx);
-    return NULL;
+    return 0;
   }
   if (ca != NULL && ca[0] != '\0') {
     if (p_SSL_CTX_load_verify_locations(ctx, (const char *)ca, NULL) != 1) {
       set_ssl_error("cannot load the CA bundle");
       p_SSL_CTX_free(ctx);
-      return NULL;
+      return 0;
     }
   }
   if (verify_client) {
@@ -217,89 +237,117 @@ void *mf_tls_server_ctx(const uint8_t *cert, int32_t cert_len, const uint8_t *ke
                          NULL);
   }
   set_error("");
-  return ctx;
+  return (intptr_t)ctx;
 }
 
 /// A client context. `ca` is the server's trust anchor; `cert`/`key` are
 /// optional (a client certificate, for mutual TLS).
-void *mf_tls_client_ctx(const uint8_t *ca, int32_t ca_len, const uint8_t *cert,
-                        int32_t cert_len, const uint8_t *key, int32_t key_len) {
-  (void)ca_len;
-  (void)cert_len;
-  (void)key_len;
+intptr_t mf_tls_client_ctx(const uint8_t *ca, const uint8_t *cert,
+                           const uint8_t *key) {
   SSL_CTX *ctx = p_SSL_CTX_new(p_TLS_client_method());
   if (ctx == NULL) {
     set_error("SSL_CTX_new failed");
-    return NULL;
+    return 0;
   }
   if (ca != NULL && ca[0] != '\0') {
     if (p_SSL_CTX_load_verify_locations(ctx, (const char *)ca, NULL) != 1) {
       set_ssl_error("cannot load the CA bundle");
       p_SSL_CTX_free(ctx);
-      return NULL;
+      return 0;
     }
   }
   if (cert != NULL && cert[0] != '\0' && key != NULL && key[0] != '\0') {
     if (p_SSL_CTX_use_certificate_chain_file(ctx, (const char *)cert) != 1) {
       set_ssl_error("cannot load the client certificate");
       p_SSL_CTX_free(ctx);
-      return NULL;
+      return 0;
     }
     if (p_SSL_CTX_use_PrivateKey_file(ctx, (const char *)key, 1) != 1) {
       set_ssl_error("cannot load the client key");
       p_SSL_CTX_free(ctx);
-      return NULL;
+      return 0;
     }
   }
   set_error("");
-  return ctx;
+  return (intptr_t)ctx;
 }
 
-void mf_tls_ctx_free(void *ctx) {
-  if (ctx != NULL) {
+void mf_tls_ctx_free(intptr_t ctx) {
+  if (ctx != 0) {
     p_SSL_CTX_free((SSL_CTX *)ctx);
   }
 }
 
 /// A session over an already-connected fd.
-void *mf_tls_new(void *ctx, int32_t fd) {
+intptr_t mf_tls_new(intptr_t ctx, int32_t fd) {
   SSL *ssl = p_SSL_new((SSL_CTX *)ctx);
   if (ssl == NULL) {
     set_error("SSL_new failed");
-    return NULL;
+    return 0;
   }
   if (p_SSL_set_fd(ssl, (int)fd) != 1) {
     set_ssl_error("SSL_set_fd failed");
     p_SSL_free(ssl);
-    return NULL;
+    return 0;
   }
-  return ssl;
+  return (intptr_t)ssl;
+}
+
+/// Pins the host name the server certificate must match. Called by the
+/// client before the handshake: a certificate that verifies but names
+/// somebody else is exactly the mistake this prevents.
+void mf_tls_set_host(intptr_t ssl, const uint8_t *host) {
+  if (p_SSL_set1_host != NULL && host != NULL && host[0] != '\0') {
+    p_SSL_set1_host((SSL *)ssl, (const char *)host);
+  }
+}
+
+/// The verification result of the last handshake (0 = fine). Reported
+/// because a failed verification leaves *this* code set while the error
+/// queue may say nothing useful at all.
+long mf_tls_verify_result(intptr_t ssl) {
+  if (p_SSL_get_verify_result == NULL) {
+    return 0;
+  }
+  return p_SSL_get_verify_result((SSL *)ssl);
 }
 
 /// Drives the handshake. Returns 1 done, 0 wants more (the caller polls
 /// and calls again: the socket is non-blocking), -1 failed.
-int32_t mf_tls_handshake(void *ssl, int32_t server) {
+// Tri-state, because the direction matters: the caller must poll the
+// socket for *readability* or *writability*, and guessing wrong stalls
+// both peers forever (which is exactly what happened when this returned
+// a bare "pending" and the shim re-derived the direction with a second,
+// invalid SSL_get_error call).
+#define MF_TLS_WANT_READ_CODE 0
+#define MF_TLS_WANT_WRITE_CODE 2
+
+int32_t mf_tls_handshake(intptr_t ssl, int32_t server) {
   int rc = server ? p_SSL_accept((SSL *)ssl) : p_SSL_connect((SSL *)ssl);
   if (rc == 1) {
     return 1;
   }
   int err = p_SSL_get_error((SSL *)ssl, rc);
-  if (err == MF_TLS_ERROR_WANT_READ || err == MF_TLS_ERROR_WANT_WRITE) {
-    return 0;
+  if (err == MF_TLS_ERROR_WANT_READ) {
+    return MF_TLS_WANT_READ_CODE;
   }
+  if (err == MF_TLS_ERROR_WANT_WRITE) {
+    return MF_TLS_WANT_WRITE_CODE;
+  }
+  long verify = mf_tls_verify_result(ssl);
   set_ssl_error(server ? "TLS accept failed" : "TLS connect failed");
+  if (verify != 0) {
+    char detail[512];
+    snprintf(detail, sizeof(detail), "%s (certificate verification failed, code %ld)",
+             last_error, verify);
+    snprintf(last_error, sizeof(last_error), "%s", detail);
+  }
   return -1;
-}
-
-/// Whether the last handshake/read step wants the socket writable.
-int32_t mf_tls_want_write(void *ssl) {
-  int err = p_SSL_get_error((SSL *)ssl, -1);
-  return err == MF_TLS_ERROR_WANT_WRITE ? 1 : 0;
 }
 
 /// Reads up to `len` bytes. >0 = bytes, 0 = the peer closed cleanly,
 /// -1 = wants more (poll and retry), -2 = error.
-int32_t mf_tls_read(void *ssl, uint8_t *buf, int32_t len) {
+int32_t mf_tls_read(intptr_t ssl, uint8_t *buf, int32_t len) {
   if (len <= 0) {
     return 0;
   }
@@ -308,8 +356,11 @@ int32_t mf_tls_read(void *ssl, uint8_t *buf, int32_t len) {
     return rc;
   }
   int err = p_SSL_get_error((SSL *)ssl, rc);
-  if (err == MF_TLS_ERROR_WANT_READ || err == MF_TLS_ERROR_WANT_WRITE) {
+  if (err == MF_TLS_ERROR_WANT_READ) {
     return -1;
+  }
+  if (err == MF_TLS_ERROR_WANT_WRITE) {
+    return -3;
   }
   if (err == MF_TLS_ERROR_NONE || (err == MF_TLS_ERROR_SYSCALL && rc == 0)) {
     return 0;
@@ -319,7 +370,7 @@ int32_t mf_tls_read(void *ssl, uint8_t *buf, int32_t len) {
 }
 
 /// Writes up to `len` bytes. >0 = written, -1 = wants more, -2 = error.
-int32_t mf_tls_write(void *ssl, const uint8_t *buf, int32_t len) {
+int32_t mf_tls_write(intptr_t ssl, const uint8_t *buf, int32_t len) {
   if (len <= 0) {
     return 0;
   }
@@ -328,8 +379,11 @@ int32_t mf_tls_write(void *ssl, const uint8_t *buf, int32_t len) {
     return rc;
   }
   int err = p_SSL_get_error((SSL *)ssl, rc);
-  if (err == MF_TLS_ERROR_WANT_READ || err == MF_TLS_ERROR_WANT_WRITE) {
+  if (err == MF_TLS_ERROR_WANT_READ) {
     return -1;
+  }
+  if (err == MF_TLS_ERROR_WANT_WRITE) {
+    return -3;
   }
   set_ssl_error("TLS write failed");
   return -2;
@@ -338,12 +392,12 @@ int32_t mf_tls_write(void *ssl, const uint8_t *buf, int32_t len) {
 /// Bytes already decrypted and buffered inside the session. The poll
 /// loop must treat these as readable: the socket may not be, while the
 /// session still has data to hand over.
-int32_t mf_tls_pending(void *ssl) {
+int32_t mf_tls_pending(intptr_t ssl) {
   return p_SSL_pending((SSL *)ssl);
 }
 
-void mf_tls_free(void *ssl) {
-  if (ssl != NULL) {
+void mf_tls_free(intptr_t ssl) {
+  if (ssl != 0) {
     p_SSL_shutdown((SSL *)ssl);
     p_SSL_free((SSL *)ssl);
   }

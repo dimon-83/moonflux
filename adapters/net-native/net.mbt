@@ -341,9 +341,16 @@ pub fn poll_readable(
   if hits < 0 {
     return Err(Io(-hits, "poll"))
   }
+  // The shim marks each *position* with a 1; the caller wants the
+  // positions. Reading them as flags would hand back "1" as an index
+  // whenever the first socket is the ready one — and index 1 is out of
+  // bounds when there is only one connection, which is a panic rather
+  // than a wrong answer. (This sat here since P5: survivable because it
+  // only mis-served connections, fatal once TLS made a single-connection
+  // poll the common case.)
   let out : Array[Int] = []
-  for i in 0..<count {
-    if ready[i] != 0 {
+  for i = 0; i < count; i = i + 1 {
+    if ready[i] == 1 {
       out.push(i)
     }
   }
@@ -446,8 +453,10 @@ pub fn poll_fds(
     return Err(Io(-hits, "poll"))
   }
   let out : Array[Int] = []
-  for i in 0..<hits {
-    out.push(ready[i])
+  for i = 0; i < count; i = i + 1 {
+    if ready[i] == 1 {
+      out.push(i)
+    }
   }
   Ok(out)
 }

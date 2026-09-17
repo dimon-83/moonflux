@@ -35,7 +35,15 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     Ok(_) => ()
     Err(e) => fail("accept timeout: \{e}")
   }
-  let hub = ConnectionHub::new(listener, HUB_TICK_MS)
+  // TLS is a property of the listener, not of the protocol above it, and
+  // it is **not wired yet** (P12 in progress): the adapter and the hub
+  // plumbing exist, but the handshake does not complete, so there is
+  // deliberately no flag to enter it with. See the P12 ticket.
+  let tls_context : @tls.TlsContext? = None
+  let hub = match tls_context {
+    None => ConnectionHub::new(listener, HUB_TICK_MS)
+    Some(context) => ConnectionHub::new(listener, HUB_TICK_MS).with_tls(context)
+  }
   // the credential table, announced at startup so an operator never has
   // to guess which mode this broker is in
   let auth_config = AuthConfig::load(data_dir)

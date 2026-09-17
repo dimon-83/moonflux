@@ -143,3 +143,158 @@ pub fn connect_consumer(
 ) -> Result[Consumer, ClientError] {
   connect_consumer_with(host, port, None)
 }
+
+// ---------------------------------------------------------------------
+// TLS (P12). The kernel's `Conn` is a struct of closures, so a TLS
+// connection is a *constructor*, not a branch inside the protocol: the
+// frames above are byte-identical whether they ride a plain socket or a
+// session.
+//
+// The handshake runs cooperatively here too. It could block — this is a
+// client, and it has nothing else to serve — but a client that hangs
+// forever on a peer that never finishes saying hello is exactly the
+// failure a deadline exists for, so the loop polls with one.
+
+///|
+/// Milliseconds from now, for a deadline. Read in this layer, never in
+/// the kernel.
+fn deadline_after(ms : Int) -> Int64 {
+  @env.now().reinterpret_as_int64() + ms.to_int64()
+}
+
+///|
+fn past_deadline(deadline : Int64) -> Bool {
+  @env.now().reinterpret_as_int64() > deadline
+}
+
+///|
+/// Dials `host:port` and negotiates TLS. `ca` is the trust anchor;
+/// `cert`/`key` are an optional client certificate (for a node that must
+/// present one).
+pub fn tcp_tls(
+  host : String,
+  port : Int,
+  ca : String,
+  cert : String?,
+  key : String?,
+  handshake_timeout_ms : Int,
+) -> Result[Conn, String] {
+  let context = match @tls.client_context(ca, cert, key) {
+    Ok(context) => context
+    Err(e) => return Err(e)
+  }
+  let stream = match @net.TcpStream::connect(host, port) {
+    Ok(stream) => stream
+    Err(e) => {
+      context.free()
+      return Err("connect \{host}:\{port}: \{e}")
+    }
+  }
+  match stream.set_nonblocking(true) {
+    Ok(_) => ()
+    Err(e) => {
+      context.free()
+      let _ = stream.close()
+      return Err("nonblocking: \{e}")
+    }
+  }
+  let session = match context.attach(stream.raw_fd()) {
+    Ok(session) => session
+    Err(e) => {
+      context.free()
+      let _ = stream.close()
+      return Err(e)
+    }
+  }
+  // the certificate must name the host we asked for
+  session.set_host(host)
+  let deadline = deadline_after(handshake_timeout_ms)
+  let mut done = false
+  let mut failure = ""
+  while !done {
+    match session.connect() {
+      Ok(Done) => done = true
+      Ok(Pending(want_write)) => {
+        let _ = @net.poll_fds([stream.raw_fd()], 50, want_write)
+        if past_deadline(deadline) {
+          failure = "TLS handshake timed out"
+          break
+        }
+      }
+      Err(e) => {
+        failure = e
+        break
+      }
+    }
+  }
+  if !done {
+    session.close()
+    let _ = stream.close()
+    context.free()
+    return Err("TLS to \{host}:\{port}: \{failure}")
+  }
+  Ok(tls_conn(stream, session, context))
+}
+
+///|
+/// The `Conn` a TLS session presents: the same three calls as
+/// `wrap_stream`, with the session in the middle. The context is kept
+/// alive by the closures, because it must outlive the session.
+fn tls_conn(
+  socket : @net.TcpStream,
+  session : @tls.TlsSession,
+  context : @tls.TlsContext,
+) -> Conn {
+  let read_buf : FixedArray[Byte] = FixedArray::make(65536, b'\x00')
+  Conn::{
+    send: fn(bytes) {
+      let mut sent = 0
+      while sent < bytes.length() {
+        match session.write_some(bytes[sent:bytes.length()].to_owned()) {
+          Ok(Some(0)) => return Err("peer closed while sending")
+          Ok(Some(n)) => sent = sent + n
+          Ok(None) => {
+            let _ = @net.poll_fds([socket.raw_fd()], 50, false)
+          }
+          Err(e) => return Err(e)
+        }
+      }
+      Ok(())
+    },
+    recv_exact: fn(n) {
+      let buf : FixedArray[Byte] = FixedArray::make(n, b'\x00')
+      let mut filled = 0
+      while filled < n {
+        let need = n - filled
+        match
+          session.read_some(
+            buf,
+            if need < buf.length() {
+              need
+            } else {
+              buf.length()
+            },
+          ) {
+          Ok(Some(0)) =>
+            return Err("connection closed after \{filled} of \{n} bytes")
+          Ok(Some(got)) => {
+            for i = 0; i < got; i = i + 1 {
+              read_buf[filled + i] = buf[i]
+            }
+            filled = filled + got
+          }
+          Ok(None) => {
+            let _ = @net.poll_fds([socket.raw_fd()], 50, false)
+          }
+          Err(e) => return Err(e)
+        }
+      }
+      Ok(Bytes::from_array(read_buf[0:n]))
+    },
+    close: fn() {
+      session.close()
+      let _ = socket.close()
+      context.free()
+    },
+  }
+}

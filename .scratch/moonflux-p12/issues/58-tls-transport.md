@@ -9,10 +9,21 @@ TLS 与明文共用同一条代码路径。非阻塞 TLS 的两个坑必须显�
 
 **Blocked by:** 57（握手期认证先落地，TLS 只是把凭据与数据一起保护起来）。
 
-**Status:** ready-for-agent
+**Status:** in progress (session layer and plumbing land; the handshake does not complete yet — see the overview's three findings)
 
 - [ ] `adapters/tls-native`：`tls_connect(ca, cert?, key?)`、`tls_accept(stream, cert, key)`、`tls_pending`、
       `send_some/recv_some/close` 的 SSL 版本；无 libssl 时返回结构化"该能力不可用"
 - [ ] 传输抽象：hub/SyncLink/control_call 改用接口而非具体 TcpStream；明文与 TLS 两条构造器
 - [ ] CLI：`--tls-ca/--tls-cert/--tls-key`（客户端与服务端各自），`scripts/gen-dev-certs.sh` 生成自签证书
 - [ ] 文档写明边界：TLS 保护传输，**不**替代授权（角色判定仍在应用层）
+
+### 进度（2026-09-17，未完成）
+
+**已落地并编译**：`adapters/tls-native`（OpenSSL dlopen shim + 会话层，句柄经 `Int64`）；`@net.Stream` 传输抽象与
+`poll_fds(..., want_write)`；hub 的 TLS 接入（`with_tls` + 有界阻塞握手：accept 后在阻塞 socket 上带 2s 期限握手，
+之后数据路径非阻塞）；`apps/client` 的 `tcp_tls`（含主机名校验 `SSL_set1_host` 与 `SSL_get_verify_result`）。
+
+**未完成**：服务端与客户端握手不一致（客户端认为完成、服务端看到明文）。**已撤掉 `--tls-*` 入口**，避免半成品可达。
+
+**顺带修掉的既有 bug**：`net-native` 的 `poll_readable` 把 C shim 的**标志位当成了下标**——单连接时下标 1 越界直接
+panic（多连接时则错服务连接）。这个 bug 从 P5 起就在，靠"只影响公平性不影响正确性"活到了 TLS 把它变成致命。

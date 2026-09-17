@@ -5,6 +5,8 @@
 supported_targets = "native"
 
 import {
+  "moonbitlang/core/env",
   "moonflux/core/client" @kernel,
   "moonflux/adapters/net-native" @net,
+  "moonflux/adapters/tls-native" @tls,
 }
