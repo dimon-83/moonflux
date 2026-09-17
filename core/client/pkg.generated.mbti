@@ -28,6 +28,16 @@ pub const CMD_FUNCTION_SET_GET : Int = 24
 
 pub const CMD_FUNCTION_SET_LIST : Int = 23
 
+pub const CMD_GROUP_COMMIT : Int = 30
+
+pub const CMD_GROUP_DESCRIBE : Int = 31
+
+pub const CMD_GROUP_HEARTBEAT : Int = 28
+
+pub const CMD_GROUP_JOIN : Int = 27
+
+pub const CMD_GROUP_LEAVE : Int = 29
+
 pub const CMD_HEARTBEAT : Int = 8
 
 pub const CMD_HELLO : Int = 1
@@ -62,6 +72,8 @@ pub const CMD_WELCOME : Int = 2
 
 pub const ERR_BAD_PAYLOAD : Int = 3
 
+pub const ERR_GROUP : Int = 8
+
 pub const ERR_SEQUENCE : Int = 6
 
 pub const ERR_STORAGE : Int = 4
@@ -83,6 +95,16 @@ pub fn decode_assignments(Bytes) -> Result[Array[AssignmentView], String]
 pub fn decode_confirmation(Bytes) -> Result[Confirmation, String]
 
 pub fn decode_error(Bytes) -> (Int, String)
+
+pub fn decode_group_commit(Bytes) -> Result[GroupCommit, String]
+
+pub fn decode_group_description(Bytes) -> Result[GroupDescription, String]
+
+pub fn decode_group_heartbeat(Bytes) -> Result[GroupHeartbeat, String]
+
+pub fn decode_group_join(Bytes) -> Result[GroupJoin, String]
+
+pub fn decode_group_view(Bytes) -> Result[GroupView, String]
 
 pub fn decode_header(Bytes) -> Result[(Int, Int, Int), String]
 
@@ -127,6 +149,16 @@ pub fn encode_error(Int, String) -> Bytes
 pub fn encode_frame(Frame) -> Bytes
 
 pub fn encode_frame_bytes(Frame) -> Bytes
+
+pub fn encode_group_commit(GroupCommit) -> Bytes
+
+pub fn encode_group_description(GroupDescription) -> Bytes
+
+pub fn encode_group_heartbeat(GroupHeartbeat) -> Bytes
+
+pub fn encode_group_join(GroupJoin) -> Bytes
+
+pub fn encode_group_view(GroupView) -> Bytes
 
 pub fn encode_hello(Int, Int) -> Bytes
 
@@ -219,6 +251,41 @@ pub(all) struct Frame {
   payload : Bytes
 } derive(Eq, Show, @debug.Debug)
 
+pub(all) struct GroupCommit {
+  group : String
+  member : String
+  epoch : Int64
+  topic : String
+  partition : Int
+  offset : Int64
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct GroupDescription {
+  group : String
+  epoch : Int64
+  members : Array[WireGroupMember]
+  commits : Array[WireGroupPartition]
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct GroupHeartbeat {
+  group : String
+  member : WireGroupMember
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct GroupJoin {
+  group : String
+  member : WireGroupMember
+  topics : Array[String]
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct GroupView {
+  group : String
+  epoch : Int64
+  timeout_ms : Int64
+  partitions : Array[WireGroupPartition]
+  members : Int
+} derive(Eq, Show, @debug.Debug)
+
 pub(all) struct NodeRecord {
   id : String
   role : NodeRole
@@ -277,6 +344,17 @@ pub(all) struct SyncResponse {
   high_watermark : Int64
   log_end_offset : Int64
   frames : Bytes
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct WireGroupMember {
+  id : String
+  address : String
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct WireGroupPartition {
+  topic : String
+  partition : Int
+  committed : Int64
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct WireSegment {

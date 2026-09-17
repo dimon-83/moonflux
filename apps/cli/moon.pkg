@@ -8,6 +8,7 @@ import {
   "moonflux/core/log",
   "moonflux/core/operator",
   "moonflux/core/cluster",
+  "moonflux/core/group",
   "moonflux/core/pipeline",
   "moonflux/core/replica",
   "moonflux/core/protocol",

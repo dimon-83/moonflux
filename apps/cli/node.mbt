@@ -593,16 +593,30 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     "moonflux sc listening on \{host}:\{actual} (data dir \{data_dir}, liveness timeout \{NODE_TIMEOUT_MS}ms)",
   )
   let table = NodeTable::new(NODE_TIMEOUT_MS)
+  // consumer groups: the control plane coordinates them with the same
+  // liveness timeout it uses for nodes, so "a member went silent" and
+  // "a node went silent" mean the same amount of time (P9)
+  let groups = GroupRegistry::new(data_dir, NODE_TIMEOUT_MS.to_int64())
   let store = file_metadata_store(data_dir)
   let placement = PlacementState::new(data_dir)
   while true {
     match listener.accept() {
       Ok(stream) => {
-        handle_control_connection(stream, table, placement, store)
+        handle_control_connection(stream, table, placement, store, groups)
         let _ = stream.close()
       }
       Err(TimedOut) => ()
       Err(e) => fail("accept: \{e}")
+    }
+    // consumer-group members go silent on the same clock: the sweep
+    // moves their groups' generations, which is what starts the next
+    // rebalance (the survivors learn it in their heartbeat reply)
+    let left = groups.sweep(now_ms())
+    for pair in left {
+      let (group, member) = pair
+      note(
+        "group \{group}: \{member} went silent; generation moved, its partitions will be reassigned",
+      )
     }
     let swept = table.sweep(now_ms())
     for node in swept {
@@ -824,6 +838,7 @@ fn handle_control_connection(
   table : NodeTable,
   placement : PlacementState,
   store : MetadataStore,
+  groups : GroupRegistry,
 ) -> Unit {
   let conn = @native.from_stream(stream)
   let hello = match conn.recv_first() {
@@ -937,6 +952,69 @@ fn handle_control_connection(
             }
           Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
         }
+      // consumer groups (P9): the control plane is the coordinator
+      @client.CMD_GROUP_JOIN =>
+        match @client.decode_group_join(frame.payload) {
+          Ok(join) =>
+            match groups.join(join, store, now_ms()) {
+              Ok(view) => Ok(@client.encode_group_view(view))
+              Err(e) => Err((@client.ERR_GROUP, e))
+            }
+          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        }
+      @client.CMD_GROUP_HEARTBEAT =>
+        match @client.decode_group_heartbeat(frame.payload) {
+          Ok(beat) =>
+            match groups.heartbeat(beat, store, now_ms()) {
+              Ok(view) => Ok(@client.encode_group_view(view))
+              Err(e) => Err((@client.ERR_GROUP, e))
+            }
+          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        }
+      // leaving is a heartbeat that says goodbye: same fields, one
+      // different consequence
+      @client.CMD_GROUP_LEAVE =>
+        match @client.decode_group_heartbeat(frame.payload) {
+          Ok(beat) =>
+            match groups.leave(beat.group, beat.member.id) {
+              Ok(_) => Ok(b"")
+              Err(e) => Err((@client.ERR_GROUP, e))
+            }
+          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        }
+      @client.CMD_GROUP_COMMIT =>
+        match @client.decode_group_commit(frame.payload) {
+          Ok(commit) =>
+            match groups.commit(commit, store) {
+              Ok(_) => Ok(b"")
+              Err(e) => Err((@client.ERR_GROUP, e))
+            }
+          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        }
+      @client.CMD_GROUP_DESCRIBE => {
+        let group = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
+        if group.length() == 0 {
+          // an empty name lists the groups; the reply is JSON so the
+          // CLI can print a table without a second codec
+          let all : Array[Json] = []
+          for entry in groups.list() {
+            let (name, epoch, members, commits) = entry
+            let doc : Map[String, Json] = {}
+            doc["name"] = Json::string(name)
+            doc["epoch"] = Json::number(epoch.to_double())
+            doc["members"] = Json::number(members.to_double())
+            doc["commits"] = Json::number(commits.to_double())
+            all.push(Json::object(doc))
+          }
+          let text = Json::array(all).stringify()
+          Ok(@utf8.encode(text[0:text.length()]))
+        } else {
+          match groups.describe(group) {
+            Ok(desc) => Ok(@client.encode_group_description(desc))
+            Err(e) => Err((@client.ERR_GROUP, e))
+          }
+        }
+      }
       cmd if is_function_set_command(cmd) =>
         match dispatch_function_set(frame, store) {
           Ok(payload) => Ok(payload)

@@ -10,6 +10,8 @@
 // after each note.
 #include <stdint.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <time.h>
 
 void mf_cli_flush(void) {
   fflush(stdout);
@@ -28,4 +30,28 @@ void mf_cli_eprint(const uint8_t *buf, int len) {
   }
   fputc('\n', stderr);
   fflush(stderr);
+}
+
+/*
+ * The process id, for callers that need a unique default (a consumer
+ * group member without an explicit --member). Two CLI processes that
+ * shared a member id would look like one member reading twice, which
+ * is worse than a slightly ugly name.
+ */
+int32_t mf_cli_pid(void) {
+  return (int32_t)getpid();
+}
+
+/*
+ * Sleeps for the given number of milliseconds. Used by the group
+ * member's loop, which polls for work and must not spin a core while
+ * waiting.
+ */
+void mf_cli_sleep_ms(int32_t ms) {
+  if (ms > 0) {
+    struct timespec ts;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+  }
 }

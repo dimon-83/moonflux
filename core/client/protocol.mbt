@@ -140,6 +140,350 @@ pub const CMD_FUNCTION_SET_DELETE = 25
 pub const CMD_SEGMENTS = 26
 
 ///|
+/// Consumer groups (P9). Additive like the other control commands: the
+/// coordinator is the control plane, membership reports are heartbeats,
+/// and the assignment travels in the reply — the same shape as
+/// placements and nominations, for the same reason (state on the reply
+/// channel the member already polls).
+pub const CMD_GROUP_JOIN = 27
+
+///|
+pub const CMD_GROUP_HEARTBEAT = 28
+
+///|
+pub const CMD_GROUP_LEAVE = 29
+
+///|
+pub const CMD_GROUP_COMMIT = 30
+
+///|
+pub const CMD_GROUP_DESCRIBE = 31
+
+///|
+/// A group-protocol refusal that is not a transport or payload problem:
+/// a stale epoch, an unknown member, a partition the member does not
+/// hold, or a regression. The message says which.
+pub const ERR_GROUP = 8
+
+///|
+/// One member as it travels: who it is and where it can be reached.
+pub(all) struct WireGroupMember {
+  id : String
+  address : String
+} derive(Debug, Eq, Show)
+
+///|
+/// A join (or the initial declaration): the group, the member, and the
+/// topics it wants to consume.
+pub(all) struct GroupJoin {
+  group : String
+  member : WireGroupMember
+  topics : Array[String]
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_group_join(join : GroupJoin) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, join.group)
+  write_field(buf, join.member.id)
+  write_field(buf, join.member.address)
+  buf.write_leb128(join.topics.length())
+  for topic in join.topics {
+    write_field(buf, topic)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_group_join(payload : Bytes) -> Result[GroupJoin, String] {
+  let reader = @codec.Reader::new(payload)
+  let group = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if group.length() == 0 {
+    return Err("group name must not be empty")
+  }
+  let id = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if id.length() == 0 {
+    return Err("member id must not be empty")
+  }
+  let address = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated topic count")
+  }
+  let topics : Array[String] = []
+  for _i = 0; _i < count; _i = _i + 1 {
+    let topic = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    topics.push(topic)
+  }
+  Ok(GroupJoin::{ group, member: WireGroupMember::{ id, address }, topics })
+}
+
+///|
+/// A heartbeat is the same report as a join, without the declaration:
+/// the topics were settled at join, and repeating them would let a
+/// silent member re-declare the world every tick.
+pub(all) struct GroupHeartbeat {
+  group : String
+  member : WireGroupMember
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_group_heartbeat(beat : GroupHeartbeat) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, beat.group)
+  write_field(buf, beat.member.id)
+  write_field(buf, beat.member.address)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_group_heartbeat(
+  payload : Bytes,
+) -> Result[GroupHeartbeat, String] {
+  let reader = @codec.Reader::new(payload)
+  let group = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let id = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let address = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  Ok(GroupHeartbeat::{ group, member: WireGroupMember::{ id, address } })
+}
+
+///|
+/// A commit: the member, the epoch it believes in, and where it got to
+/// on one partition. One partition per message keeps the fence
+/// meaningful — a batch spanning partitions could half-apply.
+pub(all) struct GroupCommit {
+  group : String
+  member : String
+  epoch : Int64
+  topic : String
+  partition : Int
+  offset : Int64
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_group_commit(commit : GroupCommit) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, commit.group)
+  write_field(buf, commit.member)
+  buf.write_leb128(commit.epoch)
+  write_field(buf, commit.topic)
+  buf.write_leb128(commit.partition)
+  buf.write_leb128(commit.offset)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_group_commit(payload : Bytes) -> Result[GroupCommit, String] {
+  let reader = @codec.Reader::new(payload)
+  let group = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let member = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let epoch = match reader.read_uleb128() {
+    Ok(v) => v.reinterpret_as_int64()
+    Err(_) => return Err("truncated epoch")
+  }
+  let topic = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let partition = match reader.read_uleb128_len() {
+    Ok(v) => v
+    Err(_) => return Err("truncated partition")
+  }
+  let offset = match reader.read_uleb128() {
+    Ok(v) => v.reinterpret_as_int64()
+    Err(_) => return Err("truncated offset")
+  }
+  Ok(GroupCommit::{ group, member, epoch, topic, partition, offset })
+}
+
+///|
+/// What a member learns from its coordinator: the epoch it must commit
+/// against, the partitions it holds, the coordinated liveness timeout
+/// (so heartbeats are paced by the coordinator's clock, not the
+/// member's guess), and how far each of its partitions got.
+pub(all) struct GroupView {
+  group : String
+  epoch : Int64
+  timeout_ms : Int64
+  partitions : Array[WireGroupPartition]
+  members : Int
+} derive(Debug, Eq, Show)
+
+///|
+pub(all) struct WireGroupPartition {
+  topic : String
+  partition : Int
+  /// the offset this member should resume from
+  committed : Int64
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_group_view(view : GroupView) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, view.group)
+  buf.write_leb128(view.epoch)
+  buf.write_leb128(view.timeout_ms)
+  buf.write_leb128(view.members)
+  buf.write_leb128(view.partitions.length())
+  for p in view.partitions {
+    write_field(buf, p.topic)
+    buf.write_leb128(p.partition)
+    buf.write_leb128(p.committed)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_group_view(payload : Bytes) -> Result[GroupView, String] {
+  let reader = @codec.Reader::new(payload)
+  let group = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let epoch = match reader.read_uleb128() {
+    Ok(v) => v.reinterpret_as_int64()
+    Err(_) => return Err("truncated epoch")
+  }
+  let timeout_ms = match reader.read_uleb128() {
+    Ok(v) => v.reinterpret_as_int64()
+    Err(_) => return Err("truncated timeout")
+  }
+  let members = match reader.read_uleb128_len() {
+    Ok(v) => v
+    Err(_) => return Err("truncated member count")
+  }
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated partition count")
+  }
+  let partitions : Array[WireGroupPartition] = []
+  for _i = 0; _i < count; _i = _i + 1 {
+    let topic = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let partition = match reader.read_uleb128_len() {
+      Ok(v) => v
+      Err(_) => return Err("truncated partition")
+    }
+    let committed = match reader.read_uleb128() {
+      Ok(v) => v.reinterpret_as_int64()
+      Err(_) => return Err("truncated committed offset")
+    }
+    partitions.push(WireGroupPartition::{ topic, partition, committed })
+  }
+  Ok(GroupView::{ group, epoch, timeout_ms, partitions, members })
+}
+
+///|
+/// One group as an operator sees it: who is in it, and how far each
+/// partition got. Deleted groups are reported by absence.
+pub(all) struct GroupDescription {
+  group : String
+  epoch : Int64
+  members : Array[WireGroupMember]
+  commits : Array[WireGroupPartition]
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_group_description(desc : GroupDescription) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, desc.group)
+  buf.write_leb128(desc.epoch)
+  buf.write_leb128(desc.members.length())
+  for member in desc.members {
+    write_field(buf, member.id)
+    write_field(buf, member.address)
+  }
+  buf.write_leb128(desc.commits.length())
+  for commit in desc.commits {
+    write_field(buf, commit.topic)
+    buf.write_leb128(commit.partition)
+    buf.write_leb128(commit.committed)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_group_description(
+  payload : Bytes,
+) -> Result[GroupDescription, String] {
+  let reader = @codec.Reader::new(payload)
+  let group = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let epoch = match reader.read_uleb128() {
+    Ok(v) => v.reinterpret_as_int64()
+    Err(_) => return Err("truncated epoch")
+  }
+  let member_count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated member count")
+  }
+  let members : Array[WireGroupMember] = []
+  for _i = 0; _i < member_count; _i = _i + 1 {
+    let id = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let address = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    members.push(WireGroupMember::{ id, address })
+  }
+  let commit_count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated commit count")
+  }
+  let commits : Array[WireGroupPartition] = []
+  for _i = 0; _i < commit_count; _i = _i + 1 {
+    let topic = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let partition = match reader.read_uleb128_len() {
+      Ok(v) => v
+      Err(_) => return Err("truncated partition")
+    }
+    let committed = match reader.read_uleb128() {
+      Ok(v) => v.reinterpret_as_int64()
+      Err(_) => return Err("truncated committed offset")
+    }
+    commits.push(WireGroupPartition::{ topic, partition, committed })
+  }
+  Ok(GroupDescription::{ group, epoch, members, commits })
+}
+
+///|
 /// One segment as the wire reports it.
 pub(all) struct WireSegment {
   base : Int64

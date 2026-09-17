@@ -24,6 +24,29 @@ fn cmd_consume(argv : Array[String]) -> Unit {
       }
     None => 0
   }
+  if flags.get("group") is Some(group) {
+    // group mode: the coordinator decides which partitions this member
+    // reads, and the group's committed offsets decide where
+    if flags.get("remote") is None {
+      fail("--group needs --remote <control plane>")
+    }
+    let remote = flags.require("remote")
+    let member = match flags.get("member") {
+      Some(member) => member
+      None => "cli-\{cli_pid()}"
+    }
+    let follow = flags.get("follow") is Some(_)
+    let commit_ms = match flags.get("commit-ms") {
+      Some(text) =>
+        match (try? @string.parse_int(text[0:text.length()])) {
+          Ok(n) if n > 0 => n.to_int64()
+          _ => fail("--commit-ms expects a positive integer, got \{text}")
+        }
+      None => 1000L
+    }
+    consume_group(group, member, [topic], remote, from, follow, commit_ms)
+    return
+  }
   match flags.get("remote") {
     Some(addr) => consume_remote(topic, partition, from, addr, committed)
     None => {

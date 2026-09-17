@@ -33,6 +33,9 @@ extern "C" fn flush_streams() -> Unit = "mf_cli_flush"
 extern "C" fn cli_eprint(buf : Bytes, len : Int) -> Unit = "mf_cli_eprint"
 
 ///|
+extern "C" fn cli_pid() -> Int = "mf_cli_pid"
+
+///|
 /// Writes one diagnostic line to stderr, flushed. Stdout carries data
 /// (records) in the CLI's streaming commands and is parsed by column,
 /// so anything explanatory must not land there.
@@ -59,7 +62,7 @@ fn usage() -> Unit {
     "  produce  --topic T --file F [--partition N] [--data-dir D] [--remote host:port]",
   )
   println(
-    "  consume  --topic T [--from N] [--partition N] [--data-dir D] [--remote host:port]",
+    "  consume  --topic T [--from N] [--partition N] [--group G [--member M] [--follow] [--commit-ms N]] [--data-dir D] [--remote host:port]",
   )
   println("  serve    --data-dir D --listen host:port")
   println(
@@ -67,6 +70,7 @@ fn usage() -> Unit {
   )
   println("  sc       --listen host:port [--data-dir D]")
   println("  topic    create|list|delete ...")
+  println("  group    list|describe ...")
   println("  function-set create|get|list|delete ...")
   println("  operator verify|describe|list ...")
   println("  cluster  nodes   --remote host:port")
@@ -158,6 +162,7 @@ fn main {
     text == "cluster" ||
     text == "topic" ||
     text == "function-set" ||
+    text == "group" ||
     text == "operator"
   }
 
@@ -183,6 +188,7 @@ fn main {
     "cluster" => cmd_cluster(rest)
     "topic" => cmd_topic(rest)
     "function-set" => cmd_function_set(rest)
+    "group" => cmd_group(rest)
     "operator" => cmd_operator(rest)
     _ => usage()
   }

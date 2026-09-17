@@ -1,0 +1,68 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/group"
+
+import {
+  "moonbitlang/core/debug",
+  "moonflux/core/cluster",
+}
+
+// Values
+pub fn assign(Array[GroupMember], Array[@cluster.PartitionId]) -> Array[MemberAssignment]
+
+pub fn assignment_of(GroupState, String, Array[@cluster.PartitionId]) -> Array[@cluster.PartitionId]
+
+pub fn commit(GroupState, String, Int64, @cluster.PartitionId, Int64, Array[@cluster.PartitionId]) -> Result[Unit, GroupError]
+
+pub fn declare_topics(GroupState, Array[String]) -> Bool
+
+pub fn lag(GroupState, @cluster.PartitionId, Int64) -> Int64
+
+pub fn new_group(String) -> GroupState
+
+pub fn observe_member(GroupState, GroupMember) -> Bool
+
+pub fn resume_offset(GroupState, @cluster.PartitionId) -> Int64
+
+pub fn retention_floor(GroupState, @cluster.PartitionId, Int64) -> Int64
+
+pub fn sweep(GroupState, Int64, Int64) -> Array[String]
+
+// Errors
+pub(all) suberror GroupError {
+  StaleEpoch(String)
+  UnknownMember(String)
+  NotAssigned(String)
+  Regression(String)
+}
+pub impl Show for GroupError
+
+// Types and methods
+pub(all) struct CommitRecord {
+  topic : String
+  partition : Int
+  offset : Int64
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct GroupMember {
+  id : String
+  address : String
+  last_seen_ms : Int64
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct GroupState {
+  group : String
+  mut epoch : Int64
+  members : Array[GroupMember]
+  topics : Array[String]
+  committed : Array[CommitRecord]
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct MemberAssignment {
+  member : String
+  partitions : Array[@cluster.PartitionId]
+} derive(Eq, Show, @debug.Debug)
+
+// Type aliases
+
+// Traits
+
