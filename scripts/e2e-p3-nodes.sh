@@ -143,10 +143,20 @@ pass "a write to a node that does not hold the partition is refused with the lea
 "$EXE" sc --listen "127.0.0.1:$SC_PORT" --data-dir "$WORK/sc" > "$WORK/sc.log" 2>&1 &
 SC_PID=$!
 wait_listen "$SC_PORT" || fail "sc did not restart"
+# Both nodes must be back in the table before the liveness leg below:
+# a node that never re-registered is *absent*, not offline, and the
+# sweep would have nothing to report — the offline assertion would pass
+# without testing anything (which is exactly how this leg was vacuous
+# until it was caught).
 for _ in $(seq 1 60); do
-  nodes "$SC_PORT" | grep -q "spu-a" && break
+  TABLE="$(nodes "$SC_PORT")"
+  if printf '%s\n' "$TABLE" | grep -q "spu-a" && printf '%s\n' "$TABLE" | grep -q "spu-b"; then
+    break
+  fi
   sleep 0.25
 done
+nodes "$SC_PORT" | grep -q "spu-b" \
+  || { cat "$WORK/sc.log"; fail "spu-b never re-registered after the control plane came back"; }
 pass "the restarted control plane learns the cluster again from heartbeats"
 
 # kill a node: liveness is derived from silence, and the control plane

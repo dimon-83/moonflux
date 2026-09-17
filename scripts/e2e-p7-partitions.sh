@@ -180,6 +180,44 @@ for p in $(seq 0 $((PARTITIONS - 1))); do
 done
 pass "all $PARTITIONS partitions replicated and confirmed (hw == leo == 2 each)"
 
+# ---- 2b. the sync link is reused, not redialled ------------------------
+# The honest claim of the persistent replication link (P10) is not
+# "faster" — that needs a controlled benchmark — but "it does not dial
+# per round", which is a structural fact and therefore falsifiable from
+# the logs: one dial per followed partition, and further rounds happen
+# without another one.
+DIALS_BEFORE=$(grep -h -c "sync link to" "$WORK"/spu-*.log | awk '{sum += $1} END {print sum + 0}')
+[ "$DIALS_BEFORE" -ge 1 ] || { cat "$WORK"/spu-*.log; fail "no sync link was ever dialled"; }
+for p in $(seq 0 $((PARTITIONS - 1))); do
+  printf 'p%s-r3\n' "$p" > "$WORK/more-$p.txt"
+  "$EXE" produce --topic "$TOPIC" --partition "$p" --file "$WORK/more-$p.txt" \
+    --remote "${LEADERS[$p]}" > /dev/null || fail "produce for the link leg failed"
+done
+LINK_ROUNDS=""
+for _ in $(seq 1 80); do
+  LINK_ROUNDS=yes
+  for p in $(seq 0 $((PARTITIONS - 1))); do
+    read -r HW LEO <<< "$(offsets_of "${LEADERS[$p]}" "$p")"
+    if [ "$HW" = "$LEO" ] && [ "$LEO" = "3" ]; then
+      continue
+    fi
+    LINK_ROUNDS=""
+  done
+  [ -n "$LINK_ROUNDS" ] && break
+  sleep 0.25
+done
+[ -n "$LINK_ROUNDS" ] || fail "the new records did not replicate"
+DIALS_AFTER=$(grep -h -c "sync link to" "$WORK"/spu-*.log | awk '{sum += $1} END {print sum + 0}')
+[ "$DIALS_AFTER" -eq "$DIALS_BEFORE" ] \
+  || { grep -h "sync link" "$WORK"/spu-*.log; fail "the sync link was redialled ($DIALS_BEFORE -> $DIALS_AFTER)"; }
+pass "the sync link carried further rounds without redialling ($DIALS_AFTER dial(s), reused)"
+# the baseline every later leg reasons from: how many records each
+# partition holds now (a number that shifts whenever a leg is added, so
+# the legs below derive from it instead of hard-coding it)
+BASE_LEO="$(offsets_of "${LEADERS[0]}" 0 | cut -d' ' -f2)"
+[ -n "$BASE_LEO" ] || fail "could not read the baseline log end"
+NEXT_LEO=$((BASE_LEO + 1))
+
 # ---- 3. a dead node stalls only what it held ---------------------------
 # With three nodes and replication_factor 2, each partition's replica
 # set covers two of them. Killing one node must leave the partitions it
@@ -261,7 +299,7 @@ for p in $(seq 0 $((PARTITIONS - 1))); do
   for _ in $(seq 1 60); do
     read -r HW LEO <<< "$(offsets_of "$L" "$p")"
     [ "$LEO" = "3" ] || { sleep 0.25; continue; }
-    if [ "$INVOLVED" != "yes" ] && [ "$HW" = "3" ]; then
+    if [ "$INVOLVED" != "yes" ] && [ "$HW" = "$NEXT_LEO" ]; then
       break
     fi
     if [ "$INVOLVED" = "yes" ]; then
@@ -272,17 +310,18 @@ for p in $(seq 0 $((PARTITIONS - 1))); do
     fi
     sleep 0.25
   done
-  [ "$LEO" = "3" ] || fail "$TOPIC[$p] leader did not take the new write (leo=$LEO)"
+  [ "$LEO" = "$NEXT_LEO" ] || fail "$TOPIC[$p] leader did not take the new write (leo=$LEO)"
   if [ "$INVOLVED" != "yes" ]; then
-    [ "$HW" = "3" ] || fail "$TOPIC[$p] did not involve the dead node but stalled (hw=$HW leo=$LEO)"
+    [ "$HW" = "$NEXT_LEO" ] \
+      || fail "$TOPIC[$p] did not involve the dead node but stalled (hw=$HW leo=$LEO; baseline $BASE_LEO, expected $NEXT_LEO)"
     ADVANCED=$((ADVANCED + 1))
   else
     # the dead node is in this partition's replica set, so the
     # watermark holds below the end: at the confirmed prefix when it was
     # a follower, below the new leader's end when it was the leader
-    [ "$HW" -lt 3 ] || fail "$TOPIC[$p] watermark advanced past a silent member (hw=$HW)"
-    if [ "${BEFORE[$p]}" != "$VICTIM" ] && [ "$HW" != "2" ]; then
-      fail "$TOPIC[$p] watermark should have stalled at the confirmed prefix 2 (hw=$HW)"
+    [ "$HW" -lt "$NEXT_LEO" ] || fail "$TOPIC[$p] watermark advanced past a silent member (hw=$HW)"
+    if [ "${BEFORE[$p]}" != "$VICTIM" ] && [ "$HW" != "$BASE_LEO" ]; then
+      fail "$TOPIC[$p] watermark should have stalled at the confirmed prefix $BASE_LEO (hw=$HW)"
     fi
     STALLED=$((STALLED + 1))
     STALLED_PARTS="$STALLED_PARTS $p"

@@ -120,195 +120,6 @@ const PEER_CALL_TIMEOUT_MS : Int = 2000
 const CONNECT_TIMEOUT_MS : Int = 300
 
 ///|
-/// A *cooperative* peer call: the node keeps serving its own
-/// connections while it waits for the peer's reply.
-///
-/// Why not a plain blocking call (P7 measured the alternative): every
-/// node is one thread, so an outbound call is a window in which this
-/// node answers nobody. With per-partition fan-out every node leads
-/// some partitions and follows others, so the windows line up into a
-/// ring of deaf nodes — calls timed out, retries made the cycles
-/// longer, and a node was late enough to be declared dead by the
-/// control plane. Waiting *while* serving removes the window instead of
-/// shrinking it.
-fn peer_call(
-  pump : () -> Unit,
-  address : String,
-  cmd : Int,
-  payload : Bytes,
-) -> Result[Bytes, String] {
-  let (host, port) = parse_listen_addr(address)
-  // a plain blocking connect: a listening peer accepts from the
-  // backlog immediately, so this is a routing check, not a wait
-  let stream = match @net.TcpStream::connect(host, port) {
-    Ok(stream) => stream
-    Err(e) => return Err("connect \{address}: \{e}")
-  }
-  let result = peer_call_on(pump, stream, cmd, payload)
-  let _ = stream.close()
-  result
-}
-
-///|
-fn peer_call_on(
-  pump : () -> Unit,
-  stream : @net.TcpStream,
-  cmd : Int,
-  payload : Bytes,
-) -> Result[Bytes, String] {
-  match stream.set_nonblocking(true) {
-    Ok(_) => ()
-    Err(e) => return Err("nonblocking: \{e}")
-  }
-  let deadline = now_ms() + PEER_CALL_TIMEOUT_MS.to_int64()
-  let inbox : Array[Byte] = []
-  // handshake, then the request: the same two frames the blocking
-  // client sends, only the waiting differs
-  match
-    send_all(
-      pump,
-      stream,
-      @client.encode_frame(@client.Frame::{
-        cmd: @client.CMD_HELLO,
-        rid: 0,
-        payload: @client.encode_hello(1, 0),
-      }),
-      deadline,
-    ) {
-    Ok(_) => ()
-    Err(e) => return Err("hello: \{e}")
-  }
-  let welcome = match await_frame(pump, stream, inbox, deadline) {
-    Ok(frame) => frame
-    Err(e) => return Err("handshake: \{e}")
-  }
-  if welcome.cmd == @client.CMD_ERR {
-    let (code, message) = @client.decode_error(welcome.payload)
-    return Err("handshake rejected (code \{code}): \{message}")
-  }
-  if welcome.cmd != @client.CMD_WELCOME {
-    return Err("expected WELCOME, got cmd \{welcome.cmd}")
-  }
-  let rid = 1
-  match
-    send_all(
-      pump,
-      stream,
-      @client.encode_frame(@client.Frame::{ cmd, rid, payload }),
-      deadline,
-    ) {
-    Ok(_) => ()
-    Err(e) => return Err("send: \{e}")
-  }
-  let reply = match await_frame(pump, stream, inbox, deadline) {
-    Ok(frame) => frame
-    Err(e) => return Err("reply: \{e}")
-  }
-  if reply.cmd == @client.CMD_ERR {
-    let (code, message) = @client.decode_error(reply.payload)
-    return Err("rejected (code \{code}): \{message}")
-  }
-  Ok(reply.payload)
-}
-
-///|
-/// Writes every byte, serving connections in between. Frames here are
-/// small (a request is tens of bytes), so a partial write means the
-/// peer's window is full — the loop gives it time and tries again.
-fn send_all(
-  pump : () -> Unit,
-  stream : @net.TcpStream,
-  bytes : Bytes,
-  deadline : Int64,
-) -> Result[Unit, String] {
-  let mut sent = 0
-  while sent < bytes.length() {
-    match stream.send_some(bytes[sent:bytes.length()].to_owned()) {
-      Ok(0) => return Err("peer closed while writing")
-      Ok(n) => sent = sent + n
-      Err(WouldBlock) => {
-        pump()
-        if now_ms() > deadline {
-          return Err("write deadline")
-        }
-        let _ = @net.poll_readable([stream], 10)
-      }
-      Err(e) => return Err("\{e}")
-    }
-  }
-  Ok(())
-}
-
-///|
-/// Reads one complete frame, serving connections while it waits. The
-/// buffer is the caller's, so a frame split across reads survives (a
-/// single-threaded node cannot afford to lose a half-read frame).
-fn await_frame(
-  pump : () -> Unit,
-  stream : @net.TcpStream,
-  inbox : Array[Byte],
-  deadline : Int64,
-) -> Result[@client.Frame, String] {
-  let chunk : FixedArray[Byte] = FixedArray::make(8192, b'\x00')
-  while true {
-    if inbox.length() >= 13 {
-      let head = Bytes::from_array(inbox[0:13])
-      let (cmd, rid, payload_len) = match @client.decode_header(head) {
-        Ok(parts) => parts
-        Err(e) => return Err(e)
-      }
-      let total = 13 + payload_len
-      if inbox.length() >= total {
-        let payload = Bytes::from_array(inbox[13:total])
-        // consume what was taken: the same buffer carries the *next*
-        // reply, and leaving the bytes in place made the second wait
-        // return the first frame again (P7: the fetch reply decoded as
-        // a welcome payload)
-        let rest : Array[Byte] = []
-        for i = total; i < inbox.length(); i = i + 1 {
-          rest.push(inbox[i])
-        }
-        inbox.clear()
-        for b in rest {
-          inbox.push(b)
-        }
-        return Ok(@client.Frame::{ cmd, rid, payload })
-      }
-    }
-    // not there yet: serve our own connections, then look again
-    pump()
-    if now_ms() > deadline {
-      return Err("deadline")
-    }
-    let ready = match @net.poll_readable([stream], 10) {
-      Ok(ready) => ready
-      Err(e) => return Err("\{e}")
-    }
-    if ready.length() == 0 {
-      continue
-    }
-    match stream.recv_some(chunk, chunk.length()) {
-      Ok(0) => return Err("peer closed")
-      Ok(n) => {
-        for i = 0; i < n; i = i + 1 {
-          inbox.push(chunk[i])
-        }
-        if inbox.length() > @client.MAX_FRAME_PAYLOAD + 13 {
-          return Err("peer sent an oversized frame")
-        }
-      }
-      Err(WouldBlock) => ()
-      Err(e) => return Err("\{e}")
-    }
-  } nobreak {
-    Err(
-      // unreachable: every exit above is a return
-      "unreachable",
-    )
-  }
-}
-
-///|
 fn control_call_with_timeout(
   addr : String,
   cmd : Int,
@@ -1171,6 +982,10 @@ struct PartitionHost {
   /// group is consuming this partition — which is *not* the same as a
   /// group sitting at zero, and retention must not conflate them.
   mut group_floor : Int64?
+  /// the follower's persistent link to this partition's leader (P10).
+  /// Dropped on any error, redialled on the next round; `None` means
+  /// "not connected", which is the normal state for a leader.
+  mut link : SyncLink?
 }
 
 ///|
@@ -1195,6 +1010,7 @@ fn PartitionHost::new(
     reported_failure: false,
     nominated: "",
     group_floor: None,
+    link: None,
   }
 }
 
@@ -1351,9 +1167,37 @@ fn PartitionHost::replicate_once(
     None => return
   }
   let my_leo = log.high_watermark()
-  // **One** call per tick per partition (P7): the pull *is* the probe.
-  // Asking "where does your log end?" first cost an extra blocking
-  // call per partition, and with every node leading some partitions and
+  // The link is dialled once and reused: the handshake is the part
+  // worth paying once, and with per-partition fan-out the connection
+  // churn was the largest remaining per-tick cost (decision 30's
+  // follow-up). A dropped link is redialled next round.
+  if self.link is None {
+    self.link = match SyncLink::connect(self.leader_addr) {
+      Ok(link) => {
+        note(
+          "sync link to \{self.leader_addr} for \{self.label()} open (\{link.opens} dial(s) this incarnation)",
+        )
+        Some(link)
+      }
+      Err(e) => {
+        if self.caught_up || !self.reported_failure {
+          self.caught_up = false
+          self.reported_failure = true
+          note(
+            "warning: replication from \{self.leader_addr} interrupted: \{e}",
+          )
+        }
+        return
+      }
+    }
+  }
+  let link = match self.link {
+    Some(link) => link
+    None => return
+  }
+  // **One** request per tick per partition (P7): the pull *is* the
+  // probe. Asking "where does your log end?" first cost an extra call
+  // per partition, and with every node leading some partitions and
   // following others, the fan-out of those calls is what made three
   // nodes deafen each other. The reply to a pull already carries the
   // leader's end and high watermark, so it answers everything the
@@ -1362,7 +1206,7 @@ fn PartitionHost::replicate_once(
   let window = match
     sync_fetch(
       pump,
-      self.leader_addr,
+      link,
       self.topic,
       self.partition,
       my_leo,
@@ -1370,10 +1214,14 @@ fn PartitionHost::replicate_once(
     ) {
     Ok(window) => window
     Err(e) => {
+      link.close()
+      self.link = None
       if self.caught_up || !self.reported_failure {
         self.caught_up = false
         self.reported_failure = true
-        note("warning: replication from \{self.leader_addr} interrupted: \{e}")
+        note(
+          "warning: replication from \{self.leader_addr} interrupted: \{e} (the sync link was dropped; the next round dials again)",
+        )
       }
       return
     }
@@ -1419,15 +1267,7 @@ fn PartitionHost::replicate_once(
   if acked == self.last_acked {
     return
   }
-  match
-    sync_ack(
-      pump,
-      self.leader_addr,
-      self.topic,
-      self.partition,
-      self.address,
-      acked,
-    ) {
+  match sync_ack(pump, link, self.topic, self.partition, self.address, acked) {
     Ok(_) => {
       self.last_acked = acked
       self.reported_failure = false
@@ -1438,11 +1278,16 @@ fn PartitionHost::replicate_once(
         )
       }
     }
-    Err(e) =>
+    Err(e) => {
+      link.close()
+      self.link = None
       if self.caught_up {
         self.caught_up = false
-        note("warning: ack to \{self.leader_addr} failed: \{e}")
+        note(
+          "warning: ack to \{self.leader_addr} failed: \{e} (the sync link was dropped)",
+        )
       }
+    }
   }
 }
 
@@ -1457,7 +1302,7 @@ const REPLICATION_BATCH : Int = 512
 /// Asks the leader for raw frames from `from`.
 fn sync_fetch(
   pump : () -> Unit,
-  leader_addr : String,
+  link : SyncLink,
   topic : String,
   partition : Int,
   from : Int64,
@@ -1469,11 +1314,11 @@ fn sync_fetch(
     max_records,
   }
   let payload = match
-    peer_call(
+    link.call(
       pump,
-      leader_addr,
       @client.CMD_SYNC_FETCH,
       @client.encode_sync_request(request),
+      PEER_CALL_TIMEOUT_MS,
     ) {
     Ok(payload) => payload
     Err(e) => return Err(e)
@@ -1486,7 +1331,7 @@ fn sync_fetch(
 /// watermarks.
 fn sync_ack(
   pump : () -> Unit,
-  leader_addr : String,
+  link : SyncLink,
   topic : String,
   partition : Int,
   from : String,
@@ -1498,11 +1343,11 @@ fn sync_ack(
     leo,
   }
   let payload = match
-    peer_call(
+    link.call(
       pump,
-      leader_addr,
       @client.CMD_SYNC_ACK,
       @client.encode_sync_ack(ack),
+      PEER_CALL_TIMEOUT_MS,
     ) {
     Ok(payload) => payload
     Err(e) => return Err(e)

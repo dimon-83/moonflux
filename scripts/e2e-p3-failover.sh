@@ -160,7 +160,15 @@ for _ in $(seq 1 80); do
 done
 grep -q "stepped down" "$OLD_DIR.log" \
   || { cat "$OLD_DIR.log"; fail "the returning leader did not self-demote"; }
-grep -q "replicating" "$OLD_DIR.log" \
+# following takes a round (dial the link, ask the new leader where its
+# log ends, then report): wait for the statement instead of reading the
+# log at the instant the step-down appeared
+FOLLOWING=""
+for _ in $(seq 1 80); do
+  grep -q "replicating" "$OLD_DIR.log" && FOLLOWING=yes && break
+  sleep 0.25
+done
+[ -n "$FOLLOWING" ] \
   || { cat "$OLD_DIR.log"; fail "the demoted leader did not start following"; }
 pass "the returning leader self-demoted to follower (without being told)"
 

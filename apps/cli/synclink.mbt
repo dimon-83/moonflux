@@ -1,0 +1,251 @@
+// SPDX-License-Identifier: Apache-2.0
+// The follower's persistent link to a partition's leader (P10).
+//
+// Replication used to open a connection per round: connect, handshake,
+// ask, close. That is three round trips of connection churn per
+// partition per tick, and with per-partition fan-out it is the largest
+// remaining per-tick cost (decision 30 left it as the follow-up).
+//
+// A `SyncLink` keeps the connection: handshake once, then one request
+// and one reply per round. Two rules keep it honest:
+//
+//   * **any error drops the link.** A timed-out request may leave a
+//     reply in flight, and reading that as the next request's answer
+//     would be a silent protocol corruption — so a link that misbehaves
+//     once is closed, and the next round dials again;
+//   * **one request in flight.** The node is single-threaded, so the
+//     request id is a constant and the reply ordering is trivially
+//     right; if that ever stops being true, this is where it breaks.
+
+///|
+/// A connection to one peer, reused across rounds.
+pub struct SyncLink {
+  address : String
+  stream : @net.TcpStream
+  /// bytes received beyond the last frame: the next reply may already
+  /// be partially here, and dropping them would misparse the stream
+  inbox : Array[Byte]
+  /// how many times this link (or its predecessors) had to be dialled:
+  /// reported so churn is visible instead of merely absent
+  mut opens : Int
+  mut rounds : Int
+}
+
+///|
+/// Dials a peer and completes the handshake. The socket goes
+/// non-blocking for the life of the link; waiting is done by pumping
+/// (the node must keep serving its own connections while it waits —
+/// that is what made the multi-partition ring work at all, decision 30).
+fn SyncLink::connect(address : String) -> Result[SyncLink, String] {
+  let (host, port) = parse_listen_addr(address)
+  let stream = match @net.TcpStream::connect(host, port) {
+    Ok(stream) => stream
+    Err(e) => return Err("connect \{address}: \{e}")
+  }
+  match stream.set_nonblocking(true) {
+    Ok(_) => ()
+    Err(e) => {
+      let _ = stream.close()
+      return Err("nonblocking: \{e}")
+    }
+  }
+  let link = SyncLink::{ address, stream, inbox: [], opens: 1, rounds: 0 }
+  // one handshake, then the link is ready for requests. It waits
+  // without pumping: nothing of ours is in flight yet and the caller
+  // dialled a moment ago, so there is no connection of its own to serve
+  // in the meantime.
+  let deadline = now_ms() + HANDSHAKE_TIMEOUT_MS.to_int64()
+  let idle_pump = fn() { () }
+  match
+    send_all(
+      idle_pump,
+      stream,
+      @client.encode_frame(@client.Frame::{
+        cmd: @client.CMD_HELLO,
+        rid: 0,
+        payload: @client.encode_hello(1, 0),
+      }),
+      deadline,
+    ) {
+    Ok(_) => ()
+    Err(e) => {
+      link.close()
+      return Err("hello: \{e}")
+    }
+  }
+  let welcome = match await_frame(idle_pump, stream, link.inbox, deadline) {
+    Ok(frame) => frame
+    Err(e) => {
+      link.close()
+      return Err("handshake: \{e}")
+    }
+  }
+  if welcome.cmd == @client.CMD_ERR {
+    let (code, message) = @client.decode_error(welcome.payload)
+    link.close()
+    return Err("handshake rejected (code \{code}): \{message}")
+  }
+  if welcome.cmd != @client.CMD_WELCOME {
+    link.close()
+    return Err("expected WELCOME, got cmd \{welcome.cmd}")
+  }
+  Ok(link)
+}
+
+///|
+/// How long a dial plus handshake may take. A listening peer accepts
+/// from the backlog immediately, so this is a routing check (nothing
+/// there), not a patience setting.
+const HANDSHAKE_TIMEOUT_MS : Int = 1000
+
+///|
+/// Sends one request and waits for its reply, serving this node's own
+/// connections while it waits. The handshake happened in `connect`:
+/// the whole point of a link is that rounds after the first skip it.
+fn SyncLink::call(
+  self : SyncLink,
+  pump : () -> Unit,
+  cmd : Int,
+  payload : Bytes,
+  timeout_ms : Int,
+) -> Result[Bytes, String] {
+  let deadline = now_ms() + timeout_ms.to_int64()
+  self.rounds = self.rounds + 1
+  match
+    send_all(
+      pump,
+      self.stream,
+      @client.encode_frame(@client.Frame::{ cmd, rid: 1, payload }),
+      deadline,
+    ) {
+    Ok(_) => ()
+    Err(e) => return Err("send: \{e}")
+  }
+  let reply = match await_frame(pump, self.stream, self.inbox, deadline) {
+    Ok(frame) => frame
+    Err(e) => return Err("reply: \{e}")
+  }
+  if reply.cmd == @client.CMD_ERR {
+    let (code, message) = @client.decode_error(reply.payload)
+    return Err("rejected (code \{code}): \{message}")
+  }
+  Ok(reply.payload)
+}
+
+///|
+/// Dials a *fresh* link to the same peer, keeping the churn count. Used
+/// after a link misbehaved: the count is what makes "it reconnected"
+/// observable in a log rather than invisible.
+fn SyncLink::redial(self : SyncLink) -> Result[SyncLink, String] {
+  let opens = self.opens + 1
+  match SyncLink::connect(self.address) {
+    Ok(fresh) => {
+      fresh.opens = opens
+      Ok(fresh)
+    }
+    Err(e) => Err(e)
+  }
+}
+
+///|
+fn SyncLink::close(self : SyncLink) -> Unit {
+  let _ = self.stream.close()
+}
+
+///|
+/// Writes every byte, serving connections in between. Frames here are
+/// small (a request is tens of bytes), so a partial write means the
+/// peer's window is full — the loop gives it time and tries again.
+fn send_all(
+  pump : () -> Unit,
+  stream : @net.TcpStream,
+  bytes : Bytes,
+  deadline : Int64,
+) -> Result[Unit, String] {
+  let mut sent = 0
+  while sent < bytes.length() {
+    match stream.send_some(bytes[sent:bytes.length()].to_owned()) {
+      Ok(0) => return Err("peer closed while writing")
+      Ok(n) => sent = sent + n
+      Err(WouldBlock) => {
+        pump()
+        if now_ms() > deadline {
+          return Err("write deadline")
+        }
+        let _ = @net.poll_readable([stream], 10)
+      }
+      Err(e) => return Err("\{e}")
+    }
+  } nobreak {
+    Ok(())
+  }
+}
+
+///|
+/// Reads one complete frame, serving connections while it waits. The
+/// buffer is the link's, so a frame split across reads — or a reply
+/// that arrives while nobody is asking — survives.
+fn await_frame(
+  pump : () -> Unit,
+  stream : @net.TcpStream,
+  inbox : Array[Byte],
+  deadline : Int64,
+) -> Result[@client.Frame, String] {
+  let chunk : FixedArray[Byte] = FixedArray::make(8192, b'\x00')
+  while true {
+    if inbox.length() >= 13 {
+      let head = Bytes::from_array(inbox[0:13])
+      let (cmd, rid, payload_len) = match @client.decode_header(head) {
+        Ok(parts) => parts
+        Err(e) => return Err(e)
+      }
+      let total = 13 + payload_len
+      if inbox.length() >= total {
+        let payload = Bytes::from_array(inbox[13:total])
+        // consume what was taken: the same buffer carries the *next*
+        // reply, and leaving the bytes in place made the second wait
+        // return the first frame again (P7: the fetch reply decoded as
+        // a welcome payload)
+        let rest : Array[Byte] = []
+        for i = total; i < inbox.length(); i = i + 1 {
+          rest.push(inbox[i])
+        }
+        inbox.clear()
+        for b in rest {
+          inbox.push(b)
+        }
+        return Ok(@client.Frame::{ cmd, rid, payload })
+      }
+    }
+    // not there yet: serve our own connections, then look again
+    pump()
+    if now_ms() > deadline {
+      return Err("deadline")
+    }
+    let ready = match @net.poll_readable([stream], 10) {
+      Ok(ready) => ready
+      Err(e) => return Err("\{e}")
+    }
+    if ready.length() == 0 {
+      continue
+    }
+    match stream.recv_some(chunk, chunk.length()) {
+      Ok(0) => return Err("peer closed")
+      Ok(n) => {
+        for i = 0; i < n; i = i + 1 {
+          inbox.push(chunk[i])
+        }
+        if inbox.length() > @client.MAX_FRAME_PAYLOAD + 13 {
+          return Err("peer sent an oversized frame")
+        }
+      }
+      Err(WouldBlock) => ()
+      Err(e) => return Err("\{e}")
+    }
+  } nobreak {
+    Err(
+      // unreachable: every exit above is a return
+      "unreachable",
+    )
+  }
+}

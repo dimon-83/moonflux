@@ -81,6 +81,23 @@ leader_of() { # $1 = partition
   "$EXE" cluster leader --topic "$TOPIC" --partition "$1" --remote "$SC" 2>/dev/null || true
 }
 
+# A write that follows the leader: leadership can move between looking
+# it up and writing to it (a restarted node, a liveness sweep), and a
+# real client re-asks rather than failing. The gate does the same, so a
+# cluster event is not mistaken for a broken produce.
+produce_partition() { # $1 = partition, $2 = file
+  local attempt leader
+  for attempt in 1 2 3 4 5; do
+    leader="$(leader_of "$1")"
+    [ -n "$leader" ] || { sleep 0.25; continue; }
+    if "$EXE" produce --topic "$TOPIC" --partition "$1" --file "$2" --remote "$leader" > /dev/null; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
 segments_of() { # $1 = node address
   "$EXE" cluster segments --topic "$TOPIC" --partition 0 --remote "$1"
 }
@@ -268,8 +285,7 @@ done
 # more records: the log grows well past the policy's byte bound
 for round in 1 2 3; do
   printf 'extra-%s-a\nextra-%s-b\nextra-%s-c\n' "$round" "$round" "$round" > "$WORK/extra.txt"
-  "$EXE" produce --topic "$TOPIC" --partition 0 --file "$WORK/extra.txt" --remote "$(leader_of 0)" > /dev/null \
-    || fail "the extra produce failed"
+  produce_partition 0 "$WORK/extra.txt" || fail "the extra produce failed"
 done
 RETAINED=""
 for _ in $(seq 1 60); do
