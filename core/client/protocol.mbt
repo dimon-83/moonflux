@@ -340,46 +340,22 @@ fn read_field(reader : @codec.Reader) -> Result[String, String] {
 ///|
 /// Encodes a node record. Deterministic: same record, same bytes.
 pub fn encode_node(record : NodeRecord) -> Bytes {
-  let buf = @buffer.Buffer::Buffer()
-  write_field(buf, record.id)
-  write_field(buf, role_name(record.role))
-  write_field(buf, record.address)
-  buf.write_leb128(record.leo)
-  buf.to_bytes()
+  // the sectionless form: what a node sends when it has no partition
+  // reports to make (and what every pre-P7 caller expects)
+  let buf : Array[PartitionReport] = []
+  encode_node_full(record, buf)
 }
 
 ///|
 /// Decodes a node record; any malformed input is a structured error,
 /// never a partially-filled record.
 pub fn decode_node(payload : Bytes) -> Result[NodeRecord, String] {
-  let reader = @codec.Reader::new(payload)
-  let id = match read_field(reader) {
-    Ok(v) => v
-    Err(e) => return Err(e)
+  // the sectionless view of the same payload: callers that do not care
+  // about per-partition reports keep this signature
+  match decode_node_full(payload) {
+    Ok((record, _reports)) => Ok(record)
+    Err(e) => Err(e)
   }
-  if id.length() == 0 || id.length() > 128 {
-    return Err("node id must be 1..128 chars")
-  }
-  let role = match read_field(reader) {
-    Ok(v) =>
-      match parse_node_role(v) {
-        Ok(role) => role
-        Err(e) => return Err(e)
-      }
-    Err(e) => return Err(e)
-  }
-  let address = match read_field(reader) {
-    Ok(v) => v
-    Err(e) => return Err(e)
-  }
-  if address.length() == 0 {
-    return Err("node address must not be empty")
-  }
-  let leo = match reader.read_uleb128() {
-    Ok(leo) => leo.reinterpret_as_int64()
-    Err(_) => return Err("truncated leo field")
-  }
-  Ok(NodeRecord::{ id, role, address, leo })
 }
 
 ///|
@@ -599,6 +575,177 @@ pub fn decode_sync_ack(payload : Bytes) -> Result[SyncAck, String] {
     return Err("negative leo")
   }
   Ok(SyncAck::{ partition: PartitionRef::{ topic, partition }, from, leo })
+}
+
+///|
+/// One entry of a data node's assignment list: which partition this
+/// node holds, and the control plane's current view of it.
+///
+/// The list travels in the *heartbeat reply* (P7): placement is state
+/// the control plane owns — a node must not invent it — and the reply
+/// is the channel a node already polls, exactly like the nomination
+/// travels in the leader reply (README 决策 20).
+pub(all) struct AssignmentView {
+  topic : String
+  partition : Int
+  leader : String
+  replicas : Array[String]
+  nominated : String
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_assignments(assignments : Array[AssignmentView]) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_leb128(assignments.length())
+  for a in assignments {
+    write_field(buf, a.topic)
+    buf.write_leb128(a.partition)
+    write_field(buf, a.leader)
+    buf.write_leb128(a.replicas.length())
+    for replica in a.replicas {
+      write_field(buf, replica)
+    }
+    write_field(buf, a.nominated)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_assignments(
+  payload : Bytes,
+) -> Result[Array[AssignmentView], String] {
+  if payload.length() == 0 {
+    // an empty reply means "nothing assigned", which is what a
+    // control plane with no placements says
+    return Ok([])
+  }
+  let reader = @codec.Reader::new(payload)
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated assignment count")
+  }
+  let out : Array[AssignmentView] = []
+  for _ in 0..<count {
+    let topic = match read_field(reader) {
+      Ok(topic) => topic
+      Err(e) => return Err(e)
+    }
+    let partition = match reader.read_uleb128_len() {
+      Ok(partition) => partition
+      Err(_) => return Err("truncated assignment partition")
+    }
+    let leader = match read_field(reader) {
+      Ok(leader) => leader
+      Err(e) => return Err(e)
+    }
+    let replica_count = match reader.read_uleb128_len() {
+      Ok(count) => count
+      Err(_) => return Err("truncated assignment replica count")
+    }
+    let replicas : Array[String] = []
+    for _ in 0..<replica_count {
+      match read_field(reader) {
+        Ok(replica) => replicas.push(replica)
+        Err(e) => return Err(e)
+      }
+    }
+    let nominated = match read_field(reader) {
+      Ok(nominated) => nominated
+      Err(e) => return Err(e)
+    }
+    out.push(AssignmentView::{ topic, partition, leader, replicas, nominated })
+  }
+  Ok(out)
+}
+
+///|
+/// One partition's progress as a node reports it: enough for the
+/// control plane to weigh candidates per partition instead of trusting
+/// one node-level number (P7).
+pub(all) struct PartitionReport {
+  topic : String
+  partition : Int
+  leo : Int64
+} derive(Debug, Eq, Show)
+
+///|
+/// The node report with its per-partition section. The section is
+/// **appended** and optional: `decode_node` (no section expected) has
+/// never checked that the reader was drained, so an older decoder
+/// reads the record and ignores the tail, and this decoder treats a
+/// missing tail as "no reports" — the extension is compatible in both
+/// directions, which is the bar for not bumping the frame version.
+pub fn encode_node_full(
+  record : NodeRecord,
+  reports : Array[PartitionReport],
+) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, record.id)
+  write_field(buf, role_name(record.role))
+  write_field(buf, record.address)
+  buf.write_leb128(record.leo)
+  buf.write_leb128(reports.length())
+  for report in reports {
+    write_field(buf, report.topic)
+    buf.write_leb128(report.partition)
+    buf.write_leb128(report.leo)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_node_full(
+  payload : Bytes,
+) -> Result[(NodeRecord, Array[PartitionReport]), String] {
+  let reader = @codec.Reader::new(payload)
+  let id = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if id.length() == 0 || id.length() > 128 {
+    return Err("node id must be 1..128 chars")
+  }
+  let role = match read_field(reader) {
+    Ok(v) =>
+      match parse_node_role(v) {
+        Ok(role) => role
+        Err(e) => return Err(e)
+      }
+    Err(e) => return Err(e)
+  }
+  let address = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if address.length() == 0 {
+    return Err("node address must not be empty")
+  }
+  let leo = match reader.read_uleb128() {
+    Ok(leo) => leo.reinterpret_as_int64()
+    Err(_) => return Err("truncated leo field")
+  }
+  let reports : Array[PartitionReport] = []
+  // optional tail: absent when the peer predates per-partition reports
+  match reader.read_uleb128_len() {
+    Err(_) => ()
+    Ok(count) =>
+      for _ in 0..<count {
+        let topic = match read_field(reader) {
+          Ok(topic) => topic
+          Err(e) => return Err(e)
+        }
+        let partition = match reader.read_uleb128_len() {
+          Ok(partition) => partition
+          Err(_) => return Err("truncated partition report")
+        }
+        let leo = match reader.read_uleb128() {
+          Ok(leo) => leo.reinterpret_as_int64()
+          Err(_) => return Err("truncated partition report leo")
+        }
+        reports.push(PartitionReport::{ topic, partition, leo })
+      }
+  }
+  Ok((NodeRecord::{ id, role, address, leo }, reports))
 }
 
 ///|

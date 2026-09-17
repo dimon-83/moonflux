@@ -70,6 +70,7 @@ pub fn SegmentedLog::open(SegmentFile) -> Result[Self, LogError]
 pub fn SegmentedLog::read(Self, Int64, Int) -> Result[Array[LogEntry], LogError]
 pub fn SegmentedLog::read_raw(Self, Int64, Int) -> Result[RawWindow, LogError]
 pub fn SegmentedLog::truncate_to(Self, Int64) -> Result[TruncateReport, LogError]
+pub fn SegmentedLog::truncate_to_boundary(Self, Int64) -> Result[TruncateReport, LogError]
 
 pub(all) struct TruncateReport {
   dropped_records : Int

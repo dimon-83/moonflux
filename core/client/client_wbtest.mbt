@@ -473,3 +473,85 @@ test "a committed fetch surfaces the server's refusal" {
   }
   consumer.close()
 }
+
+// ---------------------------------------------------------------------
+// Per-partition reports and assignments (P7). The report section is an
+// append to a payload whose decoder never insisted on draining the
+// reader, which is exactly why it could be added without a version
+// bump — these tests pin both directions of that claim.
+
+///|
+test "a node record carries per-partition reports, and older readers still read it" {
+  let record = NodeRecord::{
+    id: "spu-a",
+    role: Spu,
+    address: "127.0.0.1:19001",
+    leo: 42L,
+  }
+  let reports = [
+    PartitionReport::{ topic: "events", partition: 0, leo: 42L },
+    PartitionReport::{ topic: "events", partition: 2, leo: 9L },
+  ]
+  let bytes = encode_node_full(record, reports)
+  // the full decoder sees both halves
+  match decode_node_full(bytes) {
+    Ok(parts) => {
+      let (decoded, decoded_reports) = parts
+      assert_eq(decoded, record)
+      assert_eq(decoded_reports, reports)
+    }
+    Err(e) => abort("decode full: \{e}")
+  }
+  // the sectionless decoder reads the same bytes: the tail is ignored,
+  // which is what makes the extension compatible in that direction
+  match decode_node(bytes) {
+    Ok(decoded) => assert_eq(decoded, record)
+    Err(e) => abort("decode: \{e}")
+  }
+  // and a payload without the section decodes as "no reports" rather
+  // than as an error — the other direction
+  match decode_node_full(encode_node(record)) {
+    Ok(parts) => {
+      let (_decoded, decoded_reports) = parts
+      assert_eq(decoded_reports.length(), 0)
+    }
+    Err(e) => abort("decode sectionless: \{e}")
+  }
+  // a truncated report section is an error, never a partial list
+  assert_true(
+    decode_node_full(bytes[0:bytes.length() - 1].to_owned()) is Err(_),
+  )
+}
+
+///|
+test "assignments round trip and an empty reply means none" {
+  let assignments = [
+    AssignmentView::{
+      topic: "events",
+      partition: 0,
+      leader: "127.0.0.1:19001",
+      replicas: ["127.0.0.1:19001", "127.0.0.1:19002"],
+      nominated: "",
+    },
+    AssignmentView::{
+      topic: "events",
+      partition: 1,
+      leader: "",
+      replicas: ["127.0.0.1:19003"],
+      nominated: "127.0.0.1:19003",
+    },
+  ]
+  match decode_assignments(encode_assignments(assignments)) {
+    Ok(decoded) => assert_eq(decoded, assignments)
+    Err(e) => abort("decode assignments: \{e}")
+  }
+  // the empty payload a control plane with no placements sends
+  match decode_assignments(b"") {
+    Ok(decoded) => assert_eq(decoded.length(), 0)
+    Err(e) => abort("empty assignments: \{e}")
+  }
+  let bytes = encode_assignments(assignments)
+  assert_true(
+    decode_assignments(bytes[0:bytes.length() - 2].to_owned()) is Err(_),
+  )
+}

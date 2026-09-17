@@ -76,6 +76,8 @@ pub const MAX_FRAME_PAYLOAD : Int = 33554432
 
 pub const PROTOCOL_VERSION : Int = 2
 
+pub fn decode_assignments(Bytes) -> Result[Array[AssignmentView], String]
+
 pub fn decode_confirmation(Bytes) -> Result[Confirmation, String]
 
 pub fn decode_error(Bytes) -> (Int, String)
@@ -85,6 +87,8 @@ pub fn decode_header(Bytes) -> Result[(Int, Int, Int), String]
 pub fn decode_hello(Bytes) -> Result[(Int, Int), String]
 
 pub fn decode_node(Bytes) -> Result[NodeRecord, String]
+
+pub fn decode_node_full(Bytes) -> Result[(NodeRecord, Array[PartitionReport]), String]
 
 pub fn decode_nodes(Bytes) -> Result[Array[NodeRecord], String]
 
@@ -110,6 +114,8 @@ pub fn decode_wire_topic(Bytes) -> Result[WireTopic, String]
 
 pub fn decode_wire_topics(Bytes) -> Result[Array[WireTopic], String]
 
+pub fn encode_assignments(Array[AssignmentView]) -> Bytes
+
 pub fn encode_confirmation(Confirmation) -> Bytes
 
 pub fn encode_error(Int, String) -> Bytes
@@ -121,6 +127,8 @@ pub fn encode_frame_bytes(Frame) -> Bytes
 pub fn encode_hello(Int, Int) -> Bytes
 
 pub fn encode_node(NodeRecord) -> Bytes
+
+pub fn encode_node_full(NodeRecord, Array[PartitionReport]) -> Bytes
 
 pub fn encode_nodes(Array[NodeRecord]) -> Bytes
 
@@ -157,6 +165,14 @@ pub(all) suberror ClientError {
 pub impl Show for ClientError
 
 // Types and methods
+pub(all) struct AssignmentView {
+  topic : String
+  partition : Int
+  leader : String
+  replicas : Array[String]
+  nominated : String
+} derive(Eq, Show, @debug.Debug)
+
 pub(all) struct Confirmation {
   partition : PartitionRef
   candidate : String
@@ -212,6 +228,12 @@ pub(all) enum NodeRole {
 pub(all) struct PartitionRef {
   topic : String
   partition : Int
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct PartitionReport {
+  topic : String
+  partition : Int
+  leo : Int64
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct PartitionView {

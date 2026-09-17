@@ -98,14 +98,230 @@ fn control_call(
   cmd : Int,
   payload : Bytes,
 ) -> Result[Bytes, String] {
-  let (host, port) = parse_listen_addr(sc_addr)
+  control_call_with_timeout(sc_addr, cmd, payload, CONTROL_CALL_TIMEOUT_MS)
+}
+
+///|
+/// The peer-to-peer deadline. Shorter than the control plane's on
+/// purpose (P7): a node talks to *every* partition's leader each tick,
+/// and a busy peer must not hold this node's loop — the same "deadline,
+/// not a wait" rule as the control path, tightened because the fan-out
+/// is now per partition.
+///
+/// A missed call is not a failure of the protocol: replication is
+/// convergent and the next tick retries, so a short deadline costs a
+/// retry, never a record (failures are reported once, not per tick).
+const PEER_CALL_TIMEOUT_MS : Int = 2000
+
+///|
+/// How long a peer connection may take to establish. A listening peer
+/// accepts from the backlog immediately, so this is a routing check
+/// (nothing there) rather than a patience setting.
+const CONNECT_TIMEOUT_MS : Int = 300
+
+///|
+/// A *cooperative* peer call: the node keeps serving its own
+/// connections while it waits for the peer's reply.
+///
+/// Why not a plain blocking call (P7 measured the alternative): every
+/// node is one thread, so an outbound call is a window in which this
+/// node answers nobody. With per-partition fan-out every node leads
+/// some partitions and follows others, so the windows line up into a
+/// ring of deaf nodes — calls timed out, retries made the cycles
+/// longer, and a node was late enough to be declared dead by the
+/// control plane. Waiting *while* serving removes the window instead of
+/// shrinking it.
+fn peer_call(
+  pump : () -> Unit,
+  address : String,
+  cmd : Int,
+  payload : Bytes,
+) -> Result[Bytes, String] {
+  let (host, port) = parse_listen_addr(address)
+  // a plain blocking connect: a listening peer accepts from the
+  // backlog immediately, so this is a routing check, not a wait
+  let stream = match @net.TcpStream::connect(host, port) {
+    Ok(stream) => stream
+    Err(e) => return Err("connect \{address}: \{e}")
+  }
+  let result = peer_call_on(pump, stream, cmd, payload)
+  let _ = stream.close()
+  result
+}
+
+///|
+fn peer_call_on(
+  pump : () -> Unit,
+  stream : @net.TcpStream,
+  cmd : Int,
+  payload : Bytes,
+) -> Result[Bytes, String] {
+  match stream.set_nonblocking(true) {
+    Ok(_) => ()
+    Err(e) => return Err("nonblocking: \{e}")
+  }
+  let deadline = now_ms() + PEER_CALL_TIMEOUT_MS.to_int64()
+  let inbox : Array[Byte] = []
+  // handshake, then the request: the same two frames the blocking
+  // client sends, only the waiting differs
+  match
+    send_all(
+      pump,
+      stream,
+      @client.encode_frame(@client.Frame::{
+        cmd: @client.CMD_HELLO,
+        rid: 0,
+        payload: @client.encode_hello(1, 0),
+      }),
+      deadline,
+    ) {
+    Ok(_) => ()
+    Err(e) => return Err("hello: \{e}")
+  }
+  let welcome = match await_frame(pump, stream, inbox, deadline) {
+    Ok(frame) => frame
+    Err(e) => return Err("handshake: \{e}")
+  }
+  if welcome.cmd == @client.CMD_ERR {
+    let (code, message) = @client.decode_error(welcome.payload)
+    return Err("handshake rejected (code \{code}): \{message}")
+  }
+  if welcome.cmd != @client.CMD_WELCOME {
+    return Err("expected WELCOME, got cmd \{welcome.cmd}")
+  }
+  let rid = 1
+  match
+    send_all(
+      pump,
+      stream,
+      @client.encode_frame(@client.Frame::{ cmd, rid, payload }),
+      deadline,
+    ) {
+    Ok(_) => ()
+    Err(e) => return Err("send: \{e}")
+  }
+  let reply = match await_frame(pump, stream, inbox, deadline) {
+    Ok(frame) => frame
+    Err(e) => return Err("reply: \{e}")
+  }
+  if reply.cmd == @client.CMD_ERR {
+    let (code, message) = @client.decode_error(reply.payload)
+    return Err("rejected (code \{code}): \{message}")
+  }
+  Ok(reply.payload)
+}
+
+///|
+/// Writes every byte, serving connections in between. Frames here are
+/// small (a request is tens of bytes), so a partial write means the
+/// peer's window is full — the loop gives it time and tries again.
+fn send_all(
+  pump : () -> Unit,
+  stream : @net.TcpStream,
+  bytes : Bytes,
+  deadline : Int64,
+) -> Result[Unit, String] {
+  let mut sent = 0
+  while sent < bytes.length() {
+    match stream.send_some(bytes[sent:bytes.length()].to_owned()) {
+      Ok(0) => return Err("peer closed while writing")
+      Ok(n) => sent = sent + n
+      Err(WouldBlock) => {
+        pump()
+        if now_ms() > deadline {
+          return Err("write deadline")
+        }
+        let _ = @net.poll_readable([stream], 10)
+      }
+      Err(e) => return Err("\{e}")
+    }
+  }
+  Ok(())
+}
+
+///|
+/// Reads one complete frame, serving connections while it waits. The
+/// buffer is the caller's, so a frame split across reads survives (a
+/// single-threaded node cannot afford to lose a half-read frame).
+fn await_frame(
+  pump : () -> Unit,
+  stream : @net.TcpStream,
+  inbox : Array[Byte],
+  deadline : Int64,
+) -> Result[@client.Frame, String] {
+  let chunk : FixedArray[Byte] = FixedArray::make(8192, b'\x00')
+  while true {
+    if inbox.length() >= 13 {
+      let head = Bytes::from_array(inbox[0:13])
+      let (cmd, rid, payload_len) = match @client.decode_header(head) {
+        Ok(parts) => parts
+        Err(e) => return Err(e)
+      }
+      let total = 13 + payload_len
+      if inbox.length() >= total {
+        let payload = Bytes::from_array(inbox[13:total])
+        // consume what was taken: the same buffer carries the *next*
+        // reply, and leaving the bytes in place made the second wait
+        // return the first frame again (P7: the fetch reply decoded as
+        // a welcome payload)
+        let rest : Array[Byte] = []
+        for i = total; i < inbox.length(); i = i + 1 {
+          rest.push(inbox[i])
+        }
+        inbox.clear()
+        for b in rest {
+          inbox.push(b)
+        }
+        return Ok(@client.Frame::{ cmd, rid, payload })
+      }
+    }
+    // not there yet: serve our own connections, then look again
+    pump()
+    if now_ms() > deadline {
+      return Err("deadline")
+    }
+    let ready = match @net.poll_readable([stream], 10) {
+      Ok(ready) => ready
+      Err(e) => return Err("\{e}")
+    }
+    if ready.length() == 0 {
+      continue
+    }
+    match stream.recv_some(chunk, chunk.length()) {
+      Ok(0) => return Err("peer closed")
+      Ok(n) => {
+        for i = 0; i < n; i = i + 1 {
+          inbox.push(chunk[i])
+        }
+        if inbox.length() > @client.MAX_FRAME_PAYLOAD + 13 {
+          return Err("peer sent an oversized frame")
+        }
+      }
+      Err(WouldBlock) => ()
+      Err(e) => return Err("\{e}")
+    }
+  } nobreak {
+    Err(
+      // unreachable: every exit above is a return
+      "unreachable",
+    )
+  }
+}
+
+///|
+fn control_call_with_timeout(
+  addr : String,
+  cmd : Int,
+  payload : Bytes,
+  timeout_ms : Int,
+) -> Result[Bytes, String] {
+  let (host, port) = parse_listen_addr(addr)
   // a deadline, not a wait: every node is a single-threaded loop, so
   // a busy peer must fail this call rather than block this node's
   // whole tick
-  let conn = match
-    @native.tcp_with_timeout(host, port, CONTROL_CALL_TIMEOUT_MS) {
+  let conn = match @native.tcp_with_timeout(host, port, timeout_ms) {
     Ok(conn) => conn
-    Err(e) => return Err("connect \{sc_addr}: \{e}")
+    Err(e) => return Err("connect \{addr}: \{e}")
   }
   let result = control_call_on(conn, cmd, payload)
   (conn.close)()
@@ -160,12 +376,28 @@ fn control_call_on(
 fn report_to_control(
   sc_addr : String,
   record : @client.NodeRecord,
+  reports : Array[@client.PartitionReport],
   cmd : Int,
-) -> Result[Unit, String] {
-  match control_call(sc_addr, cmd, @client.encode_node(record)) {
-    Ok(_) => Ok(())
-    Err(e) => Err(e)
+) -> Result[Bytes, String] {
+  let payload = match
+    control_call(sc_addr, cmd, @client.encode_node_full(record, reports)) {
+    Ok(payload) => payload
+    Err(e) => return Err(e)
   }
+  // the reply carries this node's assignments: placement is the
+  // control plane's state, and the heartbeat is the channel that
+  // delivers it (README 决策 20's pattern, applied to placement)
+  @client.decode_assignments(payload)
+  |> Result::map(fn(_assignments) { payload })
+}
+
+///|
+/// The assignments in a heartbeat reply, or an empty list when the
+/// reply is empty (a control plane with no placements).
+fn assignments_of(
+  payload : Bytes,
+) -> Result[Array[@client.AssignmentView], String] {
+  @client.decode_assignments(payload)
 }
 
 ///|
@@ -195,7 +427,12 @@ fn cmd_spu(argv : Array[String]) -> Unit {
     Ok(port) => port
     Err(_) => port
   }
-  match listener.set_accept_timeout_ms(HOUSEKEEPING_INTERVAL_MS) {
+  // The accept timeout is the *loop* tick, not the heartbeat cadence:
+  // a blocking accept makes every poll cost a full timeout, and the
+  // pump polls several times per cycle (P7 measured 1.0-1.5s client
+  // latency, all of it spent waiting for an idle accept). The heartbeat
+  // keeps its 500ms rhythm through its own gate below.
+  match listener.set_accept_timeout_ms(POLL_TICK_MS) {
     Ok(_) => ()
     Err(e) => fail("accept timeout: \{e}")
   }
@@ -210,32 +447,52 @@ fn cmd_spu(argv : Array[String]) -> Unit {
     None => note("  no control plane configured (standalone data node)")
   }
   let rules = RuleState::new()
-  // Note: a data node still serves one connection at a time. Its peers
-  // are known and few (the control plane, and its partition's followers
-  // pulling in turn), and the hub that `serve` now uses would need the
-  // replication paths ported to stay correct. Recorded as a known
-  // limitation rather than papered over; the browser path — the one
-  // where an unknown number of clients appear — is multiplexed.
-  let partition = PartitionHost::new(data_dir, identity.id, "\{host}:\{actual}")
-  partition.topic = applied_topic(data_dir)
-  if partition.topic.length() > 0 {
-    note("hosting topic \{partition.topic}")
-  } else {
-    note(
-      "no pipeline applied yet: this node serves requests but hosts no topic",
-    )
+  // A data node serves many peers at once (P7): every partition's
+  // followers pull from its leader, so "one connection at a time" turns
+  // into peers starving each other — the same problem `serve` solved in
+  // P5, with the same hub. The housekeeping tick (heartbeat, placement,
+  // replication) runs between polls.
+  // What this node hosts is the control plane's decision, delivered in
+  // the heartbeat reply; a node with no control plane falls back to the
+  // degenerate single-node placement (partition 0 of its applied topic)
+  // and says so, because then nobody else is holding the data.
+  let hosts = HostTable::new(data_dir, identity.id, "\{host}:\{actual}")
+  let sc_addr = match sc {
+    Some(addr) => addr
+    None => ""
   }
+  hosts.applied_topic = applied_topic(data_dir)
+  if sc is None {
+    hosts.self_place("no control plane configured")
+    if hosts.applied_topic.length() == 0 {
+      note(
+        "no pipeline applied yet: this node serves requests but hosts nothing",
+      )
+    }
+  }
+  // The poll timeout must stay well under the peer deadline: a busy
+  // node only notices an inbound pull when it polls, and a follower
+  // that waits longer than PEER_CALL_TIMEOUT_MS for its handshake
+  // gives up (P7 measured exactly that: 500ms poll vs 300ms
+  // deadline, every replication call timing out). The heartbeat keeps
+  // its own 500ms cadence through the gate below.
+  let hub = ConnectionHub::new(listener, POLL_TICK_MS)
+  let handler = HubHandler::{
+    on_frame: fn(frame) {
+      let reply = dispatch_data_frame(frame, data_dir, rules, hosts, sc_addr)
+      @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1 }
+    },
+    on_ready: fn() { () },
+  }
+  // the pump: what every outbound call does first. It is the same
+  // poll the main loop runs, so a peer's inbound handshake is served
+  // between our calls rather than after all of them.
+  let pump = fn() { let _ = hub.poll_once(handler, fn(_kind) { () }) }
   let mut last_report : Int64 = -1L
   let mut registered = false
+  let mut last_assignment_count = -1
   while true {
-    match listener.accept() {
-      Ok(stream) => {
-        handle_data_connection(stream, data_dir, rules, partition)
-        let _ = stream.close()
-      }
-      Err(TimedOut) => () // housekeeping tick
-      Err(e) => fail("accept: \{e}")
-    }
+    let _ = hub.poll_once(handler, fn(_kind) { () })
     match sc {
       None => ()
       Some(sc_addr) => {
@@ -243,6 +500,9 @@ fn cmd_spu(argv : Array[String]) -> Unit {
         if last_report < 0L ||
           now - last_report >= HOUSEKEEPING_INTERVAL_MS.to_int64() {
           last_report = now
+          // the node-level leo stays: it is the compat field every
+          // pre-P7 reader knows, and it means partition 0 of the
+          // applied topic (the real truth travels per partition below)
           let leo = local_leo(data_dir)
           let record = @client.NodeRecord::{
             id: identity.id,
@@ -250,19 +510,46 @@ fn cmd_spu(argv : Array[String]) -> Unit {
             address: "\{host}:\{actual}",
             leo,
           }
+          hosts.applied_topic = applied_topic(data_dir)
           let cmd = if registered {
             @client.CMD_HEARTBEAT
           } else {
             @client.CMD_REGISTER
           }
-          match report_to_control(sc_addr, record, cmd) {
-            Ok(_) =>
+          match report_to_control(sc_addr, record, hosts.reports(), cmd) {
+            Ok(payload) => {
               if not(registered) {
                 registered = true
                 note(
                   "registered with control plane \{sc_addr} as \{identity.id}",
                 )
               }
+              // placement arrives with the reply: adopt what is
+              // assigned here, drop what is not, then do this node's
+              // half of every partition it holds
+              match assignments_of(payload) {
+                Ok(assignments) => {
+                  if assignments.length() != last_assignment_count {
+                    last_assignment_count = assignments.length()
+                    note(
+                      "placement: \{assignments.length()} partition(s) assigned to this node",
+                    )
+                  }
+                  for assignment in assignments {
+                    hosts.adopt(assignment)
+                  }
+                  hosts.retain(assignments)
+                  // one partition at a time, serving connections in
+                  // between: the fan-out must not starve the peers
+                  // whose pulls this node is answering
+                  for i = 0; i < hosts.host_count(); i = i + 1 {
+                    hosts.tick_one(sc_addr, i, pump)
+                  }
+                }
+                Err(e) =>
+                  note("warning: cannot read this node's assignments: \{e}")
+              }
+            }
             Err(e) => {
               // a control plane that is down must not take the data
               // node down: it keeps serving, and re-registers later
@@ -271,51 +558,6 @@ fn cmd_spu(argv : Array[String]) -> Unit {
               }
               note("warning: control plane \{sc_addr} unreachable: \{e}")
             }
-          }
-          // refresh placement, then do this node's half of it: a
-          // leader serves frames, a follower pulls them
-          if partition.topic.length() > 0 {
-            // a freshly applied pipeline can change which topic this
-            // node hosts (node.json has no opinion on topics)
-            let applied = applied_topic(data_dir)
-            if applied.length() > 0 && applied != partition.topic {
-              partition.topic = applied
-              partition.ledger = None
-              partition.leader_addr = ""
-              partition.caught_up = false
-              note("now hosting topic \{partition.topic}")
-            }
-            match ask_leader(sc_addr, partition.topic) {
-              Ok(view) => {
-                partition.adopt_view(view)
-                // the control plane offers leadership by naming a
-                // candidate; accepting means promoting ourselves and
-                // then telling it (the reference's two-phase
-                // election: nominating and confirming are different
-                // acts, and neither alone makes a leader)
-                if view.nominated == partition.address && !partition.is_leader() {
-                  match partition.take_nomination(view) {
-                    Ok(_) =>
-                      match
-                        confirm_leadership(
-                          sc_addr,
-                          partition.topic,
-                          partition.address,
-                        ) {
-                        Ok(_) => ()
-                        Err(e) =>
-                          note("warning: could not confirm leadership: \{e}")
-                      }
-                    Err(e) => note("warning: refused a nomination: \{e}")
-                  }
-                }
-              }
-              Err(e) =>
-                if partition.leader_addr.length() > 0 {
-                  note("warning: cannot refresh placement: \{e}")
-                }
-            }
-            partition.replicate_once()
           }
         }
       }
@@ -378,6 +620,12 @@ fn cmd_sc(argv : Array[String]) -> Unit {
 const CONTROL_CALL_TIMEOUT_MS : Int = 1000
 
 ///|
+/// How long the node's event loop may wait for a connection before
+/// looking at its housekeeping clock again. Small on purpose: it is
+/// the worst-case delay before an inbound replication pull is served.
+const POLL_TICK_MS : Int = 50
+
+///|
 /// How often a node does housekeeping (its accept timeout, and the
 /// heartbeat cadence). Deliberately faster than the liveness timeout
 /// so that a healthy node is never late by accident.
@@ -431,6 +679,9 @@ fn local_leo(data_dir : String) -> Int64 {
 /// One node as the control plane sees it.
 struct NodeEntry {
   record : @client.NodeRecord
+  /// per-partition progress (P7). `record.leo` stays for readers that
+  /// predate this section; elections read these.
+  reports : Array[@client.PartitionReport]
   last_seen_ms : Int64
   online : Bool
 }
@@ -482,17 +733,51 @@ fn NodeTable::find(self : NodeTable, id : String) -> NodeEntry? {
 fn NodeTable::observe(
   self : NodeTable,
   record : @client.NodeRecord,
+  reports : Array[@client.PartitionReport],
   now : Int64,
 ) -> Bool {
   for i in 0..<self.entries.length() {
     if self.entries[i].record.id == record.id {
       let was_online = self.entries[i].online
-      self.entries[i] = NodeEntry::{ record, last_seen_ms: now, online: true }
+      self.entries[i] = NodeEntry::{
+        record,
+        reports,
+        last_seen_ms: now,
+        online: true,
+      }
       return was_online
     }
   }
-  self.entries.push(NodeEntry::{ record, last_seen_ms: now, online: true })
+  self.entries.push(NodeEntry::{
+    record,
+    reports,
+    last_seen_ms: now,
+    online: true,
+  })
   true
+}
+
+///|
+/// The last LEO this node reported for a partition, or 0 when it has
+/// never mentioned it (a node that holds nothing is not a candidate,
+/// and 0 says exactly that).
+fn NodeTable::leo_of(
+  self : NodeTable,
+  address : String,
+  topic : String,
+  partition : Int,
+) -> Int64 {
+  match self.find_address(address) {
+    Some(entry) => {
+      for report in entry.reports {
+        if report.topic == topic && report.partition == partition {
+          return report.leo
+        }
+      }
+      0L
+    }
+    None => 0L
+  }
 }
 
 ///|
@@ -507,6 +792,7 @@ fn NodeTable::sweep(self : NodeTable, now : Int64) -> Array[String] {
       if silence > self.timeout_ms.to_int64() {
         self.entries[i] = NodeEntry::{
           record: self.entries[i].record,
+          reports: self.entries[i].reports,
           last_seen_ms: self.entries[i].last_seen_ms,
           online: false,
         }
@@ -583,15 +869,23 @@ fn handle_control_connection(
     }
     let reply = match frame.cmd {
       @client.CMD_REGISTER | @client.CMD_HEARTBEAT =>
-        match @client.decode_node(frame.payload) {
-          Ok(record) => {
-            let is_new = table.observe(record, now_ms())
-            if is_new && frame.cmd == @client.CMD_REGISTER {
+        match @client.decode_node_full(frame.payload) {
+          Ok(parts) => {
+            let (record, reports) = parts
+            let first_contact = table.observe(record, reports, now_ms())
+            if first_contact && frame.cmd == @client.CMD_REGISTER {
               note(
-                "node \{record.id} (\{@client.role_name(record.role)}) registered at \{record.address}, leo \{record.leo}",
+                "node \{record.id} (\{@client.role_name(record.role)}) registered at \{record.address}",
               )
             }
-            Ok(b"")
+            // the reply carries this node's assignments: placement is
+            // the control plane's state, and this is the channel the
+            // node already polls (README 决策 29)
+            Ok(
+              @client.encode_assignments(
+                placement.assignments_for(record.address),
+              ),
+            )
           }
           Err(e) => Err((@client.ERR_BAD_PAYLOAD, "bad node record: \{e}"))
         }
@@ -715,13 +1009,17 @@ fn handle_control_connection(
 /// mutable state in the process (single-threaded by design).
 struct PartitionHost {
   data_dir : String
+  /// which partition of the topic this host owns (P7): every call the
+  /// host makes on the wire names this pair, so the `partition: 0`
+  /// literal that used to live in the replication helpers is gone
+  partition : Int
   /// the topic this node was given, or "" when nothing is applied;
   /// mutable because a node learns it from the applied pipeline
-  mut topic : String
+  topic : String
   /// the address this node advertises to peers
   address : String
   /// this node's identity
-  mut node_id : String
+  node_id : String
   /// leader-side progress ledger; only meaningful while leading
   mut ledger : @replica.ProgressLedger?
   /// who leads the partition right now ("" = nobody yet)
@@ -730,6 +1028,17 @@ struct PartitionHost {
   mut replicas : Array[String]
   /// set once the follower has reported its first successful pull
   mut caught_up : Bool
+  /// the LEO this host last reported to its leader (-1 = never), so an
+  /// idle follower does not re-ack a position the leader already knows
+  mut last_acked : Int64
+  /// whether the *first* replication failure has been reported. A
+  /// follower that has never succeeded says why once instead of every
+  /// tick — silence here cost a debugging session (P7).
+  mut reported_failure : Bool
+  /// the replica the control plane is currently offering this
+  /// partition to ("" = no election pending); carried in the
+  /// assignment so a candidate needs no extra round trip to notice
+  mut nominated : String
 }
 
 ///|
@@ -737,17 +1046,40 @@ fn PartitionHost::new(
   data_dir : String,
   node_id : String,
   address : String,
+  topic : String,
+  partition : Int,
 ) -> PartitionHost {
   PartitionHost::{
     data_dir,
-    topic: "",
+    partition,
+    topic,
     address,
     node_id,
     ledger: None,
     leader_addr: "",
     replicas: [],
     caught_up: false,
+    last_acked: -1L,
+    reported_failure: false,
+    nominated: "",
   }
+}
+
+///|
+/// An address for a log line: "" is a state, not a typo (nobody leads
+/// this partition right now).
+fn display_addr(address : String) -> String {
+  if address.length() == 0 {
+    "nobody"
+  } else {
+    address
+  }
+}
+
+///|
+/// How this host names itself in logs and errors.
+fn PartitionHost::label(self : PartitionHost) -> String {
+  "\{self.topic}[\{self.partition}]"
 }
 
 ///|
@@ -757,10 +1089,10 @@ fn PartitionHost::open_log(self : PartitionHost) -> @log.SegmentedLog? {
   if self.topic.length() == 0 {
     return None
   }
-  match open_topic_log(self.data_dir, self.topic) {
+  match open_partition_log(self.data_dir, self.topic, self.partition) {
     Ok(log) => Some(log)
     Err(e) => {
-      note("warning: cannot open log for \{self.topic}: \{e}")
+      note("warning: cannot open log for \{self.label()}: \{e}")
       None
     }
   }
@@ -794,6 +1126,7 @@ fn PartitionHost::adopt_view(
   let was_leader = self.is_leader()
   self.leader_addr = view.leader
   self.replicas = view.replicas
+  self.nominated = view.nominated
   if self.is_leader() {
     if !was_leader || self.ledger is None {
       let progress : Array[@replica.ReplicaProgress] = []
@@ -820,7 +1153,7 @@ fn PartitionHost::adopt_view(
           if !was_leader {
             self.caught_up = true
             note(
-              "partition \{self.topic} is led by this node (\{self.address}), replica set \{view.replicas.length()}",
+              "partition \{self.label()} is led by this node (\{self.address}), replica set \{view.replicas.length()}",
             )
           }
         }
@@ -829,7 +1162,7 @@ fn PartitionHost::adopt_view(
     }
   } else if was_leader {
     note(
-      "stepped down: \{view.leader} leads \{self.topic} now, this node follows",
+      "stepped down: \{view.leader} leads \{self.label()} now, this node follows",
     )
     self.ledger = None
     self.caught_up = false
@@ -871,7 +1204,10 @@ fn PartitionHost::sync_leader_leo(self : PartitionHost) -> Unit {
 /// to compare tails with): **the leader's LEO wins**. A local tail
 /// past it was never replicated, so it is cut — and the cut is
 /// reported, never silent.
-fn PartitionHost::replicate_once(self : PartitionHost) -> Unit {
+fn PartitionHost::replicate_once(
+  self : PartitionHost,
+  pump : () -> Unit,
+) -> Unit {
   if self.is_leader() ||
     self.leader_addr.length() == 0 ||
     self.topic.length() == 0 {
@@ -882,85 +1218,99 @@ fn PartitionHost::replicate_once(self : PartitionHost) -> Unit {
     None => return
   }
   let my_leo = log.high_watermark()
-  let (leader_hw, leader_leo) = match offset_info_of(self.leader_addr) {
-    Ok(pair) => pair
+  // **One** call per tick per partition (P7): the pull *is* the probe.
+  // Asking "where does your log end?" first cost an extra blocking
+  // call per partition, and with every node leading some partitions and
+  // following others, the fan-out of those calls is what made three
+  // nodes deafen each other. The reply to a pull already carries the
+  // leader's end and high watermark, so it answers everything the
+  // separate question did — including whether this replica has
+  // diverged.
+  let window = match
+    sync_fetch(
+      pump,
+      self.leader_addr,
+      self.topic,
+      self.partition,
+      my_leo,
+      REPLICATION_BATCH,
+    ) {
+    Ok(window) => window
     Err(e) => {
-      if self.caught_up {
+      if self.caught_up || !self.reported_failure {
         self.caught_up = false
+        self.reported_failure = true
         note("warning: replication from \{self.leader_addr} interrupted: \{e}")
       }
       return
     }
   }
-  if my_leo > leader_leo {
-    match log.truncate_to(leader_leo) {
-      Ok(report) =>
+  if window.log_end_offset < my_leo {
+    // the leader's end is the authority: a local tail past it was never
+    // replicated, so it is cut — and the cut is reported, never silent
+    // the boundary form: the leader's end may land inside one of this
+    // log's frames, and a partial batch is not a thing this log stores
+    match log.truncate_to_boundary(window.log_end_offset) {
+      Ok(report) => {
+        // the leader's view of this replica just changed: the next ack
+        // must be sent even if the number is unchanged
+        self.last_acked = -1L
         note(
-          "divergent tail: truncated \{self.topic} from \{my_leo} to \{leader_leo} (dropped \{report.dropped_records} records, \{report.dropped_bytes} bytes)",
+          "divergent tail: truncated \{self.label()} from \{my_leo} to \{window.log_end_offset} (dropped \{report.dropped_records} records, \{report.dropped_bytes} bytes)",
         )
+      }
       Err(e) => {
         note("warning: cannot truncate divergent tail: \{e}")
         return
       }
     }
-  } else if my_leo < leader_leo {
-    let window = match
-      sync_fetch(self.leader_addr, self.topic, my_leo, REPLICATION_BATCH) {
-      Ok(window) => window
-      Err(e) => {
-        if self.caught_up {
-          self.caught_up = false
-          note(
-            "warning: replication from \{self.leader_addr} interrupted: \{e}",
-          )
-        }
-        return
-      }
+  } else if window.record_count > 0 {
+    if window.base_offset != my_leo {
+      note(
+        "warning: leader offered \{self.label()} from \{window.base_offset} but this node ends at \{my_leo}; refusing to guess",
+      )
+      return
     }
-    if window.record_count > 0 {
-      if window.base_offset != my_leo {
-        note(
-          "warning: leader offered \{self.topic} from \{window.base_offset} but this node ends at \{my_leo}; refusing to guess",
-        )
+    match log.append_raw(window.frames, window.record_count) {
+      Ok(_) => ()
+      Err(e) => {
+        note("warning: cannot apply replicated frames: \{e}")
         return
-      }
-      match log.append_raw(window.frames, window.record_count) {
-        Ok(_) => ()
-        Err(e) => {
-          note("warning: cannot apply replicated frames: \{e}")
-          return
-        }
       }
     }
   }
-  let _ = leader_hw
-  // tell the leader how far this node has durably stored
+  // tell the leader how far this node has durably stored — but only
+  // when that is news. Re-acking the same LEO every tick was a second
+  // call per partition per tick for nothing.
   let acked = log.high_watermark()
-  match sync_ack(self.leader_addr, self.topic, self.address, acked) {
-    Ok(_) =>
+  if acked == self.last_acked {
+    return
+  }
+  match
+    sync_ack(
+      pump,
+      self.leader_addr,
+      self.topic,
+      self.partition,
+      self.address,
+      acked,
+    ) {
+    Ok(_) => {
+      self.last_acked = acked
+      self.reported_failure = false
       if !self.caught_up {
         self.caught_up = true
         note(
-          "replicating \{self.topic} from \{self.leader_addr}; caught up to \{acked}",
+          "replicating \{self.label()} from \{self.leader_addr}; caught up to \{acked}",
         )
       }
+    }
     Err(e) =>
       if self.caught_up {
         self.caught_up = false
         note("warning: ack to \{self.leader_addr} failed: \{e}")
       }
   }
-}
-
-///|
-/// Asks a node for its watermark pair. Position-independent, so it is
-/// also the question a rejoining replica can always ask.
-fn offset_info_of(address : String) -> Result[(Int64, Int64), String] {
-  let payload = match control_call(address, @client.CMD_OFFSET_INFO, b"") {
-    Ok(payload) => payload
-    Err(e) => return Err(e)
-  }
-  @client.decode_offset_info(payload)
 }
 
 ///|
@@ -973,18 +1323,21 @@ const REPLICATION_BATCH : Int = 512
 ///|
 /// Asks the leader for raw frames from `from`.
 fn sync_fetch(
+  pump : () -> Unit,
   leader_addr : String,
   topic : String,
+  partition : Int,
   from : Int64,
   max_records : Int,
 ) -> Result[@client.SyncResponse, String] {
   let request = @client.SyncRequest::{
-    partition: @client.PartitionRef::{ topic, partition: 0 },
+    partition: @client.PartitionRef::{ topic, partition },
     from,
     max_records,
   }
   let payload = match
-    control_call(
+    peer_call(
+      pump,
       leader_addr,
       @client.CMD_SYNC_FETCH,
       @client.encode_sync_request(request),
@@ -999,18 +1352,21 @@ fn sync_fetch(
 /// Reports this node's log end to its leader and returns the leader's
 /// watermarks.
 fn sync_ack(
+  pump : () -> Unit,
   leader_addr : String,
   topic : String,
+  partition : Int,
   from : String,
   leo : Int64,
 ) -> Result[(Int64, Int64), String] {
   let ack = @client.SyncAck::{
-    partition: @client.PartitionRef::{ topic, partition: 0 },
+    partition: @client.PartitionRef::{ topic, partition },
     from,
     leo,
   }
   let payload = match
-    control_call(
+    peer_call(
+      pump,
       leader_addr,
       @client.CMD_SYNC_ACK,
       @client.encode_sync_ack(ack),
@@ -1022,12 +1378,17 @@ fn sync_ack(
 }
 
 ///|
-/// Asks the control plane who leads this node's partition.
+/// Asks the control plane who leads a partition. Placement otherwise
+/// arrives with the heartbeat reply; this is the *on-demand* path a
+/// request handler uses when it meets a partition it has not heard
+/// about yet — the window between "the control plane placed it" and
+/// "the next heartbeat told this node".
 fn ask_leader(
   sc_addr : String,
   topic : String,
+  partition : Int,
 ) -> Result[@client.PartitionView, String] {
-  let ref = @client.PartitionRef::{ topic, partition: 0 }
+  let ref = @client.PartitionRef::{ topic, partition }
   let payload = match
     control_call(sc_addr, @client.CMD_LEADER, @client.encode_partition_ref(ref)) {
     Ok(payload) => payload
@@ -1042,16 +1403,18 @@ fn ask_leader(
 /// (core/replica); this function only moves the numbers.
 fn PartitionHost::observe_follower(
   self : PartitionHost,
-  topic : String,
+  ref : @client.PartitionRef,
   address : String,
   leo : Int64,
 ) -> Result[(Int64, Int64), String] {
-  if self.topic != topic {
-    return Err("this node hosts \{self.topic}, not \{topic}")
+  if self.topic != ref.topic || self.partition != ref.partition {
+    return Err(
+      "this node hosts \{self.label()}, not \{ref.topic}[\{ref.partition}]",
+    )
   }
   let ledger = match self.ledger {
     Some(ledger) => ledger
-    None => return Err("this node is not tracking progress for \{topic}")
+    None => return Err("this node is not tracking progress for \{self.label()}")
   }
   match ledger.observe(address, leo) {
     Ok(_) => ()
@@ -1141,10 +1504,11 @@ fn PartitionHost::take_nomination(
 fn confirm_leadership(
   sc_addr : String,
   topic : String,
+  partition : Int,
   candidate : String,
 ) -> Result[Unit, String] {
   let confirmation = @client.Confirmation::{
-    partition: @client.PartitionRef::{ topic, partition: 0 },
+    partition: @client.PartitionRef::{ topic, partition },
     candidate,
   }
   match
@@ -1159,67 +1523,370 @@ fn confirm_leadership(
 }
 
 ///|
-/// The data-node connection handler: `serve`'s protocol plus the
-/// replication commands. Kept beside `handle_connection` rather than
-/// folded into it so that `serve` (a single process that owns its
-/// data dir and belongs to no cluster) keeps its exact old behaviour —
-/// every pre-P3 gate runs through that path.
-fn handle_data_connection(
-  stream : @net.TcpStream,
+/// Every partition this node hosts (P7). A data node is a *set* of
+/// hosts, not one partition: placement decides which ones, and the
+/// control plane delivers that decision in the heartbeat reply.
+///
+/// Dropping a host never deletes data: the log stays on disk, so a
+/// partition that comes back to this node resumes instead of
+/// rebuilding. The ledger, though, is per-incarnation state and goes
+/// with the host (the next adoption seeds it from the replicas).
+struct HostTable {
+  data_dir : String
+  node_id : String
+  address : String
+  /// the topic the applied pipeline writes to ("" = none). Placement
+  /// wins whenever a control plane declares this topic; when nobody
+  /// declares it, this node is the only holder there is, and that is
+  /// the degenerate placement `self_place` makes — the pre-P7 behavior,
+  /// now written down instead of implied.
+  mut applied_topic : String
+  mut hosts : Array[PartitionHost]
+}
+
+///|
+fn HostTable::new(
   data_dir : String,
-  rules : RuleState,
-  partition : PartitionHost,
-) -> Unit {
-  let conn = @native.from_stream(stream)
-  let hello = match conn.recv_first() {
-    @client.Got(frame) => frame
-    @client.Eof => return
-    @client.Garbage(_) => return
-    @client.WrongVersion(_) => {
-      let _ = conn.send_frame(@client.Frame::{
-        cmd: @client.CMD_ERR,
-        rid: 0,
-        payload: @client.encode_error(
-          @client.ERR_UNSUPPORTED_VERSION,
-          "data node speaks frame version \{@client.PROTOCOL_VERSION}",
-        ),
-      })
-      return
-    }
-  }
-  if hello.cmd != @client.CMD_HELLO {
-    let _ = conn.send_frame(@client.Frame::{
-      cmd: @client.CMD_ERR,
-      rid: hello.rid,
-      payload: @client.encode_error(
-        @client.ERR_SEQUENCE,
-        "handshake required: send HELLO first",
-      ),
-    })
+  node_id : String,
+  address : String,
+) -> HostTable {
+  HostTable::{ data_dir, node_id, address, applied_topic: "", hosts: [] }
+}
+
+///|
+/// Holds partition 0 of the applied topic alone. Called only when no
+/// control plane placement exists for it — a declared topic is always
+/// the control plane's call, never this node's.
+fn HostTable::self_place(self : HostTable, reason : String) -> Unit {
+  if self.applied_topic.length() == 0 {
     return
   }
-  let _ = conn.send_frame(@client.Frame::{
-    cmd: @client.CMD_WELCOME,
-    rid: hello.rid,
-    payload: @client.encode_hello(1, 0),
-  })
-  while true {
-    let frame = match conn.recv_frame() {
-      Ok(Some(frame)) => frame
-      Ok(None) => return
-      Err(_) => return
-    }
-    let reply = dispatch_data_frame(frame, data_dir, rules, partition)
-    match
-      conn.send_frame(@client.Frame::{
-        cmd: reply.0,
-        rid: frame.rid,
-        payload: reply.1,
-      }) {
-      Ok(_) => ()
-      Err(_) => return
+  match self.get(self.applied_topic, 0) {
+    Some(_) => ()
+    None => {
+      let host = PartitionHost::new(
+        self.data_dir,
+        self.node_id,
+        self.address,
+        self.applied_topic,
+        0,
+      )
+      host.adopt_view(@client.PartitionView::{
+        leader: self.address,
+        replicas: [self.address],
+        nominated: "",
+      })
+      self.hosts.push(host)
+      note(
+        "hosting \{self.applied_topic}[0] alone (\{reason}); committed prefix = log end until a replica set says otherwise",
+      )
     }
   }
+}
+
+///|
+fn HostTable::find(self : HostTable, topic : String, partition : Int) -> Int? {
+  for i, host in self.hosts {
+    if host.topic == topic && host.partition == partition {
+      return Some(i)
+    }
+  }
+  None
+}
+
+///|
+/// The host for a partition, or None when this node does not hold it.
+fn HostTable::get(
+  self : HostTable,
+  topic : String,
+  partition : Int,
+) -> PartitionHost? {
+  match self.find(topic, partition) {
+    Some(i) => Some(self.hosts[i])
+    None => None
+  }
+}
+
+///|
+/// Creates or updates the host for an assignment. An existing host
+/// keeps its ledger across updates — progress is a fact about the
+/// replicas, and re-seeding it every tick would make the high
+/// watermark flap.
+fn HostTable::adopt(
+  self : HostTable,
+  assignment : @client.AssignmentView,
+) -> Unit {
+  let view = @client.PartitionView::{
+    leader: assignment.leader,
+    replicas: assignment.replicas,
+    nominated: assignment.nominated,
+  }
+  match self.find(assignment.topic, assignment.partition) {
+    Some(i) => {
+      let host = self.hosts[i]
+      let leader_changed = host.leader_addr != assignment.leader
+      host.adopt_view(view)
+      self.hosts[i] = host
+      if leader_changed {
+        note(
+          "\{host.label()}: leader is now \{display_addr(assignment.leader)}",
+        )
+      }
+    }
+    None => {
+      let host = PartitionHost::new(
+        self.data_dir,
+        self.node_id,
+        self.address,
+        assignment.topic,
+        assignment.partition,
+      )
+      host.adopt_view(view)
+      self.hosts.push(host)
+      note(
+        "hosting \{host.label()} (leader \{assignment.leader}, \{assignment.replicas.length()} replica(s))",
+      )
+    }
+  }
+}
+
+///|
+/// The host for a partition, asking the control plane once when this
+/// node has not heard about it yet. Only a partition this node is
+/// actually assigned becomes a host — the control plane's answer is
+/// the authority, this is just latency, not a second placement rule.
+fn HostTable::ensure(
+  self : HostTable,
+  sc_addr : String,
+  topic : String,
+  partition : Int,
+) -> PartitionHost? {
+  match self.get(topic, partition) {
+    Some(host) => return Some(host)
+    None => ()
+  }
+  if sc_addr.length() == 0 {
+    // nobody to ask: the applied topic is all this node knows, and it
+    // is the only holder there is
+    if topic == self.applied_topic && partition == 0 {
+      self.self_place("no control plane configured")
+      return self.get(topic, partition)
+    }
+    return None
+  }
+  match ask_leader(sc_addr, topic, partition) {
+    Ok(view) => {
+      if view.replicas.length() == 0 &&
+        topic == self.applied_topic &&
+        partition == 0 {
+        // the control plane knows nothing about this topic (nobody
+        // declared it), and this node runs the pipeline that writes it
+        self.self_place("no declaration on the control plane")
+        return self.get(topic, partition)
+      }
+      if !view.replicas.contains(self.address) {
+        return None
+      }
+      self.adopt(@client.AssignmentView::{
+        topic,
+        partition,
+        leader: view.leader,
+        replicas: view.replicas,
+        nominated: view.nominated,
+      })
+      self.get(topic, partition)
+    }
+    Err(e) => {
+      if topic == self.applied_topic && partition == 0 {
+        // the control plane is unreachable: fall back to holding the
+        // pipeline's own partition rather than failing the request.
+        // A divergence this creates is resolved by the rejoin rule
+        // (the leader's LEO wins, and the cut is reported).
+        self.self_place("control plane unreachable")
+        return self.get(topic, partition)
+      }
+      note("warning: cannot resolve placement for \{topic}[\{partition}]: \{e}")
+      None
+    }
+  }
+}
+
+///|
+/// Drops hosts the control plane no longer assigns here.
+fn HostTable::retain(
+  self : HostTable,
+  assignments : Array[@client.AssignmentView],
+) -> Unit {
+  let kept : Array[PartitionHost] = []
+  for host in self.hosts {
+    let mut still_assigned = false
+    for a in assignments {
+      if a.topic == host.topic && a.partition == host.partition {
+        still_assigned = true
+      }
+    }
+    if still_assigned {
+      kept.push(host)
+    } else {
+      note("no longer assigned \{host.label()}; its log stays on disk")
+    }
+  }
+  self.hosts = kept
+}
+
+///|
+/// The per-partition progress this node reports upward.
+fn HostTable::reports(self : HostTable) -> Array[@client.PartitionReport] {
+  let out : Array[@client.PartitionReport] = []
+  for host in self.hosts {
+    out.push(@client.PartitionReport::{
+      topic: host.topic,
+      partition: host.partition,
+      leo: host.leo(),
+    })
+  }
+  out
+}
+
+///|
+/// One housekeeping pass over every host: promote if this node is the
+/// nominated candidate, then do this node's half of the partition —
+/// a leader folds its own log end into the ledger, a follower pulls.
+///
+/// Nothing here asks the control plane anything: the assignment that
+/// arrived with the heartbeat already carries leader, replicas and
+/// nomination, so placement costs zero extra round trips.
+fn HostTable::host_count(self : HostTable) -> Int {
+  self.hosts.length()
+}
+
+///|
+/// One partition's housekeeping round. Split out from the loop so the
+/// caller can serve connections *between* partitions: with replication
+/// fanning out per partition, a pass that never polled made peers wait
+/// a whole deadline per partition (P7 measured this: three nodes, all
+/// of them pulling at once, handshakes timing out).
+fn HostTable::tick_one(
+  self : HostTable,
+  sc_addr : String,
+  i : Int,
+  pump : () -> Unit,
+) -> Unit {
+  let host = self.hosts[i]
+  if host.is_leader() {
+    host.sync_leader_leo()
+  } else if host.topic.length() > 0 {
+    if host.nominated == host.address && !host.is_leader() {
+      let view = @client.PartitionView::{
+        leader: host.leader_addr,
+        replicas: host.replicas,
+        nominated: host.nominated,
+      }
+      match host.take_nomination(view) {
+        Ok(_) =>
+          match
+            confirm_leadership(
+              sc_addr,
+              host.topic,
+              host.partition,
+              host.address,
+            ) {
+            Ok(_) => ()
+            Err(e) => note("warning: could not confirm leadership: \{e}")
+          }
+        Err(e) => note("warning: refused a nomination: \{e}")
+      }
+    }
+    host.replicate_once(pump)
+  }
+  self.hosts[i] = host
+}
+
+///|
+/// Every host once, in order — the form the tests and any caller
+/// without connections to serve use.
+fn HostTable::tick(
+  self : HostTable,
+  sc_addr : String,
+  pump : () -> Unit,
+) -> Unit {
+  for i, _ in self.hosts {
+    self.tick_one(sc_addr, i, pump)
+  }
+}
+
+///|
+/// The topic a produce payload names (its first field). Peeking beats
+/// re-decoding: routing needs the name, the handler needs the batch.
+fn peek_topic(payload : Bytes) -> Result[String, String] {
+  let reader = @codec.Reader::new(payload)
+  read_topic_name(reader)
+}
+
+///|
+/// The partition a committed read names. The committed read reuses the
+/// *unpartitioned* fetch payload (topic, from, max) — partitioning it
+/// was deliberately left out when the read modes landed — so it means
+/// partition 0, exactly as the plain FETCH does.
+fn peek_committed_ref(payload : Bytes) -> Result[@client.PartitionRef, String] {
+  let reader = @codec.Reader::new(payload)
+  let topic = match read_topic_name(reader) {
+    Ok(topic) => topic
+    Err(e) => return Err(e)
+  }
+  Ok(@client.PartitionRef::{ topic, partition: 0 })
+}
+
+///|
+/// The host for a partition, or the error reply to send instead: a
+/// routing miss is answered, never guessed at.
+fn host_or_error(
+  hosts : HostTable,
+  sc_addr : String,
+  topic : String,
+  partition : Int,
+) -> Result[PartitionHost, (Int, Bytes)] {
+  match hosts.ensure(sc_addr, topic, partition) {
+    Some(host) => Ok(host)
+    None =>
+      Err(
+        (
+          @client.CMD_ERR,
+          @client.encode_error(
+            @client.ERR_WRONG_ROLE,
+            "this node does not host \{topic}[\{partition}]",
+          ),
+        ),
+      )
+  }
+}
+
+///|
+/// Writes belong to a partition's leader (P7): a follower accepts no
+/// produce and says who the leader is, so a misdirected client can
+/// correct itself instead of hanging.
+fn require_leader(
+  host : PartitionHost,
+  topic : String,
+  partition : Int,
+) -> Result[Unit, (Int, Bytes)] {
+  if host.is_leader() {
+    return Ok(())
+  }
+  let leader = if host.leader_addr.length() > 0 {
+    host.leader_addr
+  } else {
+    "unknown"
+  }
+  Err(
+    (
+      @client.CMD_ERR,
+      @client.encode_error(
+        @client.ERR_WRONG_ROLE,
+        "writes for \{topic}[\{partition}] must go to its leader (\{leader})",
+      ),
+    ),
+  )
 }
 
 ///|
@@ -1231,14 +1898,59 @@ fn dispatch_data_frame(
   frame : @client.Frame,
   data_dir : String,
   rules : RuleState,
-  partition : PartitionHost,
+  hosts : HostTable,
+  sc_addr : String,
 ) -> (Int, Bytes) {
   match frame.cmd {
+    @client.CMD_HELLO => {
+      // the hub delivers the handshake frame to the same dispatcher the
+      // data commands use (that is how `serve` works too), so the data
+      // node answers it here rather than in a separate connection loop
+      let (major, _minor) = match @client.decode_hello(frame.payload) {
+        Ok(parts) => parts
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+          )
+      }
+      if major != 1 {
+        return (
+          @client.CMD_ERR,
+          @client.encode_error(
+            @client.ERR_UNSUPPORTED_VERSION,
+            "data node speaks major version 1 (frames v2); client sent \{major}",
+          ),
+        )
+      }
+      (@client.CMD_WELCOME, @client.encode_hello(1, 0))
+    }
     @client.CMD_PRODUCE => {
+      // the unpartitioned commands mean partition 0 of the topic they
+      // name — true since P5, still true here
+      let topic = match peek_topic(frame.payload) {
+        Ok(topic) => topic
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+          )
+      }
+      let host = match host_or_error(hosts, sc_addr, topic, 0) {
+        Ok(host) => host
+        Err(reply) => return reply
+      }
+      match require_leader(host, topic, 0) {
+        Ok(_) => ()
+        Err(reply) => return reply
+      }
       let reply = dispatch_produce(frame.payload, data_dir)
-      // the append just moved this node's log end; the ledger is
-      // what the watermark arithmetic reads
-      partition.sync_leader_leo()
+      // the append just moved this node's log end; the ledger is what
+      // the watermark arithmetic reads
+      match hosts.get(topic, 0) {
+        Some(fresh) => fresh.sync_leader_leo()
+        None => ()
+      }
       reply
     }
     @client.CMD_FETCH => {
@@ -1246,30 +1958,65 @@ fn dispatch_data_frame(
       dispatch_fetch(frame.payload, data_dir, rules)
     }
     @client.CMD_FETCH_COMMITTED => {
+      let ref = match peek_committed_ref(frame.payload) {
+        Ok(ref) => ref
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+          )
+      }
+      let host = match host_or_error(hosts, sc_addr, ref.topic, ref.partition) {
+        Ok(host) => host
+        Err(reply) => return reply
+      }
       // a committed read is a question for the leader: only it knows
       // how far the replicas have confirmed
-      if !partition.is_leader() {
-        return (
-          @client.CMD_ERR,
-          @client.encode_error(
-            @client.ERR_WRONG_ROLE,
-            "committed reads must go to the leader (\{partition.leader_addr})",
-          ),
-        )
+      match require_leader(host, ref.topic, ref.partition) {
+        Ok(_) => ()
+        Err(reply) => return reply
       }
       rules.sync(data_dir)
-      partition.sync_leader_leo()
-      let (hw, leo) = match partition.ledger {
+      host.sync_leader_leo()
+      let mut host = host
+      match hosts.get(ref.topic, ref.partition) {
+        Some(fresh) => host = fresh
+        None => ()
+      }
+      let (hw, leo) = match host.ledger {
         Some(ledger) => {
           let info = ledger.offset_info()
           (info.high_watermark, info.log_end_offset)
         }
-        None => (0L, partition.leo())
+        None => (0L, host.leo())
       }
       dispatch_fetch_committed(frame.payload, data_dir, rules, hw, leo)
     }
     @client.CMD_PRODUCE_PARTITION => {
+      let ref = match @client.decode_partitioned_produce(frame.payload) {
+        Ok(parts) => {
+          let (topic, partition, _frame) = parts
+          @client.PartitionRef::{ topic, partition }
+        }
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+          )
+      }
+      let host = match host_or_error(hosts, sc_addr, ref.topic, ref.partition) {
+        Ok(host) => host
+        Err(reply) => return reply
+      }
+      match require_leader(host, ref.topic, ref.partition) {
+        Ok(_) => ()
+        Err(reply) => return reply
+      }
       let (code, payload) = dispatch_produce_partition(frame.payload, data_dir)
+      match hosts.get(ref.topic, ref.partition) {
+        Some(fresh) => fresh.sync_leader_leo()
+        None => ()
+      }
       (code, payload)
     }
     @client.CMD_FETCH_PARTITION => {
@@ -1290,34 +2037,60 @@ fn dispatch_data_frame(
             @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
           )
       }
-      if !partition.is_leader() {
+      let host = match
+        host_or_error(
+          hosts,
+          sc_addr,
+          request.partition.topic,
+          request.partition.partition,
+        ) {
+        Ok(host) => host
+        Err(reply) => return reply
+      }
+      if !host.is_leader() {
         return (
           @client.CMD_ERR,
           @client.encode_error(
             @client.ERR_WRONG_ROLE,
-            "this node does not lead \{request.partition.topic}; ask \{partition.leader_addr}",
+            "this node does not lead \{host.label()}; ask \{host.leader_addr}",
           ),
         )
       }
-      let log = match partition.open_log() {
+      let log = match host.open_log() {
         Some(log) => log
         None =>
           return (
             @client.CMD_ERR,
             @client.encode_error(
               @client.ERR_STORAGE,
-              "no log for \{request.partition.topic}",
+              "no log for \{host.label()}",
             ),
           )
       }
-      partition.sync_leader_leo()
+      host.sync_leader_leo()
+      let partition = host
+      // A pull from past this log's end is not an error: it is how a
+      // diverged follower asks. Answering with an empty window at our
+      // own end hands it the fact it needs (the leader's LEO is the
+      // authority) instead of an error it can only retry (P7).
       let window = match log.read_raw(request.from, request.max_records) {
         Ok(window) => window
-        Err(e) =>
-          return (
-            @client.CMD_ERR,
-            @client.encode_error(@client.ERR_STORAGE, "\{e}"),
-          )
+        Err(_) =>
+          if request.from > log.high_watermark() {
+            @log.RawWindow::{
+              base_offset: request.from,
+              record_count: 0,
+              bytes: b"",
+            }
+          } else {
+            return (
+              @client.CMD_ERR,
+              @client.encode_error(
+                @client.ERR_STORAGE,
+                "cannot read \{request.partition.topic}[\{request.partition.partition}] from \{request.from}",
+              ),
+            )
+          }
       }
       let (hw, leo) = match partition.ledger {
         Some(ledger) => {
@@ -1347,7 +2120,17 @@ fn dispatch_data_frame(
             @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
           )
       }
-      match partition.observe_follower(ack.partition.topic, ack.from, ack.leo) {
+      let host = match
+        host_or_error(
+          hosts,
+          sc_addr,
+          ack.partition.topic,
+          ack.partition.partition,
+        ) {
+        Ok(host) => host
+        Err(reply) => return reply
+      }
+      match host.observe_follower(ack.partition, ack.from, ack.leo) {
         Ok((hw, leo)) => (@client.CMD_OK, @client.encode_offset_info(hw, leo))
         Err(e) =>
           (@client.CMD_ERR, @client.encode_error(@client.ERR_WRONG_ROLE, e))
@@ -1364,31 +2147,33 @@ fn dispatch_data_frame(
             @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
           )
       }
-      if asked.partition == 0 {
-        partition.sync_leader_leo()
-        let (hw, leo) = match partition.ledger {
-          Some(ledger) => {
-            let info = ledger.offset_info()
-            (info.high_watermark, info.log_end_offset)
-          }
-          None => (0L, partition.leo())
-        }
-        (@client.CMD_OK, @client.encode_offset_info(hw, leo))
-      } else {
-        // a partition beyond the replicated one is a single-node log on
-        // this node: its committed prefix IS its log end
-        let log = match
-          open_partition_log(data_dir, asked.topic, asked.partition) {
-          Ok(log) => log
-          Err(e) =>
-            return (
-              @client.CMD_ERR,
-              @client.encode_error(@client.ERR_STORAGE, e),
-            )
-        }
-        let leo = log.high_watermark()
-        (@client.CMD_OK, @client.encode_offset_info(leo, leo))
+      // every partition answers the same way now (P7): the host's
+      // ledger is the watermark truth, and a host with no ledger yet
+      // (no follower has ever reported) has a replicated prefix of
+      // zero — claiming its log end would be a lie
+      if asked.topic.length() == 0 {
+        return (
+          @client.CMD_ERR,
+          @client.encode_error(
+            @client.ERR_BAD_PAYLOAD,
+            "offset info must name a topic: watermarks are per partition",
+          ),
+        )
       }
+      let host = match
+        host_or_error(hosts, sc_addr, asked.topic, asked.partition) {
+        Ok(host) => host
+        Err(reply) => return reply
+      }
+      host.sync_leader_leo()
+      let (hw, leo) = match host.ledger {
+        Some(ledger) => {
+          let info = ledger.offset_info()
+          (info.high_watermark, info.log_end_offset)
+        }
+        None => (0L, host.leo())
+      }
+      (@client.CMD_OK, @client.encode_offset_info(hw, leo))
     }
     @client.CMD_LEADER =>
       (
@@ -1710,10 +2495,10 @@ fn PlacementState::elect_fallen_leaders(
     // the election reads exactly the facts replication does
     let progress : Array[@replica.ReplicaProgress] = []
     for replica in rs.replicas {
-      let leo = match table.find_address(replica) {
-        Some(entry) => entry.record.leo
-        None => 0L
-      }
+      // the candidate weighting must read *this partition's* progress
+      // (P7): a node that is far along on another partition is not
+      // therefore a good candidate for this one
+      let leo = table.leo_of(replica, rs.partition.topic, rs.partition.index)
       progress.push(@replica.ReplicaProgress::{ spu: replica, leo })
     }
     // the yardstick is the best *surviving* copy, not the vanished
@@ -1856,6 +2641,40 @@ fn PlacementState::confirm(
 
 ///|
 /// The view of one partition: who leads it, who holds it, and who is
+/// The partitions a node holds, with the view it needs to act on
+/// each: leader, replica set, and any pending nomination. A node that
+/// is not in a replica set is not assigned that partition, full stop.
+///
+/// The leader reported here is "" while its node is offline — the
+/// nomination still travels, which is how a candidate learns to take
+/// over.
+fn PlacementState::assignments_for(
+  self : PlacementState,
+  address : String,
+) -> Array[@client.AssignmentView] {
+  let out : Array[@client.AssignmentView] = []
+  for rs in self.state.partitions {
+    if !rs.replicas.contains(address) {
+      continue
+    }
+    let label = "\{rs.partition.topic}[\{rs.partition.index}]"
+    let nominated = match self.nomination_of(label) {
+      Some(candidate) => candidate
+      None => ""
+    }
+    let leader = if self.online.contains(rs.leader) { rs.leader } else { "" }
+    out.push(@client.AssignmentView::{
+      topic: rs.partition.topic,
+      partition: rs.partition.index,
+      leader,
+      replicas: rs.replicas,
+      nominated,
+    })
+  }
+  out
+}
+
+///|
 /// being offered it. The offer rides along because the candidate has
 /// to learn about its nomination somehow, and this is the one reply
 /// every data node already asks for on every tick.

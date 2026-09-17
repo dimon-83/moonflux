@@ -12,9 +12,9 @@ fn rec(id : String, role : @client.NodeRole, leo : Int64) -> @client.NodeRecord 
 ///|
 test "first contact registers, later contact updates the same entry" {
   let table = NodeTable::new(1000)
-  assert_true(table.observe(rec("spu-a", Spu, 0L), 100L))
+  assert_true(table.observe(rec("spu-a", Spu, 0L), [], 100L))
   assert_eq(table.entries.length(), 1)
-  assert_true(table.observe(rec("spu-a", Spu, 5L), 200L))
+  assert_true(table.observe(rec("spu-a", Spu, 5L), [], 200L))
   assert_eq(table.entries.length(), 1)
   assert_eq(table.entries[0].record.leo, 5L)
   assert_eq(table.entries[0].last_seen_ms, 200L)
@@ -24,7 +24,7 @@ test "first contact registers, later contact updates the same entry" {
 ///|
 test "a node goes offline only after the timeout, and only once" {
   let table = NodeTable::new(1000)
-  let _ = table.observe(rec("spu-a", Spu, 0L), 100L)
+  let _ = table.observe(rec("spu-a", Spu, 0L), [], 100L)
   // within the window: still online
   assert_eq(table.sweep(1099L).length(), 0)
   assert_true(table.entries[0].online)
@@ -40,12 +40,12 @@ test "a node goes offline only after the timeout, and only once" {
 ///|
 test "a heartbeat revives an offline node" {
   let table = NodeTable::new(1000)
-  let _ = table.observe(rec("spu-a", Spu, 0L), 100L)
+  let _ = table.observe(rec("spu-a", Spu, 0L), [], 100L)
   assert_eq(table.sweep(1101L).length(), 1)
   assert_true(!table.entries[0].online)
   // a heartbeat is enough: liveness is derived from the last report,
   // so there is no separate "come back" message to get wrong
-  let _ = table.observe(rec("spu-a", Spu, 12L), 1200L)
+  let _ = table.observe(rec("spu-a", Spu, 12L), [], 1200L)
   assert_true(table.entries[0].online)
   assert_eq(table.snapshot().length(), 1)
   // and the revival is not reported as another offline transition:
@@ -57,9 +57,9 @@ test "a heartbeat revives an offline node" {
 ///|
 test "the snapshot lists online nodes, id-sorted" {
   let table = NodeTable::new(1000)
-  let _ = table.observe(rec("spu-c", Spu, 0L), 10L)
-  let _ = table.observe(rec("spu-a", Spu, 0L), 10L)
-  let _ = table.observe(rec("sc-1", Sc, 0L), 10L)
+  let _ = table.observe(rec("spu-c", Spu, 0L), [], 10L)
+  let _ = table.observe(rec("spu-a", Spu, 0L), [], 10L)
+  let _ = table.observe(rec("sc-1", Sc, 0L), [], 10L)
   assert_eq(table.snapshot().map(fn(r) { r.id }), ["sc-1", "spu-a", "spu-c"])
   // a dead node drops out of the snapshot but stays in the table, so
   // its identity is remembered if it comes back

@@ -60,15 +60,20 @@ fn cluster_nodes(argv : Array[String]) -> Unit {
 }
 
 ///|
-/// `moonflux cluster leader --topic T --remote <control plane>` —
-/// prints the address that leads the topic's partition 0, or nothing
-/// when the control plane has no assignment (a legitimate state: the
-/// exit code distinguishes it from a failed query).
+/// `moonflux cluster leader --topic T [--partition N] --remote <control
+/// plane>` — prints the address that leads that partition (partition 0
+/// when the flag is absent), or nothing when the control plane has no
+/// assignment (a legitimate state: the exit code distinguishes it from
+/// a failed query).
 fn cluster_leader(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let remote = flags.require("remote")
   let topic = flags.require("topic")
-  let ref = @client.PartitionRef::{ topic, partition: 0 }
+  let partition = match flags.get("partition") {
+    Some(text) => parse_partition_flag(text)
+    None => 0
+  }
+  let ref = @client.PartitionRef::{ topic, partition }
   let payload = match
     control_call(remote, @client.CMD_LEADER, @client.encode_partition_ref(ref)) {
     Ok(payload) => payload
@@ -95,20 +100,15 @@ fn cluster_offsets(argv : Array[String]) -> Unit {
   let remote = flags.require("remote")
   let topic = flags.require("topic")
   let partition = match flags.get("partition") {
-    Some(text) =>
-      match (try? @string.parse_int(text[0:text.length()])) {
-        Ok(n) if n >= 0 => n
-        _ => fail("--partition expects a non-negative integer, got \{text}")
-      }
+    Some(text) => parse_partition_flag(text)
     None => 0
   }
-  // the request names its partition; an empty payload stays legal and
-  // means partition 0 (the pre-P5 clients' shape)
-  let ask = if partition == 0 {
-    b""
-  } else {
-    @client.encode_partition_ref(@client.PartitionRef::{ topic, partition })
-  }
+  // the request always names its partition (P7): watermarks are per
+  // partition, so there is no "the" watermark to ask for implicitly
+  let ask = @client.encode_partition_ref(@client.PartitionRef::{
+    topic,
+    partition,
+  })
   let payload = match control_call(remote, @client.CMD_OFFSET_INFO, ask) {
     Ok(payload) => payload
     Err(e) => fail("cluster offsets: \{e}")
@@ -119,6 +119,15 @@ fn cluster_offsets(argv : Array[String]) -> Unit {
   }
   println("\{hw} \{leo}")
   cli_exit(0)
+}
+
+///|
+/// `--partition N`: one rule for the flag, wherever it appears.
+fn parse_partition_flag(text : String) -> Int {
+  match (try? @string.parse_int(text[0:text.length()])) {
+    Ok(n) if n >= 0 => n
+    _ => fail("--partition expects a non-negative integer, got \{text}")
+  }
 }
 
 ///|
@@ -191,7 +200,11 @@ fn cluster_status(argv : Array[String]) -> Unit {
         continue
       }
       let offsets = match
-        control_call(view.leader, @client.CMD_OFFSET_INFO, b"") {
+        control_call(
+          view.leader,
+          @client.CMD_OFFSET_INFO,
+          @client.encode_partition_ref(ref),
+        ) {
         Ok(payload) =>
           match @client.decode_offset_info(payload) {
             Ok(pair) => "hw=\{pair.0} leo=\{pair.1}"
@@ -199,8 +212,11 @@ fn cluster_status(argv : Array[String]) -> Unit {
           }
         Err(_) => "hw=? leo=? (leader unreachable)"
       }
+      // who holds a partition, not just how many: an operator asking
+      // "is this partition healthy?" needs to see which node to go
+      // looking at (P7)
       println(
-        "    [\{index}] leader=\{view.leader} replicas=\{view.replicas.length()} \{offsets}",
+        "    [\{index}] leader=\{view.leader} replicas=\{format_addresses(view.replicas)} \{offsets}",
       )
     }
   }

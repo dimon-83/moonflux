@@ -320,3 +320,40 @@ test "truncate_to refuses non-boundaries, growth, and no-ops cleanly" {
   }
   assert_eq(log.high_watermark(), 6L)
 }
+
+///|
+test "truncate_to_boundary cuts inside a frame instead of refusing" {
+  // seeded_log(6, 3): records 0..5 in frames of 3, so offsets 0 and 3
+  // are the boundaries and offset 1 is *inside* a frame
+  let (log, memory) = seeded_log(6, 3)
+  let before = memory.contents().length()
+  // 1 is not a boundary: the plain form refuses (what a divergent
+  // replica hits when its frames do not line up with the leader's)
+  assert_true(log.truncate_to(1L) is Err(OffsetOutOfRange))
+  let report = match log.truncate_to_boundary(1L) {
+    Ok(report) => report
+    Err(e) => abort("truncate_to_boundary: \{e}")
+  }
+  // the whole frame is dropped: the log ends at offset 0, and the
+  // report says what actually left the disk
+  assert_eq(report.dropped_records, 6)
+  assert_true(report.dropped_bytes > 0)
+  assert_eq(log.high_watermark(), 0L)
+  assert_eq(memory.contents().length(), before - report.dropped_bytes)
+  // replication re-appends from there: the offset sequence continues
+  match log.append([rec("again")]) {
+    Ok(base) => assert_eq(base, 0L)
+    Err(e) => abort("append after boundary truncate: \{e}")
+  }
+  assert_eq(log.high_watermark(), 1L)
+  // an exact boundary behaves like truncate_to
+  let (log2, _) = seeded_log(6, 3)
+  match log2.truncate_to_boundary(3L) {
+    Ok(report) => assert_eq(report.dropped_records, 3)
+    Err(e) => abort("boundary truncate: \{e}")
+  }
+  assert_eq(log2.high_watermark(), 3L)
+  // and the same guards apply: no growth, no negatives
+  assert_true(log2.truncate_to_boundary(9L) is Err(OffsetOutOfRange))
+  assert_true(log2.truncate_to_boundary(-1L) is Err(OffsetOutOfRange))
+}

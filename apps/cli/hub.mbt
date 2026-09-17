@@ -172,7 +172,13 @@ pub fn ConnectionHub::poll_once(
       Ok(_) => ()
       Err(e) =>
         if !(conn.phase is Closed) {
-          note("connection (\{conn.kind}) closed: \{e}")
+          // A reset after a completed handshake is an ordinary
+          // disconnect (a peer that closed with data still queued), and
+          // a data node sees one per replication round: logging those
+          // would be a line per partition per tick (P7).
+          if !(conn.phase is Frames) {
+            note("connection (\{conn.kind}) closed: \{e}")
+          }
           conn.phase = Closed
         }
     }

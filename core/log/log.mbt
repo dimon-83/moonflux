@@ -427,6 +427,65 @@ pub fn SegmentedLog::append_raw(
 }
 
 ///|
+/// Truncates to the largest frame boundary **at or before** `offset`.
+///
+/// The difference from `truncate_to` matters exactly once: a replica
+/// whose log diverged from its leader's. The authority is the leader's
+/// log end, which need not fall on one of *this* log's boundaries — the
+/// batches differ, that is what divergent means — and `truncate_to`
+/// refuses to store half a batch. Cutting to the boundary and letting
+/// replication re-append the tail costs a re-pull, never a record; the
+/// returned report counts what was actually removed (P7).
+pub fn SegmentedLog::truncate_to_boundary(
+  self : SegmentedLog,
+  offset : Int64,
+) -> Result[TruncateReport, LogError] {
+  if offset < 0L || offset > self.next_offset {
+    return Err(OffsetOutOfRange)
+  }
+  if offset == self.next_offset {
+    return Ok(TruncateReport::{ dropped_records: 0, dropped_bytes: 0 })
+  }
+  let bytes = match (self.file.read)(0, self.valid_size) {
+    Ok(bytes) => bytes
+    Err(e) => return Err(e)
+  }
+  let reader = @codec.Reader::new(bytes)
+  let mut next = 0L
+  let mut cut : Int? = None
+  while reader.remaining() > 0 {
+    let before = reader.position()
+    match @protocol.decode_frame(reader) {
+      Ok(batch) => {
+        let count = batch.records.length().to_int64()
+        if next == offset || next + count > offset {
+          cut = Some(before)
+          break
+        }
+        next += count
+      }
+      Err(_) => return Err(CorruptFrame)
+    }
+  }
+  let cut_at = match cut {
+    Some(cut) => cut
+    None => return Err(OffsetOutOfRange)
+  }
+  match (self.file.truncate)(cut_at) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
+  let dropped_records = (self.next_offset - next).to_int()
+  let report = TruncateReport::{
+    dropped_records,
+    dropped_bytes: self.valid_size - cut_at,
+  }
+  self.valid_size = cut_at
+  self.next_offset = next
+  Ok(report)
+}
+
+///|
 /// Cuts the log back to `offset`, which must be a frame boundary.
 /// This is the *voluntary* counterpart of crash recovery: a replica
 /// whose tail was never replicated drops it here, and the discard is

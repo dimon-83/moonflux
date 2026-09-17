@@ -80,14 +80,74 @@ wait_listen "$SPU_B_PORT" || fail "spu-b did not come back"
 grep -vq '"id": "spu-a"' "$WORK/spu-b/node.json" || fail "identity file drifted"
 pass "identity is persisted and survives a restart"
 
-# data serving does not depend on the control plane
+# Serving follows placement (P7): a data node serves the partitions the
+# control plane assigned it, so the topic is declared first — an
+# undeclared topic on a clustered node is refused, not auto-created
+# (AGENTS §2: the declarations are the truth).
+"$EXE" topic create --name events --partitions 1 --replication-factor 2 \
+  --remote "127.0.0.1:$SC_PORT" > /dev/null || fail "topic create failed"
+LEADER=""
+for _ in $(seq 1 60); do
+  LEADER="$("$EXE" cluster leader --topic events --remote "127.0.0.1:$SC_PORT" 2>/dev/null || true)"
+  [ -n "$LEADER" ] && break
+  sleep 0.25
+done
+[ -n "$LEADER" ] || { cat "$WORK/sc.log"; fail "no leader was assigned to events[0]"; }
+pass "the declared topic was placed and led by $(printf '%s' "$LEADER" | sed 's/.*://')"
+
+# placement arrives with the heartbeat reply: wait until the holder has
+# actually learned its assignment (it says so in its log) before taking
+# the control plane away — this is the one window where the node still
+# needs it
+LEADER_LOG="$WORK/spu-a.log"
+[ "$LEADER" = "127.0.0.1:$SPU_B_PORT" ] && LEADER_LOG="$WORK/spu-b.log"
+# both nodes hold events[0] (replication_factor 2), so both learn it —
+# and the assertion below leans on the follower knowing who leads
+for _ in $(seq 1 60); do
+  if grep -q "hosting events\[0\]" "$WORK/spu-a.log" &&
+    grep -q "hosting events\[0\]" "$WORK/spu-b.log"; then
+    break
+  fi
+  sleep 0.25
+done
+grep -q "hosting events\[0\]" "$LEADER_LOG" \
+  || { cat "$LEADER_LOG"; fail "the assigned node never adopted its partition"; }
+pass "both replicas adopted their assignment from the heartbeat reply"
+
+# the data path does not consult the control plane per request: stop it
+# and the node that already learned its assignment keeps serving
+kill "$SC_PID" 2>/dev/null || true
+wait "$SC_PID" 2>/dev/null || true
+SC_PID=""
 printf 'hello\nworld\n' > "$WORK/in.txt"
-"$EXE" produce --topic events --file "$WORK/in.txt" --remote "127.0.0.1:$SPU_A_PORT" \
+"$EXE" produce --topic events --file "$WORK/in.txt" --remote "$LEADER" \
   > "$WORK/produce.log" 2>&1 || { cat "$WORK/produce.log"; fail "produce against an spu failed"; }
-"$EXE" consume --topic events --remote "127.0.0.1:$SPU_A_PORT" | cut -f4- > "$WORK/out.txt"
+"$EXE" consume --topic events --remote "$LEADER" | cut -f4- > "$WORK/out.txt"
 printf 'hello\nworld\n' > "$WORK/want.txt"
 diff -u "$WORK/want.txt" "$WORK/out.txt" || fail "spu data path output"
-pass "an spu serves the data protocol (produce/consume) unchanged"
+pass "with the control plane stopped, the holder still serves (produce/consume)"
+
+# and a node that does not hold the partition says so instead of
+# accepting a write it would have to drop (P7)
+OTHER_PORT="$SPU_A_PORT"
+[ "$LEADER" = "127.0.0.1:$SPU_A_PORT" ] && OTHER_PORT="$SPU_B_PORT"
+if "$EXE" produce --topic events --file "$WORK/in.txt" --remote "127.0.0.1:$OTHER_PORT" \
+    > "$WORK/misdirected.log" 2>&1; then
+  fail "a write to a non-holder should be refused"
+fi
+grep -q "must go to its leader" "$WORK/misdirected.log" \
+  || { cat "$WORK/misdirected.log"; fail "misdirected write lacks the reason"; }
+pass "a write to a node that does not hold the partition is refused with the leader's address"
+
+# bring the control plane back for the liveness assertions below
+"$EXE" sc --listen "127.0.0.1:$SC_PORT" --data-dir "$WORK/sc" > "$WORK/sc.log" 2>&1 &
+SC_PID=$!
+wait_listen "$SC_PORT" || fail "sc did not restart"
+for _ in $(seq 1 60); do
+  nodes "$SC_PORT" | grep -q "spu-a" && break
+  sleep 0.25
+done
+pass "the restarted control plane learns the cluster again from heartbeats"
 
 # kill a node: liveness is derived from silence, and the control plane
 # reports the transition exactly once
