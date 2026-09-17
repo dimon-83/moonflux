@@ -210,7 +210,7 @@ fn assignments_of(
 ) -> Result[Array[@client.AssignmentView], String] {
   match @client.decode_assignments_full(payload) {
     Ok(parts) => {
-      let (assignments, _floors) = parts
+      let (assignments, _floors, _revision) = parts
       Ok(assignments)
     }
     Err(e) => Err(e)
@@ -222,10 +222,27 @@ fn assignments_of(
 fn floors_of(payload : Bytes) -> Result[Array[@client.GroupFloor], String] {
   match @client.decode_assignments_full(payload) {
     Ok(parts) => {
-      let (_assignments, floors) = parts
+      let (_assignments, floors, _revision) = parts
       Ok(floors)
     }
     Err(e) => Err(e)
+  }
+}
+
+///|
+/// The cluster pipeline revision the control plane reports, or None
+/// when this reply predates the field (an older control plane).
+fn pipeline_revision_of(payload : Bytes) -> Int64? {
+  match @client.decode_assignments_full(payload) {
+    Ok(parts) => {
+      let (_assignments, _floors, revision) = parts
+      if revision > 0L {
+        Some(revision)
+      } else {
+        None
+      }
+    }
+    Err(_) => None
   }
 }
 
@@ -337,6 +354,8 @@ fn cmd_spu(argv : Array[String]) -> Unit {
   let mut last_report : Int64 = -1L
   let mut registered = false
   let mut last_assignment_count = -1
+  // adoption failures are reported once per revision, not per heartbeat
+  let adoption = AdoptionState::{ failed_revision: -1L, reported: false }
   while true {
     let _ = hub.poll_once(handler, fn(_kind) { () })
     match sc {
@@ -385,6 +404,21 @@ fn cmd_spu(argv : Array[String]) -> Unit {
                     Ok(floors) => floors
                     Err(_) => []
                   }
+                  // the cluster's pipeline (P11): the heartbeat carries
+                  // its revision, and the document is pulled only when
+                  // that revision is ahead of what this node runs
+                  match pipeline_revision_of(payload) {
+                    Some(revision) => {
+                      let _ = adopt_cluster_pipeline(
+                        data_dir,
+                        sc_addr,
+                        file_metadata_store(data_dir),
+                        revision,
+                        adoption,
+                      )
+                    }
+                    None => ()
+                  }
                   for assignment in assignments {
                     hosts.adopt(
                       assignment,
@@ -403,14 +437,19 @@ fn cmd_spu(argv : Array[String]) -> Unit {
                   note("warning: cannot read this node's assignments: \{e}")
               }
             }
-            Err(e) => {
-              // a control plane that is down must not take the data
-              // node down: it keeps serving, and re-registers later
+            Err(e) =>
+              // A control plane that is down must not take the data node
+              // down: it keeps serving, and re-registers later. The
+              // warning is a *transition* report — one line when contact
+              // is lost, then silence until it comes back (the P3 rule
+              // for derived liveness, applied to this call as well: a
+              // line every 500ms forever is how a log stops being read).
               if registered {
                 registered = false
+                note(
+                  "warning: control plane \{sc_addr} unreachable: \{e} (this node keeps serving the pipeline it has)",
+                )
               }
-              note("warning: control plane \{sc_addr} unreachable: \{e}")
-            }
           }
         }
       }
@@ -450,12 +489,16 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   // liveness timeout it uses for nodes, so "a member went silent" and
   // "a node went silent" mean the same amount of time (P9)
   let groups = GroupRegistry::new(data_dir, NODE_TIMEOUT_MS.to_int64())
+  // the cluster's applied pipeline: the authority nodes pull from (P11)
+  let asset = ClusterAsset::load(data_dir)
   let store = file_metadata_store(data_dir)
   let placement = PlacementState::new(data_dir)
   while true {
     match listener.accept() {
       Ok(stream) => {
-        handle_control_connection(stream, table, placement, store, groups)
+        handle_control_connection(
+          stream, table, placement, store, groups, asset,
+        )
         let _ = stream.close()
       }
       Err(TimedOut) => ()
@@ -692,6 +735,7 @@ fn handle_control_connection(
   placement : PlacementState,
   store : MetadataStore,
   groups : GroupRegistry,
+  asset : ClusterAsset,
 ) -> Unit {
   let conn = @native.from_stream(stream)
   let hello = match conn.recv_first() {
@@ -760,6 +804,7 @@ fn handle_control_connection(
               @client.encode_assignments_full(
                 assignments,
                 groups.floors(partitions),
+                asset.revision,
               ),
             )
           }
@@ -816,6 +861,62 @@ fn handle_control_connection(
             }
           Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
         }
+      // the cluster's pipeline (P11): published here, pulled by nodes
+      @client.CMD_CLUSTER_PIPELINE_APPLY => {
+        let text = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
+        match asset.publish(text, store) {
+          Ok(revision) => {
+            note(
+              "cluster pipeline applied (revision \{revision}, \{text.length()} bytes); data nodes will pull it on their next heartbeat",
+            )
+            Ok(
+              @client.encode_cluster_pipeline(@client.ClusterPipeline::{
+                revision,
+                spec_json: "",
+              }),
+            )
+          }
+          Err(e) => Err((@client.ERR_TRANSFORM, e))
+        }
+      }
+      @client.CMD_CLUSTER_PIPELINE_FETCH =>
+        // the empty payload asks "which revision?"; anything else asks
+        // for the document. The revision rides every heartbeat; the
+        // document only when it changed.
+        if frame.payload.length() == 0 {
+          Ok(
+            @client.encode_cluster_pipeline(@client.ClusterPipeline::{
+              revision: asset.revision,
+              spec_json: "",
+            }),
+          )
+        } else if asset.spec_json.length() == 0 {
+          Err(
+            (@client.ERR_BAD_PAYLOAD, "no pipeline is applied on this cluster"),
+          )
+        } else {
+          Ok(
+            @client.encode_cluster_pipeline(@client.ClusterPipeline::{
+              revision: asset.revision,
+              spec_json: asset.spec_json,
+            }),
+          )
+        }
+      @client.CMD_FUNCTION_SET_FETCH => {
+        // the control plane is the authoritative copy of the rule
+        // assets; a node that needs one pulls it (P11/T54). The reply
+        // is the stored document as-is — including its revision, which
+        // is the number a node compares against its own to know
+        // whether it is behind.
+        let name = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
+        match get_function_set(store, name) {
+          Ok(set) => {
+            let text = encode_function_set_doc(set).stringify()
+            Ok(@utf8.encode(text[0:text.length()]))
+          }
+          Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
+        }
+      }
       // consumer groups (P9): the control plane is the coordinator
       @client.CMD_GROUP_JOIN =>
         match @client.decode_group_join(frame.payload) {

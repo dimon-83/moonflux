@@ -85,6 +85,7 @@ fn persist_applied(
   name : String,
   spec_json : Json,
   function_sets : Array[(String, Int64)],
+  cluster_revision : Int64?,
 ) -> Result[Unit, String] {
   // Clock lives in the apps layer (kernel red line: core never reads
   // the wall clock); the timestamp records when apply compiled+saved.
@@ -102,6 +103,13 @@ fn persist_applied(
     set_items.push(Json::object(item))
   }
   doc_map["functions"] = Json::array(set_items)
+  // which cluster revision this document came from (P11): absent for a
+  // locally applied pipeline, which is not cluster-managed at all
+  match cluster_revision {
+    Some(revision) =>
+      doc_map["cluster_revision"] = Json::number(revision.to_double())
+    None => ()
+  }
   doc_map["spec"] = spec_json
   let doc = Json::object(doc_map)
   let text = doc.stringify(indent=2)
@@ -175,6 +183,33 @@ fn pipeline_plan(argv : Array[String]) -> Unit {
 fn pipeline_apply(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let spec_path = flags.require("file")
+  // Two口径, deliberately separate: with --remote the pipeline becomes
+  // the *cluster's* desired state (the control plane holds it and data
+  // nodes pull); without it, this data dir applies to itself, which is
+  // what a single-process broker has always done.
+  if flags.get("remote") is Some(sc_addr) {
+    let text = match @fs.read_file(spec_path) {
+      Ok(bytes) => @utf8.decode_lossy(bytes[0:bytes.length()])
+      Err(e) => fail("read \{spec_path}: \{e}")
+    }
+    let payload = match
+      control_call(
+        sc_addr,
+        @client.CMD_CLUSTER_PIPELINE_APPLY,
+        @utf8.encode(text),
+      ) {
+      Ok(payload) => payload
+      Err(e) => fail("pipeline apply: \{e}")
+    }
+    let pipeline = match @client.decode_cluster_pipeline(payload) {
+      Ok(pipeline) => pipeline
+      Err(e) => fail("pipeline apply: \{e}")
+    }
+    println(
+      "applied pipeline to the cluster at revision \{pipeline.revision}; data nodes pull it on their next heartbeat",
+    )
+    cli_exit(0)
+  }
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
   let (spec, spec_json) = load_spec_doc(spec_path)
   let new_topology = @pipeline.compile(spec)
@@ -194,7 +229,13 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
     Err(e) => fail("transform rejected: \{e}")
   }
   match
-    persist_applied(data_dir, new_topology.pipeline, spec_json, function_sets) {
+    persist_applied(
+      data_dir,
+      new_topology.pipeline,
+      spec_json,
+      function_sets,
+      None,
+    ) {
     Ok(_) => ()
     Err(e) => fail(e)
   }

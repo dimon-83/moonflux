@@ -1057,6 +1057,61 @@ pub fn decode_assignments(
 }
 
 ///|
+/// The cluster's applied pipeline (P11). Distinct from
+/// `CMD_APPLY_PIPELINE` (19) on purpose: that one deploys to **one**
+/// broker, which is the single-process shape and stays that way; these
+/// speak to the cluster, where the control plane is the authority for
+/// what every data node should be running, and nodes pull.
+pub const CMD_CLUSTER_PIPELINE_APPLY = 32
+
+///|
+/// Ask the control plane for the cluster's current pipeline: an empty
+/// payload asks for the revision alone, a non-empty one fetches the
+/// document. Two questions in one command because the heartbeat already
+/// carries the revision — a node only fetches when it differs, and a
+/// several-kilobyte document should not ride every heartbeat.
+pub const CMD_CLUSTER_PIPELINE_FETCH = 33
+
+///|
+/// Fetch one function set by name (P11/T54). The control plane holds
+/// the authoritative copy; a node that needs one pulls it and validates
+/// it locally, so the publish-time check runs where the asset runs.
+pub const CMD_FUNCTION_SET_FETCH = 34
+
+///|
+/// The cluster pipeline as it travels: a monotonic revision and, when
+/// asked for, the document itself.
+pub(all) struct ClusterPipeline {
+  revision : Int64
+  /// empty when the control plane has no pipeline applied yet
+  spec_json : String
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_cluster_pipeline(pipeline : ClusterPipeline) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_leb128(pipeline.revision)
+  write_field(buf, pipeline.spec_json)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_cluster_pipeline(
+  payload : Bytes,
+) -> Result[ClusterPipeline, String] {
+  let reader = @codec.Reader::new(payload)
+  let revision = match reader.read_uleb128() {
+    Ok(revision) => revision.reinterpret_as_int64()
+    Err(_) => return Err("truncated pipeline revision")
+  }
+  let spec_json = match read_field(reader) {
+    Ok(spec_json) => spec_json
+    Err(e) => return Err(e)
+  }
+  Ok(ClusterPipeline::{ revision, spec_json })
+}
+
+///|
 /// How far consumers have committed on one partition, as the control
 /// plane tells the node that holds it (P9/T50). The holder needs this
 /// to answer one question honestly: what may retention delete? The
@@ -1079,6 +1134,7 @@ pub(all) struct GroupFloor {
 pub fn encode_assignments_full(
   assignments : Array[AssignmentView],
   floors : Array[GroupFloor],
+  pipeline_revision : Int64,
 ) -> Bytes {
   let buf = @buffer.Buffer::Buffer()
   let head = encode_assignments(assignments)
@@ -1089,6 +1145,9 @@ pub fn encode_assignments_full(
     buf.write_leb128(floor.partition)
     buf.write_leb128(floor.floor)
   }
+  // the cluster's pipeline revision (P11): the node compares it with
+  // what it runs and pulls the document only when it differs
+  buf.write_leb128(pipeline_revision)
   buf.to_bytes()
 }
 
@@ -1096,14 +1155,14 @@ pub fn encode_assignments_full(
 /// Decodes assignments and, when present, the floors that follow them.
 pub fn decode_assignments_full(
   payload : Bytes,
-) -> Result[(Array[AssignmentView], Array[GroupFloor]), String] {
+) -> Result[(Array[AssignmentView], Array[GroupFloor], Int64), String] {
   let assignments = match decode_assignments(payload) {
     Ok(assignments) => assignments
     Err(e) => return Err(e)
   }
   let floors : Array[GroupFloor] = []
   if payload.length() == 0 {
-    return Ok((assignments, floors))
+    return Ok((assignments, floors, 0L))
   }
   // walk the same bytes the assignments decoder walked, then read on
   let reader = @codec.Reader::new(payload)
@@ -1139,9 +1198,9 @@ pub fn decode_assignments_full(
       Err(e) => return Err(e)
     }
   }
-  // the optional tail: absent when the peer predates floors
+  // the optional tails: absent when the peer predates them
   match reader.read_uleb128_len() {
-    Err(_) => Ok((assignments, floors))
+    Err(_) => Ok((assignments, floors, 0L))
     Ok(floor_count) => {
       for _i = 0; _i < floor_count; _i = _i + 1 {
         let topic = match read_field(reader) {
@@ -1158,7 +1217,12 @@ pub fn decode_assignments_full(
         }
         floors.push(GroupFloor::{ topic, partition, floor })
       }
-      Ok((assignments, floors))
+      // and the pipeline revision after them, if this peer sends one
+      let revision = match reader.read_uleb128() {
+        Ok(revision) => revision.reinterpret_as_int64()
+        Err(_) => 0L
+      }
+      Ok((assignments, floors, revision))
     }
   }
 }

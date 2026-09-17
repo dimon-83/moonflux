@@ -10,6 +10,10 @@ import {
 // Values
 pub const CMD_APPLY_PIPELINE : Int = 19
 
+pub const CMD_CLUSTER_PIPELINE_APPLY : Int = 32
+
+pub const CMD_CLUSTER_PIPELINE_FETCH : Int = 33
+
 pub const CMD_CONFIRM : Int = 14
 
 pub const CMD_ERR : Int = 6
@@ -23,6 +27,8 @@ pub const CMD_FETCH_PARTITION : Int = 21
 pub const CMD_FUNCTION_SET_CREATE : Int = 22
 
 pub const CMD_FUNCTION_SET_DELETE : Int = 25
+
+pub const CMD_FUNCTION_SET_FETCH : Int = 34
 
 pub const CMD_FUNCTION_SET_GET : Int = 24
 
@@ -92,7 +98,9 @@ pub const PROTOCOL_VERSION : Int = 2
 
 pub fn decode_assignments(Bytes) -> Result[Array[AssignmentView], String]
 
-pub fn decode_assignments_full(Bytes) -> Result[(Array[AssignmentView], Array[GroupFloor]), String]
+pub fn decode_assignments_full(Bytes) -> Result[(Array[AssignmentView], Array[GroupFloor], Int64), String]
+
+pub fn decode_cluster_pipeline(Bytes) -> Result[ClusterPipeline, String]
 
 pub fn decode_confirmation(Bytes) -> Result[Confirmation, String]
 
@@ -144,7 +152,9 @@ pub fn decode_wire_topics(Bytes) -> Result[Array[WireTopic], String]
 
 pub fn encode_assignments(Array[AssignmentView]) -> Bytes
 
-pub fn encode_assignments_full(Array[AssignmentView], Array[GroupFloor]) -> Bytes
+pub fn encode_assignments_full(Array[AssignmentView], Array[GroupFloor], Int64) -> Bytes
+
+pub fn encode_cluster_pipeline(ClusterPipeline) -> Bytes
 
 pub fn encode_confirmation(Confirmation) -> Bytes
 
@@ -213,6 +223,11 @@ pub(all) struct AssignmentView {
   leader : String
   replicas : Array[String]
   nominated : String
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct ClusterPipeline {
+  revision : Int64
+  spec_json : String
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct Confirmation {

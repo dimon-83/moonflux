@@ -483,10 +483,13 @@ pub fn parse_function_set_asset(
     _ => return Err(Corrupt("function set asset must be a JSON object"))
   }
   for key, _ in obj {
-    if key != "name" && key != "version" && key != "functions" {
+    if key != "name" &&
+      key != "version" &&
+      key != "revision" &&
+      key != "functions" {
       return Err(
         Rejected(
-          "asset field '\{key}' is not allowed (name, version, functions)",
+          "asset field '\{key}' is not allowed (name, version, revision, functions)",
         ),
       )
     }
@@ -584,6 +587,57 @@ pub fn validate_function_set(
   match @transform.validate_functions(rules) {
     Ok(_) => Ok(())
     Err(e) => Err(Rejected(e))
+  }
+}
+
+///|
+/// Adopts a function set at a revision someone else assigned — the
+/// control plane's, when a node pulls one (P11/T54). Unlike a local
+/// create, this does not invent a revision: the number means "which
+/// version of this asset the authority is serving", and a node that
+/// made up its own could not tell whether it was behind.
+///
+/// Monotonic in the same direction as `create_function_set`: adopting
+/// an older revision than the node already holds is refused, because
+/// that is a rollback nobody asked for.
+pub fn adopt_function_set(
+  store : MetadataStore,
+  name : String,
+  functions : Array[ClusterMetadataFunction],
+  revision : Int64,
+) -> Result[ClusterMetadataFunctionSet, MetadataError] {
+  match validate_function_set(name, functions) {
+    Err(e) => return Err(e)
+    Ok(_) => ()
+  }
+  let current = match (store.load)() {
+    Ok(metadata) => metadata
+    Err(e) => return Err(e)
+  }
+  let sets : Array[ClusterMetadataFunctionSet] = []
+  for set in current.function_sets {
+    if set.name == name {
+      if revision < set.revision {
+        return Err(
+          Rejected(
+            "function set \{name} is at revision \{set.revision} here; refusing to adopt the older \{revision}",
+          ),
+        )
+      }
+    } else {
+      sets.push(set)
+    }
+  }
+  let adopted = ClusterMetadataFunctionSet::{ name, revision, functions }
+  sets.push(adopted)
+  let next = ClusterMetadata::{
+    topics: current.topics,
+    function_sets: sets,
+    version: current.version + 1L,
+  }
+  match (store.save)(next) {
+    Ok(_) => Ok(adopted)
+    Err(e) => Err(e)
   }
 }
 

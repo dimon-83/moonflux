@@ -692,7 +692,8 @@ fn dispatch_apply(
     Err(e) => return Err((@client.ERR_TRANSFORM, e))
   }
   let topology = @pipeline.compile(spec)
-  match persist_applied(data_dir, topology.pipeline, json, function_sets) {
+  match
+    persist_applied(data_dir, topology.pipeline, json, function_sets, None) {
     Ok(_) => ()
     Err(e) => return Err((@client.ERR_STORAGE, e))
   }
