@@ -534,6 +534,7 @@ test "a store that is not one log is refused, not repaired" {
   // two segments with the same base: not one log
   let duplicated = @log.SegmentStore::{
     open_segment: fn(_base) { Ok(@log.MemorySegment::new().handle()) },
+    open_index: fn(_base) { Ok(@log.MemorySegment::new().handle()) },
     list: fn() {
       Ok([
         @log.SegmentInfo::{ base: 0L, size: 0, created_ms: 0L },
@@ -563,5 +564,159 @@ test "a store that is not one log is refused, not repaired" {
     Err(Storage(msg)) => assert_true(msg.contains("hole"))
     Ok(_) => abort("a hole was accepted")
     Err(e) => abort("unexpected: \{e}")
+  }
+}
+
+// ---------------------------------------------------------------------
+// Sparse index (P8/T45). The index is an accelerator, never truth: the
+// tests below are written so that a *wrong* index is a test failure
+// rather than a wrong answer — every fallback is exercised.
+
+///|
+test "indexed reads match a scan, anchor or not" {
+  let store = @log.MemorySegmentStore::new()
+  // a small anchor interval so a few records produce several anchors
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 0, 2) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  for i = 0; i < 20; i = i + 1 {
+    let _ = log.append([rec("i\{i}")])
+  }
+  let all = match log.read(0L, 100) {
+    Ok(entries) => entries
+    Err(e) => abort("read all: \{e}")
+  }
+  assert_eq(all.length(), 20)
+  // every offset, read through the index, agrees with the sequence
+  for start = 0; start < 20; start = start + 1 {
+    let entries = match log.read(start.to_int64(), 1) {
+      Ok(entries) => entries
+      Err(e) => abort("read at \{start}: \{e}")
+    }
+    assert_eq(entries.length(), 1)
+    assert_eq(entries[0], all[start])
+  }
+  // and the raw path (replication) agrees with the record path
+  for start = 0; start < 20; start = start + 3 {
+    let window = match log.read_raw(start.to_int64(), 3) {
+      Ok(w) => w
+      Err(e) => abort("raw at \{start}: \{e}")
+    }
+    let expected = match log.read(start.to_int64(), 3) {
+      Ok(entries) => entries
+      Err(e) => abort("read at \{start}: \{e}")
+    }
+    assert_eq(window.record_count, expected.length())
+    assert_eq(window.base_offset, start.to_int64())
+  }
+}
+
+///|
+test "a missing, truncated or corrupted index falls back to a scan" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 30, 2) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  for i = 0; i < 12; i = i + 1 {
+    let _ = log.append([rec("s\{i}")])
+  }
+  let expected = match log.read(0L, 100) {
+    Ok(entries) => entries
+    Err(e) => abort("read: \{e}")
+  }
+  let bases = store.bases()
+  assert_true(bases.length() > 1)
+
+  // 1. no index at all: openings rebuild from the segment
+  for base in bases {
+    let file = match (store.store().open_index)(base) {
+      Ok(file) => file
+      Err(_) => continue
+    }
+    let _ = (file.truncate)(0)
+  }
+  let no_index = match
+    @log.SegmentedLog::open_store_configured(store.store(), 30, 2) {
+    Ok(l) => l
+    Err(e) => abort("reopen without index: \{e}")
+  }
+  assert_eq(no_index.read(0L, 100), Ok(expected))
+
+  // 2. a truncated index (valid magic, missing tail)
+  let first = bases[0]
+  let index_bytes = store.index_contents(first)
+  if index_bytes.length() > 0 {
+    let file = match (store.store().open_index)(first) {
+      Ok(file) => file
+      Err(e) => abort("index file: \{e}")
+    }
+    let _ = (file.truncate)(0)
+    let _ = (file.append)(index_bytes[0:index_bytes.length() - 4].to_owned())
+    let truncated = match
+      @log.SegmentedLog::open_store_configured(store.store(), 30, 2) {
+      Ok(l) => l
+      Err(e) => abort("reopen with truncated index: \{e}")
+    }
+    assert_eq(truncated.read(0L, 100), Ok(expected))
+  }
+
+  // 3. a corrupted index (a bit flipped inside an anchor, CRC no
+  //    longer matches): still a scan, still the same answer
+  let index_bytes2 = store.index_contents(first)
+  if index_bytes2.length() > 20 {
+    let flipped : Array[Byte] = []
+    for i = 0; i < index_bytes2.length(); i = i + 1 {
+      flipped.push(index_bytes2[i])
+    }
+    flipped[20] = flipped[20] ^ b'\x01'
+    let file = match (store.store().open_index)(first) {
+      Ok(file) => file
+      Err(e) => abort("index file: \{e}")
+    }
+    let _ = (file.truncate)(0)
+    let _ = (file.append)(Bytes::from_array(flipped[:]))
+    let corrupted = match
+      @log.SegmentedLog::open_store_configured(store.store(), 30, 2) {
+      Ok(l) => l
+      Err(e) => abort("reopen with corrupted index: \{e}")
+    }
+    assert_eq(corrupted.read(0L, 100), Ok(expected))
+  }
+}
+
+///|
+test "index anchors are frame boundaries and cover every segment" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 3) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  for i = 0; i < 15; i = i + 1 {
+    let _ = log.append([rec("a\{i}")])
+  }
+  // after a reopen the anchors come from the stored index for sealed
+  // segments; reading any offset must still land exactly on a record
+  let reopened = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 3) {
+    Ok(l) => l
+    Err(e) => abort("reopen: \{e}")
+  }
+  for i = 0; i < 15; i = i + 1 {
+    let entries = match reopened.read(i.to_int64(), 1) {
+      Ok(entries) => entries
+      Err(e) => abort("read at \{i}: \{e}")
+    }
+    assert_eq(entries[0].offset, i.to_int64())
+  }
+  // the stored indexes are small (anchors, not a full offset map)
+  let bases = store.bases()
+  for base in bases {
+    let index_bytes = store.index_contents(base)
+    assert_true(index_bytes.length() < 200)
   }
 }

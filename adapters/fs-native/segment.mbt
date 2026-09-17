@@ -96,6 +96,20 @@ pub fn segment_file_name(base : Int64) -> String {
 }
 
 ///|
+/// The index sidecar's name: `00000000000000000000.idx` beside the
+/// segment it describes. Same base, different suffix, so the pairing is
+/// visible in a directory listing.
+pub fn segment_index_name(base : Int64) -> String {
+  let digits = base.to_string()
+  let padded = StringBuilder::new()
+  for _i = 0; _i < 20 - digits.length(); _i = _i + 1 {
+    padded.write_char('0')
+  }
+  padded.write_string(digits)
+  "\{padded.to_string()}.idx"
+}
+
+///|
 /// The base offset encoded in a segment file name, or None when the
 /// name is not one of ours.
 fn segment_base_of(name : String) -> Int64? {
@@ -158,7 +172,23 @@ pub fn open_segment_store(dir : String) -> Result[@log.SegmentStore, FsError] {
       }
       Ok(out)
     },
+    open_index: fn(base) {
+      match mkdirs(dir) {
+        Ok(_) => ()
+        Err(e) => return Err(map_err(e))
+      }
+      match open_segment_file("\{dir}/\{segment_index_name(base)}") {
+        Ok(file) => Ok(file)
+        Err(e) => Err(map_err(e))
+      }
+    },
     remove: fn(base) {
+      // the index goes with its segment: a sidecar with no segment is
+      // a lie waiting for a reader
+      match remove_file("\{dir}/\{segment_index_name(base)}") {
+        Ok(_) => ()
+        Err(_) => () // absent is fine
+      }
       match remove_file("\{dir}/\{segment_file_name(base)}") {
         Ok(_) => Ok(())
         Err(e) => Err(map_err(e))

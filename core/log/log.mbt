@@ -121,8 +121,13 @@ pub(all) struct SegmentStore {
   open_segment : (Int64) -> Result[SegmentFile, LogError]
   /// Every existing segment, in any order (the kernel sorts).
   list : () -> Result[Array[SegmentInfo], LogError]
-  /// Removes a whole segment. Only retention and truncation call this,
-  /// and only for segments the kernel has decided to drop.
+  /// Opens (creating if needed) the *index* file of a segment. The
+  /// index is an accelerator, never truth: a missing or unreadable one
+  /// costs a scan, and the kernel rebuilds it.
+  open_index : (Int64) -> Result[SegmentFile, LogError]
+  /// Removes a whole segment **and its index**. Only retention and
+  /// truncation call this, and only for segments the kernel has
+  /// decided to drop.
   remove : (Int64) -> Result[Unit, LogError]
 } derive(Debug)
 
@@ -133,12 +138,13 @@ pub(all) struct SegmentStore {
 pub struct MemorySegmentStore {
   bases : Array[Int64]
   segments : Array[MemorySegment]
+  indexes : Array[MemorySegment]
   created : Array[Int64]
 }
 
 ///|
 pub fn MemorySegmentStore::new() -> MemorySegmentStore {
-  MemorySegmentStore::{ bases: [], segments: [], created: [] }
+  MemorySegmentStore::{ bases: [], segments: [], indexes: [], created: [] }
 }
 
 ///|
@@ -151,8 +157,21 @@ pub fn MemorySegmentStore::store(self : MemorySegmentStore) -> SegmentStore {
         None => {
           self.bases.push(base)
           self.segments.push(MemorySegment::new())
+          self.indexes.push(MemorySegment::new())
           self.created.push(0L)
           Ok(self.segments[self.segments.length() - 1].handle())
+        }
+      }
+    },
+    open_index: fn(base) {
+      match self.index_of(base) {
+        Some(i) => Ok(self.indexes[i].handle())
+        None => {
+          self.bases.push(base)
+          self.segments.push(MemorySegment::new())
+          self.indexes.push(MemorySegment::new())
+          self.created.push(0L)
+          Ok(self.indexes[self.indexes.length() - 1].handle())
         }
       }
     },
@@ -172,6 +191,7 @@ pub fn MemorySegmentStore::store(self : MemorySegmentStore) -> SegmentStore {
         Some(i) => {
           let _ = self.bases.remove(i)
           let _ = self.segments.remove(i)
+          let _ = self.indexes.remove(i)
           let _ = self.created.remove(i)
           Ok(())
         }
@@ -210,6 +230,18 @@ pub fn MemorySegmentStore::contents(
 ) -> Bytes {
   match self.index_of(base) {
     Some(i) => self.segments[i].contents()
+    None => b""
+  }
+}
+
+///|
+/// The bytes of one segment's index (test observation).
+pub fn MemorySegmentStore::index_contents(
+  self : MemorySegmentStore,
+  base : Int64,
+) -> Bytes {
+  match self.index_of(base) {
+    Some(i) => self.indexes[i].contents()
     None => b""
   }
 }
@@ -268,6 +300,127 @@ pub(all) struct RecoveryReport {
 } derive(Debug, Eq, Show)
 
 ///|
+/// One sparse index anchor: the offset of the record that starts at
+/// byte `position` within its segment. Anchors always sit on frame
+/// boundaries, which is what lets a reader start there without
+/// resynchronising.
+pub(all) struct IndexAnchor {
+  offset : Int64
+  position : Int
+} derive(Debug, Eq, Show)
+
+///|
+/// Every Nth record (and at least every M bytes) becomes an anchor.
+/// The two bounds together keep both the index small and the scan
+/// short; the values are policy, so they are configuration, not
+/// constants of the format.
+const DEFAULT_INDEX_EVERY_RECORDS : Int = 64
+
+///|
+const INDEX_EVERY_BYTES : Int = 4096
+
+///|
+/// The index file format, version 1:
+///   `MFI1` | segment base (8, big endian) | count (4, big endian) |
+///   (offset 8 BE, position 4 BE) × count | crc32 (4 BE)
+/// The CRC covers everything before it, so a plausible-looking but
+/// damaged index is *detected* rather than trusted — the fallback is a
+/// scan, and a scan is always right.
+const INDEX_MAGIC : Bytes = b"MFI1"
+
+///|
+fn encode_index(base : Int64, anchors : Array[IndexAnchor]) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_bytes(INDEX_MAGIC[0:4])
+  buf.write_int64_be(base)
+  buf.write_uint_be(anchors.length().reinterpret_as_uint())
+  for anchor in anchors {
+    buf.write_int64_be(anchor.offset)
+    buf.write_uint_be(anchor.position.reinterpret_as_uint())
+  }
+  let body = buf.to_bytes()
+  let out = @buffer.Buffer::Buffer()
+  out.write_bytes(body[0:body.length()])
+  out.write_uint_be(@codec.crc32(body))
+  out.to_bytes()
+}
+
+///|
+/// Decodes and validates an index. Every failure mode returns None:
+/// the caller's answer to "the index is not usable" is a scan, so
+/// being strict here costs nothing and being lenient would risk
+/// answering from a stale index.
+fn decode_index(
+  bytes : Bytes,
+  base : Int64,
+  segment_size : Int,
+) -> Array[IndexAnchor]? {
+  if bytes.length() < 20 {
+    return None
+  }
+  if bytes[0:4].to_owned() != INDEX_MAGIC {
+    return None
+  }
+  let count = ((bytes[12].to_uint() << 24) |
+  (bytes[13].to_uint() << 16) |
+  (bytes[14].to_uint() << 8) |
+  bytes[15].to_uint()).to_int()
+  if count <= 0 || count > 1000000 {
+    return None
+  }
+  let expected = 16 + count * 12 + 4
+  if bytes.length() != expected {
+    return None
+  }
+  let body = bytes[0:expected - 4].to_owned()
+  let stored_crc = (bytes[expected - 4].to_uint() << 24) |
+    (bytes[expected - 3].to_uint() << 16) |
+    (bytes[expected - 2].to_uint() << 8) |
+    bytes[expected - 1].to_uint()
+  if @codec.crc32(body) != stored_crc {
+    return None
+  }
+  let stored_base = read_i64_be(bytes, 4)
+  if stored_base != base {
+    return None
+  }
+  let anchors : Array[IndexAnchor] = []
+  let mut previous_offset = -1L
+  let mut previous_position = -1
+  for i = 0; i < count; i = i + 1 {
+    let at = 16 + i * 12
+    let offset = read_i64_be(bytes, at)
+    let position = ((bytes[at + 8].to_uint() << 24) |
+    (bytes[at + 9].to_uint() << 16) |
+    (bytes[at + 10].to_uint() << 8) |
+    bytes[at + 11].to_uint()).to_int()
+    // anchors must describe a walk forward through this segment
+    if offset <= previous_offset || position <= previous_position {
+      return None
+    }
+    if position >= segment_size {
+      return None
+    }
+    anchors.push(IndexAnchor::{ offset, position })
+    previous_offset = offset
+    previous_position = position
+  }
+  if anchors[0].offset != base || anchors[0].position < 0 {
+    return None
+  }
+  Some(anchors)
+}
+
+///|
+fn read_i64_be(bytes : Bytes, at : Int) -> Int64 {
+  let mut value : Int64 = 0L
+  for i = 0; i < 8; i = i + 1 {
+    value = (value << 8) | bytes[at + i].to_int64()
+  }
+  value
+}
+
+///|
 /// A commit log over a **sequence of segments**: assigns offsets,
 /// frames batches with the wire protocol, rolls to a new segment when
 /// the active one reaches `roll_bytes` (0 = never), and recovers a
@@ -286,6 +439,9 @@ pub struct SegmentedLog {
   recovery : RecoveryReport
   /// 0 disables rolling (the pre-P8 single-segment behavior)
   roll_bytes : Int
+  /// how many records may pass between index anchors (size bounds the
+  /// scan, record count bounds the index)
+  index_every_records : Int
 } derive(Debug)
 
 ///|
@@ -296,6 +452,10 @@ struct LogSegment {
   file : SegmentFile
   mut size : Int
   created_ms : Int64
+  /// sparse anchors, ascending; [0] is always (base, 0)
+  mut anchors : Array[IndexAnchor]
+  /// whether the on-disk index matches `anchors`
+  mut index_saved : Bool
 } derive(Debug)
 
 ///|
@@ -316,6 +476,7 @@ pub fn SegmentedLog::open(file : SegmentFile) -> Result[SegmentedLog, LogError] 
       }
     },
     list: fn() { Ok([SegmentInfo::{ base: 0L, size, created_ms: 0L }]) },
+    open_index: fn(_base) { Err(Storage("this store holds a single segment")) },
     remove: fn(_base) { Err(Storage("this store holds a single segment")) },
   }
   SegmentedLog::open_store(store, 0)
@@ -332,8 +493,28 @@ pub fn SegmentedLog::open_store(
   store : SegmentStore,
   roll_bytes : Int,
 ) -> Result[SegmentedLog, LogError] {
+  SegmentedLog::open_store_configured(
+    store,
+    roll_bytes,
+    DEFAULT_INDEX_EVERY_RECORDS,
+  )
+}
+
+///|
+/// `open_store` with the anchor interval spelled out. One anchor every
+/// `index_every_records` records (and at least every INDEX_EVERY_BYTES
+/// bytes) is the trade the index makes; tests drive it small so a few
+/// records produce several anchors.
+pub fn SegmentedLog::open_store_configured(
+  store : SegmentStore,
+  roll_bytes : Int,
+  index_every_records : Int,
+) -> Result[SegmentedLog, LogError] {
   if roll_bytes < 0 {
     return Err(Storage("roll_bytes must not be negative"))
+  }
+  if index_every_records <= 0 {
+    return Err(Storage("index_every_records must be positive"))
   }
   let infos_raw = match (store.list)() {
     Ok(infos) => infos
@@ -357,7 +538,16 @@ pub fn SegmentedLog::open_store(
     }
     return Ok(SegmentedLog::{
       store,
-      segments: [LogSegment::{ base: 0L, file, size: 0, created_ms: 0L }],
+      segments: [
+        LogSegment::{
+          base: 0L,
+          file,
+          size: 0,
+          created_ms: 0L,
+          anchors: [IndexAnchor::{ offset: 0L, position: 0 }],
+          index_saved: true,
+        },
+      ],
       next_offset: 0L,
       recovery: RecoveryReport::{
         reason: Clean,
@@ -365,6 +555,7 @@ pub fn SegmentedLog::open_store(
         discarded_bytes: 0,
       },
       roll_bytes,
+      index_every_records: DEFAULT_INDEX_EVERY_RECORDS,
     })
   }
   // the bases must be strictly increasing: a hole or a repeat means the
@@ -394,6 +585,8 @@ pub fn SegmentedLog::open_store(
       file,
       size,
       created_ms: info.created_ms,
+      anchors: [],
+      index_saved: false,
     })
   }
   // drop empty trailing segments (crash between create and first append)
@@ -425,6 +618,32 @@ pub fn SegmentedLog::open_store(
           ),
         )
       }
+    }
+  }
+  // every segment gets anchors: from its stored index when that is
+  // present and consistent, by scanning when it is not. The last
+  // segment is scanned for recovery anyway, so its rebuild is free.
+  for i = 0; i < segments.length(); i = i + 1 {
+    let seg = segments[i]
+    let loaded = if i + 1 < segments.length() {
+      self_index_or_none(store, seg)
+    } else {
+      None
+    }
+    match loaded {
+      Some(anchors) => {
+        seg.anchors = anchors
+        seg.index_saved = true
+      }
+      None =>
+        // rebuilt below, once the last segment's size is known: for
+        // sealed segments the size is already final
+        if i + 1 < segments.length() {
+          match rebuild_index_static(seg, index_every_records) {
+            Ok(_) => ()
+            Err(e) => return Err(e)
+          }
+        }
     }
   }
   // recover the last segment: a torn or corrupt tail is cut there, and
@@ -468,12 +687,19 @@ pub fn SegmentedLog::open_store(
     valid_size: consumed,
     discarded_bytes: size - consumed,
   }
+  // the last segment was just scanned, so its anchors are known: write
+  // them out (best effort) and reuse that scan instead of a second one
+  match rebuild_index_static(last, index_every_records) {
+    Ok(_) => ()
+    Err(e) => return Err(e)
+  }
   Ok(SegmentedLog::{
     store,
     segments,
     next_offset: last.base + records,
     recovery,
     roll_bytes,
+    index_every_records: DEFAULT_INDEX_EVERY_RECORDS,
   })
 }
 
@@ -548,6 +774,9 @@ fn SegmentedLog::maybe_roll(self : SegmentedLog) -> Result[Unit, LogError] {
   if self.active().size < self.roll_bytes {
     return Ok(())
   }
+  // sealing is the moment an index is worth writing: the segment will
+  // not change again, so what lands on disk stays true
+  self.save_index(self.active())
   let file = match (self.store.open_segment)(self.next_offset) {
     Ok(file) => file
     Err(e) => return Err(e)
@@ -557,8 +786,198 @@ fn SegmentedLog::maybe_roll(self : SegmentedLog) -> Result[Unit, LogError] {
     file,
     size: 0,
     created_ms: 0L,
+    anchors: [IndexAnchor::{ offset: self.next_offset, position: 0 }],
+    index_saved: true,
   })
   Ok(())
+}
+
+///|
+/// The stored index for a segment, or None when it is absent, stale or
+/// unreadable. Used during open, where no SegmentedLog exists yet.
+fn self_index_or_none(
+  store : SegmentStore,
+  seg : LogSegment,
+) -> Array[IndexAnchor]? {
+  let file = match (store.open_index)(seg.base) {
+    Ok(file) => file
+    Err(_) => return None
+  }
+  let size = match (file.size)() {
+    Ok(size) => size
+    Err(_) => return None
+  }
+  if size == 0 {
+    return None
+  }
+  let bytes = match (file.read)(0, size) {
+    Ok(bytes) => bytes
+    Err(_) => return None
+  }
+  decode_index(bytes, seg.base, seg.size)
+}
+
+///|
+/// Scans a segment and rebuilds its anchors in place (the form open
+/// uses, before the log object exists).
+fn rebuild_index_static(
+  seg : LogSegment,
+  index_every_records : Int,
+) -> Result[Unit, LogError] {
+  let anchors : Array[IndexAnchor] = [
+    IndexAnchor::{ offset: seg.base, position: 0 },
+  ]
+  if seg.size > 0 {
+    let bytes = match (seg.file.read)(0, seg.size) {
+      Ok(bytes) => bytes
+      Err(e) => return Err(e)
+    }
+    let reader = @codec.Reader::new(bytes)
+    let mut next = seg.base
+    let mut take = 0
+    while reader.remaining() > 0 {
+      let before = reader.position()
+      match @protocol.decode_frame(reader) {
+        Ok(batch) => {
+          let count = batch.records.length()
+          if take >= index_every_records && before > 0 {
+            anchors.push(IndexAnchor::{ offset: next, position: before })
+            take = 0
+          }
+          next += count.to_int64()
+          take += count
+        }
+        Err(_) => return Err(CorruptFrame)
+      }
+    }
+  }
+  seg.anchors = anchors
+  seg.index_saved = false
+  Ok(())
+}
+
+///|
+/// The stored index for a segment, or None when it is absent, stale or
+/// unreadable. Validation lives in `decode_index`; this only fetches.
+fn SegmentedLog::load_index(
+  self : SegmentedLog,
+  seg : LogSegment,
+) -> Array[IndexAnchor]? {
+  let file = match (self.store.open_index)(seg.base) {
+    Ok(file) => file
+    Err(_) => return None
+  }
+  let size = match (file.size)() {
+    Ok(size) => size
+    Err(_) => return None
+  }
+  if size == 0 {
+    return None
+  }
+  let bytes = match (file.read)(0, size) {
+    Ok(bytes) => bytes
+    Err(_) => return None
+  }
+  decode_index(bytes, seg.base, seg.size)
+}
+
+///|
+/// Writes the segment's anchors out. Best effort by design: the index
+/// is an accelerator, and failing to persist one must never fail an
+/// append or an open — the next reader just scans.
+fn SegmentedLog::save_index(self : SegmentedLog, seg : LogSegment) -> Unit {
+  if seg.index_saved {
+    return
+  }
+  let file = match (self.store.open_index)(seg.base) {
+    Ok(file) => file
+    Err(_) => return
+  }
+  let bytes = encode_index(seg.base, seg.anchors)
+  match (file.truncate)(0) {
+    Ok(_) => ()
+    Err(_) => return
+  }
+  match (file.append)(bytes) {
+    Ok(_) => ()
+    Err(_) => return
+  }
+  match (file.flush)() {
+    Ok(_) => ()
+    Err(_) => return
+  }
+  seg.index_saved = true
+}
+
+///|
+/// Rebuilds a segment's anchors by scanning it. This is the fallback
+/// the whole design leans on: any doubt about the stored index is
+/// answered by reading the segment, which is always right.
+fn SegmentedLog::rebuild_index(
+  self : SegmentedLog,
+  seg : LogSegment,
+) -> Result[Unit, LogError] {
+  let anchors : Array[IndexAnchor] = [
+    IndexAnchor::{ offset: seg.base, position: 0 },
+  ]
+  let bytes = match (seg.file.read)(0, seg.size) {
+    Ok(bytes) => bytes
+    Err(e) => return Err(e)
+  }
+  let reader = @codec.Reader::new(bytes)
+  let mut next = seg.base
+  let mut take = 0
+  while reader.remaining() > 0 {
+    let before = reader.position()
+    match @protocol.decode_frame(reader) {
+      Ok(batch) => {
+        let count = batch.records.length()
+        if take >= self.index_every_records && before > 0 {
+          anchors.push(IndexAnchor::{ offset: next, position: before })
+          take = 0
+        }
+        next += count.to_int64()
+        take += count
+      }
+      Err(_) => return Err(CorruptFrame)
+    }
+  }
+  seg.anchors = anchors
+  seg.index_saved = false
+  Ok(())
+}
+
+///|
+/// The anchor to start reading `from` at: the last anchor at or before
+/// it. Never returns None for a segment that exists (anchor [0] is the
+/// segment base), so readers cannot end up anchorless.
+fn anchor_for(seg : LogSegment, from : Int64) -> IndexAnchor {
+  let mut best = IndexAnchor::{ offset: seg.base, position: 0 }
+  for anchor in seg.anchors {
+    if anchor.offset <= from {
+      best = anchor
+    }
+  }
+  best
+}
+
+///|
+/// Records an anchor for the frame about to be written, when the
+/// previous one has drifted far enough. Called *before* the append, so
+/// the anchor points at a frame boundary by construction.
+fn SegmentedLog::maybe_anchor(self : SegmentedLog) -> Unit {
+  let seg = self.active()
+  if seg.anchors.length() == 0 {
+    seg.anchors.push(IndexAnchor::{ offset: seg.base, position: 0 })
+  }
+  let last = seg.anchors[seg.anchors.length() - 1]
+  if seg.size - last.position >= INDEX_EVERY_BYTES {
+    seg.anchors.push(IndexAnchor::{
+      offset: self.next_offset,
+      position: seg.size,
+    })
+    seg.index_saved = false
+  }
 }
 
 ///|
@@ -580,6 +999,7 @@ pub fn SegmentedLog::append(
     return Err(BatchTooLarge)
   }
   let seg = self.active()
+  self.maybe_anchor()
   let new_size = match (seg.file.append)(frame) {
     Ok(size) => size
     Err(e) => return Err(e)
@@ -628,12 +1048,16 @@ pub fn SegmentedLog::read(
       break
     }
     let seg = self.segments[i]
-    let bytes = match (seg.file.read)(0, seg.size) {
+    // start at the last anchor at or before `from`: the index turns a
+    // whole-segment read into a bounded forward scan
+    let anchor = anchor_for(seg, from)
+    let bytes = match
+      (seg.file.read)(anchor.position, seg.size - anchor.position) {
       Ok(bytes) => bytes
       Err(e) => return Err(e)
     }
     let reader = @codec.Reader::new(bytes)
-    let mut next = seg.base
+    let mut next = anchor.offset
     while reader.remaining() > 0 && out.length() < max_records {
       match @protocol.decode_frame(reader) {
         Ok(batch) => {
@@ -722,12 +1146,14 @@ pub fn SegmentedLog::read_raw(
       break
     }
     let seg = self.segments[i]
-    let bytes = match (seg.file.read)(0, seg.size) {
+    let anchor = anchor_for(seg, from)
+    let bytes = match
+      (seg.file.read)(anchor.position, seg.size - anchor.position) {
       Ok(bytes) => bytes
       Err(e) => return Err(e)
     }
     let reader = @codec.Reader::new(bytes)
-    let mut next = seg.base
+    let mut next = anchor.offset
     // a later segment contributes from its very first frame: `started`
     // was decided in an earlier one
     let mut start_byte : Int? = if started { Some(0) } else { None }
@@ -808,6 +1234,7 @@ pub fn SegmentedLog::append_raw(
         }
         let after = reader.position()
         let seg = self.active()
+        self.maybe_anchor()
         let new_size = match (seg.file.append)(bytes[before:after].to_owned()) {
           Ok(size) => size
           Err(e) => return Err(e)

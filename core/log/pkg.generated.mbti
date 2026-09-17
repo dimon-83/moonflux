@@ -19,6 +19,11 @@ pub(all) suberror LogError {
 pub impl Show for LogError
 
 // Types and methods
+pub(all) struct IndexAnchor {
+  offset : Int64
+  position : Int
+} derive(Eq, Show, @debug.Debug)
+
 pub(all) struct LogEntry {
   offset : Int64
   record : @protocol.Record
@@ -36,10 +41,12 @@ pub fn MemorySegment::new() -> Self
 pub struct MemorySegmentStore {
   bases : Array[Int64]
   segments : Array[MemorySegment]
+  indexes : Array[MemorySegment]
   created : Array[Int64]
 }
 pub fn MemorySegmentStore::bases(Self) -> Array[Int64]
 pub fn MemorySegmentStore::contents(Self, Int64) -> Bytes
+pub fn MemorySegmentStore::index_contents(Self, Int64) -> Bytes
 pub fn MemorySegmentStore::new() -> Self
 pub fn MemorySegmentStore::set_created_ms(Self, Int64, Int64) -> Unit
 pub fn MemorySegmentStore::store(Self) -> SegmentStore
@@ -79,6 +86,7 @@ pub(all) struct SegmentInfo {
 pub(all) struct SegmentStore {
   open_segment : (Int64) -> Result[SegmentFile, LogError]
   list : () -> Result[Array[SegmentInfo], LogError]
+  open_index : (Int64) -> Result[SegmentFile, LogError]
   remove : (Int64) -> Result[Unit, LogError]
 } derive(@debug.Debug)
 
@@ -94,6 +102,7 @@ pub struct SegmentedLog {
   mut next_offset : Int64
   recovery : RecoveryReport
   roll_bytes : Int
+  index_every_records : Int
 } derive(@debug.Debug)
 pub fn SegmentedLog::append(Self, Array[@protocol.Record]) -> Result[Int64, LogError]
 pub fn SegmentedLog::append_raw(Self, Bytes, Int) -> Result[Unit, LogError]
@@ -101,6 +110,7 @@ pub fn SegmentedLog::first_offset(Self) -> Int64
 pub fn SegmentedLog::high_watermark(Self) -> Int64
 pub fn SegmentedLog::open(SegmentFile) -> Result[Self, LogError]
 pub fn SegmentedLog::open_store(SegmentStore, Int) -> Result[Self, LogError]
+pub fn SegmentedLog::open_store_configured(SegmentStore, Int, Int) -> Result[Self, LogError]
 pub fn SegmentedLog::read(Self, Int64, Int) -> Result[Array[LogEntry], LogError]
 pub fn SegmentedLog::read_raw(Self, Int64, Int) -> Result[RawWindow, LogError]
 pub fn SegmentedLog::segment_summaries(Self) -> Array[SegmentSummary]

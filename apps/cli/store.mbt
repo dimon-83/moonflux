@@ -57,6 +57,21 @@ fn roll_bytes() -> Int {
 const DEFAULT_ROLL_BYTES : Int = 1048576
 
 ///|
+/// How many records may pass between index anchors (P8/T45). Same
+/// reasoning as the roll threshold: policy, so it is configurable, and
+/// the storage gate sets it small to exercise the index.
+fn index_every_records() -> Int {
+  match @env.get_env_var("MOONFLUX_INDEX_EVERY") {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) if n > 0 => n
+        _ => 64
+      }
+    None => 64
+  }
+}
+
+///|
 /// Opens (or recovers) one partition's log. Recovery semantics are
 /// identical across partitions: a torn or corrupt tail truncates to the
 /// confirmed prefix, never silently.
@@ -101,7 +116,12 @@ fn open_partition_log(
     Ok(store) => store
     Err(e) => return Err("open segment store \{dir}: \{e}")
   }
-  match @log.SegmentedLog::open_store(store, roll_bytes()) {
+  match
+    @log.SegmentedLog::open_store_configured(
+      store,
+      roll_bytes(),
+      index_every_records(),
+    ) {
     Ok(log) => {
       // never silent: recovery that discarded bytes is surfaced
       if !(log.recovery.reason is Clean) {
