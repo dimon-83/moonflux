@@ -54,7 +54,16 @@ pub extern "C" fn net_recv_some(
 
 ///|
 #borrow(fds, ready)
-pub extern "C" fn net_poll_readable(
+extern "C" fn net_poll_writable(
+  fds : FixedArray[Int],
+  count : Int,
+  timeout_ms : Int,
+  ready : FixedArray[Int],
+) -> Int = "mf_net_poll_writable"
+
+///|
+#borrow(fds, ready)
+extern "C" fn net_poll_readable(
   fds : FixedArray[Int],
   count : Int,
   timeout_ms : Int,

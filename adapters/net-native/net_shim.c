@@ -191,6 +191,33 @@ int mf_net_poll_readable(const int *fds, int count, int timeout_ms,
   return hits;
 }
 
+/*
+ * Polls for *writability* (P12): a TLS handshake that answered
+ * SSL_ERROR_WANT_WRITE is waiting for buffer space, not for data, and
+ * polling its socket for readability would spin or sleep forever.
+ */
+int mf_net_poll_writable(const int *fds, int count, int timeout_ms,
+                         int *ready) {
+  struct pollfd pfds[128];
+  if (count < 0 || count > 128) return -EINVAL;
+  for (int i = 0; i < count; i++) {
+    pfds[i].fd = fds[i];
+    pfds[i].events = POLLOUT;
+    pfds[i].revents = 0;
+    ready[i] = 0;
+  }
+  int rc = poll(pfds, (nfds_t)count, timeout_ms);
+  if (rc < 0) return -errno;
+  int hits = 0;
+  for (int i = 0; i < count; i++) {
+    if (pfds[i].revents & (POLLOUT | POLLHUP | POLLERR)) {
+      ready[i] = 1;
+      hits++;
+    }
+  }
+  return hits;
+}
+
 int mf_net_send(int fd, const uint8_t *buf, int len) {
   return (int)send(fd, buf, len, 0);
 }

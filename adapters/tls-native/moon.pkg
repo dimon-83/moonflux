@@ -1,0 +1,14 @@
+// adapters/tls-native: TLS sessions over the plain transport (P12).
+// OpenSSL through a C shim resolved at runtime (no link-time
+// dependency); a machine without libssl loses only TLS.
+
+supported_targets = "native"
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8",
+}
+
+options(
+  "native-stub": [ "tls_shim.c" ],
+)

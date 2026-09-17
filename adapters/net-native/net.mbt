@@ -370,3 +370,84 @@ pub fn TcpStream::send_some(
   }
   Ok(n)
 }
+
+// ---------------------------------------------------------------------
+// The stream interface (P12).
+//
+// The event loop and the replication link need "a connected byte
+// stream", not "a socket": with TLS in the picture there are two kinds,
+// and binding those layers to the concrete socket type would push TLS
+// through every one of them. An interface of function fields is the same
+// shape the client kernel already injects for its own transport — one
+// idea, used twice.
+
+///|
+/// A connected stream: what the event loop, the replication link and the
+/// control loops actually use. `pending` exists for TLS: decrypted bytes
+/// may be buffered in the session while the socket itself has nothing to
+/// read, and a poll loop that only watches the socket would sleep
+/// through them.
+pub(all) struct Stream {
+  /// The socket under this stream, for polling.
+  fd : () -> Int
+  /// Reads what is available: `Ok(0)` = peer closed, `WouldBlock` =
+  /// nothing now, positive = bytes. The three must stay distinguishable.
+  recv_some : (FixedArray[Byte], Int) -> Result[Int, NetError]
+  /// Writes what the socket accepts; a short write is normal.
+  send_some : (Bytes) -> Result[Int, NetError]
+  /// Bytes already buffered *inside* this stream (0 for plain sockets).
+  pending : () -> Int
+  /// Non-blocking is the event loop's requirement, not a preference.
+  set_nonblocking : (Bool) -> Result[Unit, NetError]
+  close : () -> Unit
+}
+
+///|
+/// The plain-socket constructor: a TCP stream is already a stream.
+pub fn TcpStream::stream(self : TcpStream) -> Stream {
+  Stream::{
+    fd: fn() { self.raw_fd() },
+    recv_some: fn(buf, len) { self.recv_some(buf, len) },
+    send_some: fn(bytes) { self.send_some(bytes) },
+    pending: fn() { 0 },
+    set_nonblocking: fn(enabled) { self.set_nonblocking(enabled) },
+    close: fn() { let _ = self.close() },
+  }
+}
+
+///|
+/// Polls raw descriptors for readability (or writability, which is what
+/// a TLS handshake waiting on `WANT_WRITE` needs). The interface's `fd`
+/// is what feeds this: the poller does not need to know what kind of
+/// stream is on the other end.
+pub fn poll_fds(
+  fds : Array[Int],
+  timeout_ms : Int,
+  want_write : Bool,
+) -> Result[Array[Int], NetError] {
+  let count = fds.length()
+  if count == 0 {
+    return Ok([])
+  }
+  if count > 128 {
+    return Err(BadAddress("poll supports at most 128 descriptors"))
+  }
+  let raw : FixedArray[Int] = FixedArray::make(count, 0)
+  for i in 0..<count {
+    raw[i] = fds[i]
+  }
+  let ready : FixedArray[Int] = FixedArray::make(count, 0)
+  let hits = if want_write {
+    net_poll_writable(raw, count, timeout_ms, ready)
+  } else {
+    net_poll_readable(raw, count, timeout_ms, ready)
+  }
+  if hits < 0 {
+    return Err(Io(-hits, "poll"))
+  }
+  let out : Array[Int] = []
+  for i in 0..<hits {
+    out.push(ready[i])
+  }
+  Ok(out)
+}
