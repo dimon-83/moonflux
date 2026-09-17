@@ -1,0 +1,8 @@
+// core/group: consumer-group semantics as pure computation.
+// Membership, the epoch that fences it, the range assignment, and the
+// committed offsets. No IO, no clock (now_ms is the caller's), which is
+// what makes rebalances replayable and reviewable.
+
+import {
+  "moonflux/core/cluster",
+}

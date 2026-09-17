@@ -1,0 +1,7 @@
+// Blackbox tests for the consumer-group kernel: only the public API,
+// the way the control plane and the CLI will use it.
+
+import {
+  "moonflux/core/group",
+  "moonflux/core/cluster",
+}
