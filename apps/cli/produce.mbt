@@ -6,8 +6,16 @@ fn cmd_produce(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let topic = flags.require("topic")
   let file = flags.require("file")
+  let partition = match flags.get("partition") {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) if n >= 0 => n
+        _ => fail("--partition expects a non-negative integer, got \{text}")
+      }
+    None => 0
+  }
   match flags.get("remote") {
-    Some(addr) => produce_remote(topic, file, addr)
+    Some(addr) => produce_remote(topic, partition, file, addr)
     None => {
       let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
       produce_local(topic, file, data_dir)
@@ -53,7 +61,12 @@ fn produce_local(topic : String, file : String, data_dir : String) -> Unit {
 }
 
 ///|
-fn produce_remote(topic : String, file : String, addr : String) -> Unit {
+fn produce_remote(
+  topic : String,
+  partition : Int,
+  file : String,
+  addr : String,
+) -> Unit {
   let records = match file_records(file) {
     Ok(records) => records
     Err(e) => fail(e)
@@ -63,10 +76,15 @@ fn produce_remote(topic : String, file : String, addr : String) -> Unit {
     Ok(producer) => producer
     Err(e) => fail("connect \{host}:\{port}: \{e}")
   }
-  match producer.send(topic, records) {
+  let produced = if partition == 0 {
+    producer.send(topic, records)
+  } else {
+    producer.send_partition(topic, partition, records)
+  }
+  match produced {
     Ok((base, count)) =>
       println(
-        "produced \{count} records to topic \{topic} at offsets \{base}..\{base + count.to_int64()}",
+        "produced \{count} records to topic \{topic}[\{partition}] at offsets \{base}..\{base + count.to_int64()}",
       )
     Err(e) => fail("send: \{e}")
   }

@@ -412,13 +412,12 @@ fn local_leo(data_dir : String) -> Int64 {
     Some(applied) => applied
     None => return 0L
   }
-  let partition = applied.spec.topic.name
-  match @fs.exists(topic_log_path(data_dir, partition)) {
+  let name = applied.spec.topic.name
+  match @fs.exists(topic_log_path(data_dir, name, 0)) {
     Ok(true) => ()
     _ => return 0L
   }
-  let handle = match
-    @fs.open_segment_file(topic_log_path(data_dir, partition)) {
+  let handle = match @fs.open_segment_file(topic_log_path(data_dir, name, 0)) {
     Ok(handle) => handle
     Err(_) => return 0L
   }
@@ -1264,6 +1263,19 @@ fn dispatch_data_frame(
       }
       dispatch_fetch_committed(frame.payload, data_dir, rules, hw, leo)
     }
+    @client.CMD_PRODUCE_PARTITION => {
+      let (code, payload) = dispatch_produce_partition(frame.payload, data_dir)
+      (code, payload)
+    }
+    @client.CMD_FETCH_PARTITION => {
+      rules.sync(data_dir)
+      let (code, payload) = dispatch_fetch_partition(
+        frame.payload,
+        data_dir,
+        rules,
+      )
+      (code, payload)
+    }
     @client.CMD_SYNC_FETCH => {
       let request = match @client.decode_sync_request(frame.payload) {
         Ok(request) => request
@@ -1337,15 +1349,41 @@ fn dispatch_data_frame(
       }
     }
     @client.CMD_OFFSET_INFO => {
-      partition.sync_leader_leo()
-      let (hw, leo) = match partition.ledger {
-        Some(ledger) => {
-          let info = ledger.offset_info()
-          (info.high_watermark, info.log_end_offset)
-        }
-        None => (0L, partition.leo())
+      // the request optionally names a partition; empty means partition
+      // 0 (the pre-P5 clients' shape, kept working)
+      let asked = match @client.decode_partition_ref_opt(frame.payload) {
+        Ok(asked) => asked
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+          )
       }
-      (@client.CMD_OK, @client.encode_offset_info(hw, leo))
+      if asked.partition == 0 {
+        partition.sync_leader_leo()
+        let (hw, leo) = match partition.ledger {
+          Some(ledger) => {
+            let info = ledger.offset_info()
+            (info.high_watermark, info.log_end_offset)
+          }
+          None => (0L, partition.leo())
+        }
+        (@client.CMD_OK, @client.encode_offset_info(hw, leo))
+      } else {
+        // a partition beyond the replicated one is a single-node log on
+        // this node: its committed prefix IS its log end
+        let log = match
+          open_partition_log(data_dir, asked.topic, asked.partition) {
+          Ok(log) => log
+          Err(e) =>
+            return (
+              @client.CMD_ERR,
+              @client.encode_error(@client.ERR_STORAGE, e),
+            )
+        }
+        let leo = log.high_watermark()
+        (@client.CMD_OK, @client.encode_offset_info(leo, leo))
+      }
     }
     @client.CMD_LEADER =>
       (

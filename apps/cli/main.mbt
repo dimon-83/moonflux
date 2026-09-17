@@ -55,8 +55,12 @@ fn usage() -> Unit {
   println("usage: moonflux <command> [flags]")
   println("")
   println("commands:")
-  println("  produce  --topic T --file F [--data-dir D] [--remote host:port]")
-  println("  consume  --topic T [--from N] [--data-dir D] [--remote host:port]")
+  println(
+    "  produce  --topic T --file F [--partition N] [--data-dir D] [--remote host:port]",
+  )
+  println(
+    "  consume  --topic T [--from N] [--partition N] [--data-dir D] [--remote host:port]",
+  )
   println("  serve    --data-dir D --listen host:port")
   println(
     "  spu      --id A --listen host:port [--data-dir D] [--sc host:port]",

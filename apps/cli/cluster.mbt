@@ -86,15 +86,30 @@ fn cluster_leader(argv : Array[String]) -> Unit {
 }
 
 ///|
-/// `moonflux cluster offsets --topic T --remote <leader>` — prints
-/// `<hw> <leo>` for the topic's partition 0, asked of the node that
-/// actually leads it (the leader owns the progress ledger; asking a
-/// follower would answer a different question).
+/// `moonflux cluster offsets --topic T [--partition N] --remote <node>`
+/// — prints `<hw> <leo>` for the partition, asked of the node that
+/// holds it (the leader owns the progress ledger; asking a follower
+/// would answer a different question).
 fn cluster_offsets(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let remote = flags.require("remote")
   let topic = flags.require("topic")
-  let payload = match control_call(remote, @client.CMD_OFFSET_INFO, b"") {
+  let partition = match flags.get("partition") {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) if n >= 0 => n
+        _ => fail("--partition expects a non-negative integer, got \{text}")
+      }
+    None => 0
+  }
+  // the request names its partition; an empty payload stays legal and
+  // means partition 0 (the pre-P5 clients' shape)
+  let ask = if partition == 0 {
+    b""
+  } else {
+    @client.encode_partition_ref(@client.PartitionRef::{ topic, partition })
+  }
+  let payload = match control_call(remote, @client.CMD_OFFSET_INFO, ask) {
     Ok(payload) => payload
     Err(e) => fail("cluster offsets: \{e}")
   }

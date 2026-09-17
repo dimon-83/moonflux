@@ -315,3 +315,81 @@ fn decode_fetch_reply(
   let _ = from
   Ok(entries)
 }
+
+///|
+/// A partitioned fetch: reads one partition explicitly (partition 0 is
+/// what the unpartitioned `fetch` means). The reply shape is the same.
+pub fn Consumer::fetch_partition(
+  self : Consumer,
+  topic : String,
+  partition : Int,
+  from : Int64,
+  max : Int,
+) -> Result[Array[@log.LogEntry], ClientError] {
+  let payload = Buffer::Buffer()
+  let topic_bytes = @utf8.encode(topic[0:topic.length()])
+  payload.write_leb128(topic_bytes.length())
+  payload.write_bytes(topic_bytes[0:topic_bytes.length()])
+  payload.write_leb128(partition)
+  payload.write_int64_be(from)
+  payload.write_uint_be(max.reinterpret_as_uint())
+  let rid = self.next_rid
+  self.next_rid += 1
+  let reply = match
+    request(self.conn, rid, CMD_FETCH_PARTITION, payload.to_bytes()) {
+    Ok(reply) => reply
+    Err(e) => return Err(e)
+  }
+  match reply.cmd {
+    CMD_OK => decode_fetch_reply(reply.payload, from)
+    CMD_ERR => {
+      let (code, message) = decode_error(reply.payload)
+      Err(Server(code, message))
+    }
+    _ => Err(Protocol("unexpected reply cmd \{reply.cmd}"))
+  }
+}
+
+///|
+/// Sends a batch to an explicit partition. The reply is identical to
+/// `send`; partition 0 is what `send` means.
+pub fn Producer::send_partition(
+  self : Producer,
+  topic : String,
+  partition : Int,
+  records : Array[@protocol.Record],
+) -> Result[(Int64, Int), ClientError] {
+  let payload = Buffer::Buffer()
+  let topic_bytes = @utf8.encode(topic[0:topic.length()])
+  payload.write_leb128(topic_bytes.length())
+  payload.write_bytes(topic_bytes[0:topic_bytes.length()])
+  payload.write_leb128(partition)
+  let batch = @protocol.encode_frame(-1L, records)
+  payload.write_bytes(batch[0:batch.length()])
+  let rid = self.next_rid
+  self.next_rid += 1
+  let reply = match
+    request(self.conn, rid, CMD_PRODUCE_PARTITION, payload.to_bytes()) {
+    Ok(reply) => reply
+    Err(e) => return Err(e)
+  }
+  match reply.cmd {
+    CMD_OK => {
+      let reader = @codec.Reader::new(reply.payload)
+      let base = match reader.read_i64_be() {
+        Ok(base) => base
+        Err(_) => return Err(Protocol("bad produce reply"))
+      }
+      let count = match reader.read_u32_be() {
+        Ok(count) => count.reinterpret_as_int()
+        Err(_) => return Err(Protocol("bad produce reply"))
+      }
+      Ok((base, count))
+    }
+    CMD_ERR => {
+      let (code, message) = decode_error(reply.payload)
+      Err(Server(code, message))
+    }
+    _ => Err(Protocol("unexpected reply cmd \{reply.cmd}"))
+  }
+}

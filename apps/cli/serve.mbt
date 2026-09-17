@@ -101,6 +101,19 @@ fn dispatch_session_frame(
       let (code, payload) = dispatch_fetch(frame.payload, data_dir, rules)
       reply_frame(frame.rid, code, payload)
     }
+    @client.CMD_PRODUCE_PARTITION => {
+      let (code, payload) = dispatch_produce_partition(frame.payload, data_dir)
+      reply_frame(frame.rid, code, payload)
+    }
+    @client.CMD_FETCH_PARTITION => {
+      rules.sync(data_dir)
+      let (code, payload) = dispatch_fetch_partition(
+        frame.payload,
+        data_dir,
+        rules,
+      )
+      reply_frame(frame.rid, code, payload)
+    }
     @client.CMD_APPLY_PIPELINE =>
       match dispatch_apply(frame.payload, data_dir) {
         Ok(summary) => reply_frame(frame.rid, @client.CMD_OK, summary)
@@ -355,6 +368,77 @@ fn dispatch_produce(payload : Bytes, data_dir : String) -> (Int, Bytes) {
   let out = Buffer::Buffer()
   out.write_int64_be(base)
   out.write_uint_be(records.length().reinterpret_as_uint())
+  reply(@client.CMD_OK, out.to_bytes())
+}
+
+///|
+/// A partitioned produce: the same append, at an explicit partition.
+/// The reply shape is identical to the unpartitioned one (base + count).
+fn dispatch_produce_partition(
+  payload : Bytes,
+  data_dir : String,
+) -> (Int, Bytes) {
+  let (topic, partition, frame) = match
+    @client.decode_partitioned_produce(payload) {
+    Ok(parsed) => parsed
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  let records = match @protocol.decode_frame_strict(frame) {
+    Ok(batch) => batch.records
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad batch: \{e}")
+  }
+  let log = match open_partition_log(data_dir, topic, partition) {
+    Ok(log) => log
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  let base = match log.append(records) {
+    Ok(base) => base
+    Err(e) => return err_reply(@client.ERR_STORAGE, "append: \{e}")
+  }
+  let out = Buffer::Buffer()
+  out.write_int64_be(base)
+  out.write_uint_be(records.length().reinterpret_as_uint())
+  reply(@client.CMD_OK, out.to_bytes())
+}
+
+///|
+/// A partitioned fetch: the same window, at an explicit partition.
+fn dispatch_fetch_partition(
+  payload : Bytes,
+  data_dir : String,
+  rules : RuleState,
+) -> (Int, Bytes) {
+  let (topic, partition, from, max) = match
+    @client.decode_partitioned_fetch(payload) {
+    Ok(parsed) => parsed
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  let log = match open_partition_log(data_dir, topic, partition) {
+    Ok(log) => log
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  let entries = match log.read(from, max) {
+    Ok(entries) => entries
+    Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
+  }
+  let records : Array[@protocol.Record] = []
+  for entry in entries {
+    match apply_nodes(rules.chain, [entry.record]) {
+      Ok(out_one) =>
+        for r in out_one {
+          records.push(r)
+        }
+      Err(e) => return err_reply(@client.ERR_TRANSFORM, "transform: \{e}")
+    }
+  }
+  let base : Int64 = if records.length() > 0 { entries[0].offset } else { from }
+  let frame = @protocol.encode_frame(base, records)
+  // the reply carries the partition's own watermarks: a partition is an
+  // independent log, so its end is its own, not the topic's aggregate
+  let out = Buffer::Buffer()
+  out.write_uint_be(1U)
+  out.write_uint_be(frame.length().reinterpret_as_uint())
+  out.write_bytes(frame[0:frame.length()])
   reply(@client.CMD_OK, out.to_bytes())
 }
 

@@ -16,8 +16,16 @@ fn cmd_consume(argv : Array[String]) -> Unit {
     None => 0L
   }
   let committed = flags.get("committed") is Some(_)
+  let partition = match flags.get("partition") {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) if n >= 0 => n
+        _ => fail("--partition expects a non-negative integer, got \{text}")
+      }
+    None => 0
+  }
   match flags.get("remote") {
-    Some(addr) => consume_remote(topic, from, addr, committed)
+    Some(addr) => consume_remote(topic, partition, from, addr, committed)
     None => {
       let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
       consume_local(topic, from, data_dir)
@@ -64,6 +72,7 @@ fn consume_local(topic : String, from : Int64, data_dir : String) -> Unit {
 ///|
 fn consume_remote(
   topic : String,
+  partition : Int,
   from : Int64,
   addr : String,
   committed : Bool,
@@ -77,6 +86,8 @@ fn consume_remote(
     // the committed read reports the watermarks it used on stderr, so
     // a caller can see *why* a record was withheld while stdout stays
     // a clean record stream
+    // committed reads keep their own command; partitioning for them
+    // arrives with the per-partition watermark plumbing (P5 tail)
     match consumer.fetch_committed(topic, from, 1000000) {
       Ok((entries, hw, leo)) => {
         warn(
@@ -89,7 +100,8 @@ fn consume_remote(
       Err(e) => fail("committed fetch: \{e}")
     }
   } else {
-    let entries = match consumer.fetch(topic, from, 1000000) {
+    let entries = match
+      consumer.fetch_partition(topic, partition, from, 1000000) {
       Ok(entries) => entries
       Err(e) => fail("fetch: \{e}")
     }

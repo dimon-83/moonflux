@@ -106,6 +106,17 @@ pub const CMD_TOPIC_DELETE = 17
 pub const CMD_FETCH_COMMITTED = 18
 
 ///|
+/// Partition-aware data commands. The original PRODUCE/FETCH keep
+/// their exact payloads and mean partition 0 — every pre-P5 client and
+/// every golden script relies on that — so partitioning lands as new
+/// commands rather than new fields in old payloads (the same additive
+/// rule the committed read followed).
+pub const CMD_PRODUCE_PARTITION = 20
+
+///|
+pub const CMD_FETCH_PARTITION = 21
+
+///|
 /// Deploys a pipeline document to the broker: the same work
 /// `pipeline apply` does locally (validate, compile, persist), so the
 /// editor can close its loop - drag a pipeline, deploy it, produce,
@@ -797,4 +808,105 @@ pub fn decode_wire_topics(payload : Bytes) -> Result[Array[WireTopic], String] {
     }
   }
   Ok(out)
+}
+
+///|
+/// A partitioned produce: topic + partition + one batch frame.
+pub fn encode_partitioned_produce(
+  topic : String,
+  partition : Int,
+  batch : Bytes,
+) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, topic)
+  buf.write_leb128(partition)
+  buf.write_bytes(batch[0:batch.length()])
+  buf.to_bytes()
+}
+
+///|
+/// Decodes the partitioned produce request (topic, partition, frame).
+pub fn decode_partitioned_produce(
+  payload : Bytes,
+) -> Result[(String, Int, Bytes), String] {
+  let reader = @codec.Reader::new(payload)
+  let topic = match read_field(reader) {
+    Ok(topic) => topic
+    Err(e) => return Err(e)
+  }
+  if !@spec.valid_topic_name(topic) {
+    return Err("invalid topic name '\{topic}'")
+  }
+  let partition = match reader.read_uleb128_len() {
+    Ok(partition) => partition
+    Err(_) => return Err("truncated partition index")
+  }
+  if partition < 0 {
+    return Err("negative partition index")
+  }
+  let frame = match reader.read_bytes(reader.remaining()) {
+    Ok(frame) => frame
+    Err(_) => return Err("truncated batch frame")
+  }
+  Ok((topic, partition, frame))
+}
+
+///|
+/// A partitioned fetch: topic + partition + from + max.
+pub fn encode_partitioned_fetch(
+  topic : String,
+  partition : Int,
+  from : Int64,
+  max : Int,
+) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, topic)
+  buf.write_leb128(partition)
+  buf.write_int64_be(from)
+  buf.write_uint_be(max.reinterpret_as_uint())
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_partitioned_fetch(
+  payload : Bytes,
+) -> Result[(String, Int, Int64, Int), String] {
+  let reader = @codec.Reader::new(payload)
+  let topic = match read_field(reader) {
+    Ok(topic) => topic
+    Err(e) => return Err(e)
+  }
+  if !@spec.valid_topic_name(topic) {
+    return Err("invalid topic name '\{topic}'")
+  }
+  let partition = match reader.read_uleb128_len() {
+    Ok(partition) => partition
+    Err(_) => return Err("truncated partition index")
+  }
+  let from = match reader.read_i64_be() {
+    Ok(from) => from
+    Err(_) => return Err("truncated offset")
+  }
+  // max is u32 BE, matching the unpartitioned FETCH payload exactly
+  let max = match reader.read_u32_be() {
+    Ok(max) => max.reinterpret_as_int()
+    Err(_) => return Err("truncated record count")
+  }
+  if from < 0L || max <= 0 {
+    return Err("negative offset or non-positive record count")
+  }
+  Ok((topic, partition, from, max))
+}
+
+///|
+/// Decodes an optional partition reference: an empty payload means
+/// "partition 0" (the pre-P5 clients' shape, which must keep working),
+/// anything else is `encode_partition_ref`'s output.
+pub fn decode_partition_ref_opt(
+  payload : Bytes,
+) -> Result[PartitionRef, String] {
+  if payload.length() == 0 {
+    return Ok(PartitionRef::{ topic: "", partition: 0 })
+  }
+  decode_partition_ref(payload)
 }
