@@ -661,15 +661,12 @@ fn local_leo(data_dir : String) -> Int64 {
     None => return 0L
   }
   let name = applied.spec.topic.name
-  match @fs.exists(topic_log_path(data_dir, name, 0)) {
-    Ok(true) => ()
-    _ => return 0L
+  if !partition_has_bytes(data_dir, name, 0) {
+    return 0L
   }
-  let handle = match @fs.open_segment_file(topic_log_path(data_dir, name, 0)) {
-    Ok(handle) => handle
-    Err(_) => return 0L
-  }
-  match @log.SegmentedLog::open(handle) {
+  // opening is safe here (there are bytes): it also migrates a pre-P8
+  // single file into the segmented layout
+  match open_partition_log(data_dir, name, 0) {
     Ok(log) => log.high_watermark()
     Err(_) => 0L
   }

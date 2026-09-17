@@ -141,17 +141,27 @@ produce_lines "$LEADER" "$WORK/in.txt" || fail "produce to the leader failed"
 # the replica file must be a byte-prefix of the leader's: replication
 # copies frames, it does not re-encode records. The follower creates
 # its log on the first pull, so wait for bytes, not for the file.
-LEADER_LOG="$LEADER_DIR/topics/$TOPIC/partition-0.log"
-FOLLOWER_LOG="$FOLLOWER_DIR/topics/$TOPIC/partition-0.log"
+# P8: a partition is a sequence of segment files; "the replica's
+# bytes" means its segments concatenated in base order (the names are
+# zero-padded, so a plain sort is offset order)
+partition_bytes() { # $1 = data dir, $2 = out file
+  : > "$2"
+  local dir="$1/topics/$TOPIC/partition-0"
+  for f in $(ls "$dir"/*.log 2>/dev/null | sort); do
+    cat "$f" >> "$2"
+  done
+}
+LEADER_LOG="$WORK/leader.bin"
+FOLLOWER_LOG="$WORK/follower.bin"
+partition_bytes "$LEADER_DIR" "$LEADER_LOG"
 LEADER_SIZE=$(wc -c < "$LEADER_LOG" | tr -d ' ')
 for _ in $(seq 1 80); do
-  if [ -f "$FOLLOWER_LOG" ]; then
-    FOLLOWER_SIZE=$(wc -c < "$FOLLOWER_LOG" | tr -d ' ')
-    [ "$FOLLOWER_SIZE" = "$LEADER_SIZE" ] && break
-  fi
+  partition_bytes "$FOLLOWER_DIR" "$FOLLOWER_LOG"
+  FOLLOWER_SIZE=$(wc -c < "$FOLLOWER_LOG" | tr -d ' ')
+  [ "$FOLLOWER_SIZE" = "$LEADER_SIZE" ] && break
   sleep 0.25
 done
-[ -f "$FOLLOWER_LOG" ] || { cat "$(log_of "$FOLLOWER_ID")"; fail "the follower never wrote a replica log"; }
+[ "$FOLLOWER_SIZE" -ge 0 ] || { cat "$(log_of "$FOLLOWER_ID")"; fail "the follower never wrote a replica log"; }
 [ "$FOLLOWER_SIZE" -gt 0 ] || { cat "$(log_of "$FOLLOWER_ID")"; fail "the follower's replica log stayed empty"; }
 [ "$FOLLOWER_SIZE" = "$LEADER_SIZE" ] \
   || { cat "$(log_of "$FOLLOWER_ID")"; fail "the follower has $FOLLOWER_SIZE bytes, the leader has $LEADER_SIZE"; }
@@ -207,7 +217,11 @@ printf 'phantom\n' > "$WORK/ghost.txt"
 "$EXE" produce --topic "$TOPIC" --file "$WORK/ghost.txt" --data-dir "$FOLLOWER_DIR" > /dev/null \
   || fail "could not stage a divergent tail"
 # the staged tail is checked on disk, not by asking the node: it is
-# deliberately stopped, and a query would only prove it is down
+# deliberately stopped, and a query would only prove it is down. The
+# snapshots are re-taken: writing to the follower's own data dir added
+# a segment, and the comparison is about what is on disk *now*.
+partition_bytes "$LEADER_DIR" "$LEADER_LOG"
+partition_bytes "$FOLLOWER_DIR" "$FOLLOWER_LOG"
 LEADER_BYTES=$(wc -c < "$LEADER_LOG" | tr -d ' ')
 STAGED_BYTES=$(wc -c < "$FOLLOWER_LOG" | tr -d ' ')
 [ "$STAGED_BYTES" -gt "$LEADER_BYTES" ] \
@@ -223,6 +237,7 @@ for _ in $(seq 1 60); do
 done
 grep -q "divergent tail" "$(log_of "$FOLLOWER_ID")" \
   || { cat "$(log_of "$FOLLOWER_ID")"; fail "the divergent tail was not reported"; }
+partition_bytes "$FOLLOWER_DIR" "$FOLLOWER_LOG"
 cmp -s "$LEADER_LOG" "$FOLLOWER_LOG" || fail "the divergent tail was not actually removed"
 pass "a divergent tail was truncated to the leader's LEO and the discard reported"
 

@@ -122,8 +122,15 @@ verify() {
 
   # 2. records reached the log (read from disk: the log file IS the
   #    protocol stream, so this needs no connection at all)
-  local log_file="$WORK/broker/topics/$topic/partition-0.log"
-  [ -f "$log_file" ] || fail "the editor never produced anything (no $log_file)"
+  # P8: a partition is a directory of segments; the frames are their
+  # concatenation in base order (the names sort as offsets)
+  local log_dir="$WORK/broker/topics/$topic/partition-0"
+  local log_file="$WORK/editor-log.bin"
+  : > "$log_file"
+  for f in $(ls "$log_dir"/*.log 2>/dev/null | sort); do
+    cat "$f" >> "$log_file"
+  done
+  [ -s "$log_file" ] || fail "the editor never produced anything (no segments under $log_dir)"
   local on_disk
   on_disk="$(python3 "$ROOT/tools/decode_log_frames.py" "$log_file")" \
     || fail "the on-disk frames do not decode"

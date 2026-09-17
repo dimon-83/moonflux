@@ -72,3 +72,120 @@ pub fn open_segment_file(path : String) -> Result[@log.SegmentFile, FsError] {
   }
   Ok(make_segment_file(f))
 }
+
+// ---------------------------------------------------------------------
+// The segment *store*: a directory holds a partition's segments, one
+// file per segment, named by the offset of its first record. The
+// kernel owns what a segment means; the layout below is this
+// adapter's business, and the naming is the index — a base offset you
+// cannot read back from the listing is a segment nobody can recover.
+
+///|
+/// `00000000000000000000.log` for base 0, and so on: fixed width so a
+/// plain lexicographic listing is also offset order, which makes the
+/// filesystem's own ordering the first thing that agrees with the
+/// kernel's.
+pub fn segment_file_name(base : Int64) -> String {
+  let digits = base.to_string()
+  let padded = StringBuilder::new()
+  for _i = 0; _i < 20 - digits.length(); _i = _i + 1 {
+    padded.write_char('0')
+  }
+  padded.write_string(digits)
+  "\{padded.to_string()}.log"
+}
+
+///|
+/// The base offset encoded in a segment file name, or None when the
+/// name is not one of ours.
+fn segment_base_of(name : String) -> Int64? {
+  if name.length() <= 4 {
+    return None
+  }
+  if name[name.length() - 4:name.length()].to_string() != ".log" {
+    return None
+  }
+  let stem = name[0:name.length() - 4]
+  for i = 0; i < stem.length(); i = i + 1 {
+    let c = stem[i]
+    if c < '0' || c > '9' {
+      return None
+    }
+  }
+  let parsed = try? @string.parse_int64(stem)
+  match parsed {
+    Ok(base) => Some(base)
+    Err(_) => None
+  }
+}
+
+///|
+/// Opens (or creates) the partition directory as a segment store.
+/// `roll_bytes` and retention live in the kernel; this adapter only
+/// answers "what segments exist, open one, drop one".
+pub fn open_segment_store(dir : String) -> Result[@log.SegmentStore, FsError] {
+  let store : @log.SegmentStore = {
+    open_segment: fn(base) {
+      match mkdirs(dir) {
+        Ok(_) => ()
+        Err(e) => return Err(map_err(e))
+      }
+      match open_segment_file("\{dir}/\{segment_file_name(base)}") {
+        Ok(file) => Ok(file)
+        Err(e) => Err(map_err(e))
+      }
+    },
+    list: fn() {
+      let names = match list_dir(dir) {
+        Ok(names) => names
+        // a directory that does not exist yet is an empty store, not
+        // an error: the first append creates it
+        Err(_) => return Ok([])
+      }
+      let out : Array[@log.SegmentInfo] = []
+      for name in names {
+        match segment_base_of(name) {
+          None => ()
+          Some(base) => {
+            let path = "\{dir}/\{name}"
+            let info = match segment_info_for(path, base) {
+              Ok(info) => info
+              Err(e) => return Err(e)
+            }
+            out.push(info)
+          }
+        }
+      }
+      Ok(out)
+    },
+    remove: fn(base) {
+      match remove_file("\{dir}/\{segment_file_name(base)}") {
+        Ok(_) => Ok(())
+        Err(e) => Err(map_err(e))
+      }
+    },
+  }
+  Ok(store)
+}
+
+///|
+fn segment_info_for(
+  path : String,
+  base : Int64,
+) -> Result[@log.SegmentInfo, @log.LogError] {
+  let f = match File::open_read_write_append(path) {
+    Ok(f) => f
+    Err(e) => return Err(map_err(e))
+  }
+  let size = match f.size() {
+    Ok(size) => size
+    Err(e) => return Err(map_err(e))
+  }
+  // the segment's age is the OS's stamp on the file; the kernel only
+  // ever compares it against a `now` the app supplies
+  let created_ms = match mtime(path) {
+    Ok(stamp) => stamp / 1000000L
+    Err(_) => 0L
+  }
+  Ok(@log.SegmentInfo::{ base, size, created_ms })
+}

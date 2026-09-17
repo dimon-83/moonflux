@@ -165,10 +165,19 @@ grep -q "replicating" "$OLD_DIR.log" \
 pass "the returning leader self-demoted to follower (without being told)"
 
 # and it catches up: both replicas end up holding the same bytes
-OLD_LOG="$OLD_DIR/topics/$TOPIC/partition-0.log"
-NEW_LOG="$SURVIVOR_DIR/topics/$TOPIC/partition-0.log"
+partition_bytes() { # $1 = data dir, $2 = out file (P8: segments in base order)
+  : > "$2"
+  local dir="$1/topics/$TOPIC/partition-0"
+  for f in $(ls "$dir"/*.log 2>/dev/null | sort); do
+    cat "$f" >> "$2"
+  done
+}
+OLD_LOG="$WORK/old.bin"
+NEW_LOG="$WORK/new.bin"
 for _ in $(seq 1 80); do
-  if [ -f "$OLD_LOG" ] && [ -f "$NEW_LOG" ] && cmp -s "$OLD_LOG" "$NEW_LOG"; then
+  partition_bytes "$OLD_DIR" "$OLD_LOG"
+  partition_bytes "$SURVIVOR_DIR" "$NEW_LOG"
+  if [ -s "$NEW_LOG" ] && cmp -s "$OLD_LOG" "$NEW_LOG"; then
     break
   fi
   sleep 0.25

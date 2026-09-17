@@ -99,11 +99,14 @@ printf 'two-a\ntwo-b\n' > "$WORK/p2.txt"
 "$EXE" produce --topic "$TOPIC" --file "$WORK/p2.txt" --partition 2 --remote "127.0.0.1:$BROKER_PORT" > /dev/null \
   || fail "produce to partition 2 failed"
 
+# P8: each partition is its own segment directory; partition 0 in this
+# topic must not hold another partition's records
 for p in 0 1 2; do
-  [ -f "$WORK/broker/topics/$TOPIC/partition-$p.log" ] \
-    || fail "partition $p has no log file"
+  DIR="$WORK/broker/topics/$TOPIC/partition-$p"
+  [ -d "$DIR" ] || fail "partition $p has no segment directory"
+  [ -n "$(ls "$DIR"/*.log 2>/dev/null)" ] || fail "partition $p has no segment"
 done
-pass "each partition holds its own segment file"
+pass "each partition holds its own segments"
 
 for p in 0 1 2; do
   OUT="$("$EXE" consume --topic "$TOPIC" --partition "$p" --remote "127.0.0.1:$BROKER_PORT")"

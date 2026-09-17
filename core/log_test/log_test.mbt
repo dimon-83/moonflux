@@ -357,3 +357,211 @@ test "truncate_to_boundary cuts inside a frame instead of refusing" {
   assert_true(log2.truncate_to_boundary(9L) is Err(OffsetOutOfRange))
   assert_true(log2.truncate_to_boundary(-1L) is Err(OffsetOutOfRange))
 }
+
+// ---------------------------------------------------------------------
+// Segmentation (P8): the same log, now with boundaries. Everything a
+// reader can observe must be identical to the single-segment log —
+// that is the whole contract of rolling — so the tests below compare
+// a rolling log against a non-rolling one holding the same batches.
+
+///|
+test "a rolling log reads identically to a non-rolling one" {
+  let plain = @log.MemorySegmentStore::new()
+  let rolling = @log.MemorySegmentStore::new()
+  let flat = match @log.SegmentedLog::open_store(plain.store(), 0) {
+    Ok(l) => l
+    Err(e) => abort("open flat: \{e}")
+  }
+  // a threshold small enough that a batch or two fills a segment
+  let rolled = match @log.SegmentedLog::open_store(rolling.store(), 40) {
+    Ok(l) => l
+    Err(e) => abort("open rolling: \{e}")
+  }
+  for i = 0; i < 12; i = i + 1 {
+    let batch = [rec("r\{i}")]
+    assert_eq(flat.append(batch), rolled.append(batch))
+  }
+  // the rolling log really did roll, and the boundaries are frame
+  // boundaries (a segment count above 1 is the point of the exercise)
+  assert_true(rolling.bases().length() > 1)
+  // every read agrees: same entries, same offsets
+  assert_eq(rolled.read(0L, 100), flat.read(0L, 100))
+  assert_eq(rolled.read(5L, 3), flat.read(5L, 3))
+  assert_eq(rolled.read(11L, 5), flat.read(11L, 5))
+  assert_eq(rolled.high_watermark(), flat.high_watermark())
+  // the raw replication path agrees byte for byte across boundaries
+  let raw_rolled = match rolled.read_raw(0L, 100) {
+    Ok(window) => window
+    Err(e) => abort("read_raw rolling: \{e}")
+  }
+  let raw_flat = match flat.read_raw(0L, 100) {
+    Ok(window) => window
+    Err(e) => abort("read_raw flat: \{e}  /  rolling: \{raw_rolled}")
+  }
+  assert_eq(raw_rolled.bytes, raw_flat.bytes)
+  assert_eq(raw_rolled.record_count, 12)
+  // a raw read that starts mid-log and crosses a boundary
+  let window = match rolled.read_raw(9L, 100) {
+    Ok(window) => window
+    Err(e) => abort("read_raw from 9: \{e}")
+  }
+  assert_eq(window.base_offset, 9L)
+  assert_eq(window.record_count, 3)
+  // the reader sees the same three records through both paths
+  assert_eq(
+    rolled.read(9L, 10),
+    Ok([entry(9L, "r9"), entry(10L, "r10"), entry(11L, "r11")]),
+  )
+}
+
+///|
+test "a reappended raw window segments exactly like the original" {
+  // the leader's segmentation and a follower's must agree, or "the
+  // follower's segment is a byte-prefix of the leader's" would break
+  let leader_store = @log.MemorySegmentStore::new()
+  let follower_store = @log.MemorySegmentStore::new()
+  let leader = match @log.SegmentedLog::open_store(leader_store.store(), 40) {
+    Ok(l) => l
+    Err(e) => abort("leader: \{e}")
+  }
+  let follower = match
+    @log.SegmentedLog::open_store(follower_store.store(), 40) {
+    Ok(l) => l
+    Err(e) => abort("follower: \{e}")
+  }
+  for i = 0; i < 10; i = i + 1 {
+    let _ = leader.append([rec("x\{i}")])
+  }
+  // replicate in two windows (as a follower catches up)
+  let first = match leader.read_raw(0L, 4) {
+    Ok(w) => w
+    Err(e) => abort("raw 1: \{e}")
+  }
+  let second = match leader.read_raw(4L, 100) {
+    Ok(w) => w
+    Err(e) => abort("raw 2: \{e}")
+  }
+  assert_eq(follower.append_raw(first.bytes, first.record_count), Ok(()))
+  assert_eq(follower.append_raw(second.bytes, second.record_count), Ok(()))
+  assert_eq(follower.high_watermark(), leader.high_watermark())
+  // identical segment bases, and identical bytes within each segment
+  let bases = leader_store.bases()
+  assert_eq(follower_store.bases(), bases)
+  for base in bases {
+    assert_eq(follower_store.contents(base), leader_store.contents(base))
+  }
+}
+
+///|
+test "recovery scans only the last segment and drops empty tails" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match @log.SegmentedLog::open_store(store.store(), 30) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  for i = 0; i < 8; i = i + 1 {
+    let _ = log.append([rec("v\{i}")])
+  }
+  let bases = store.bases()
+  assert_true(bases.length() > 1)
+  // the last segment may be the empty one a roll just created: tear a
+  // segment that actually holds a frame
+  let mut last_base = bases[bases.length() - 1]
+  let mut last_bytes = store.contents(last_base)
+  for i = bases.length() - 1; i >= 0; i = i - 1 {
+    let candidate = store.contents(bases[i])
+    if candidate.length() > 3 {
+      last_base = bases[i]
+      last_bytes = candidate
+      break
+    }
+  }
+  assert_true(last_bytes.length() > 3)
+  // reopen: the earlier segments are trusted, the last one is scanned
+  let reopened = match @log.SegmentedLog::open_store(store.store(), 30) {
+    Ok(l) => l
+    Err(e) => abort("reopen: \{e}")
+  }
+  assert_eq(reopened.high_watermark(), 8L)
+  assert_true(reopened.recovery.reason is Clean)
+  // tear the last segment's tail: recovery cuts it there and reports it
+  let torn = last_bytes[0:last_bytes.length() - 3].to_owned()
+  let last_file = match (store.store().open_segment)(last_base) {
+    Ok(file) => file
+    Err(e) => abort("open last segment: \{e}")
+  }
+  match (last_file.truncate)(torn.length()) {
+    Ok(_) => ()
+    Err(e) => abort("tear the tail: \{e}")
+  }
+  let recovered = match @log.SegmentedLog::open_store(store.store(), 30) {
+    Ok(l) => l
+    Err(e) => abort("recover: \{e}")
+  }
+  assert_true(recovered.recovery.reason is TornTail)
+  assert_true(recovered.recovery.discarded_bytes > 0)
+  // the records before the tear survive; the watermark backs up to them
+  assert_eq(recovered.read(0L, 100).unwrap().length(), 7)
+  assert_eq(recovered.high_watermark(), 7L)
+}
+
+///|
+test "an empty trailing segment is dropped on open" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match @log.SegmentedLog::open_store(store.store(), 20) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  for i = 0; i < 4; i = i + 1 {
+    let _ = log.append([rec("e\{i}")])
+  }
+  // simulating a crash between "create the new segment" and "append":
+  // the store holds an empty segment with a base past the data
+  let _ = (store.store().open_segment)(log.high_watermark())
+  let with_empty = store.bases().length()
+  assert_true(with_empty >= 2)
+  let reopened = match @log.SegmentedLog::open_store(store.store(), 20) {
+    Ok(l) => l
+    Err(e) => abort("reopen: \{e}")
+  }
+  assert_eq(reopened.high_watermark(), 4L)
+  // exactly the empty one went away
+  assert_eq(store.bases().length(), with_empty - 1)
+}
+
+///|
+test "a store that is not one log is refused, not repaired" {
+  // two segments with the same base: not one log
+  let duplicated = @log.SegmentStore::{
+    open_segment: fn(_base) { Ok(@log.MemorySegment::new().handle()) },
+    list: fn() {
+      Ok([
+        @log.SegmentInfo::{ base: 0L, size: 0, created_ms: 0L },
+        @log.SegmentInfo::{ base: 0L, size: 0, created_ms: 0L },
+      ])
+    },
+    remove: fn(_base) { Ok(()) },
+  }
+  match @log.SegmentedLog::open_store(duplicated, 0) {
+    Err(Storage(msg)) => assert_true(msg.contains("strictly"))
+    Ok(_) => abort("duplicate bases accepted")
+    Err(e) => abort("unexpected: \{e}")
+  }
+  // an empty segment in the middle: a hole, because appends only ever
+  // go to the active segment. Built on a real memory store so the
+  // reported sizes are the actual ones.
+  let mem = @log.MemorySegmentStore::new()
+  let holed = mem.store()
+  let _ = (holed.open_segment)(0L)
+  let middle = match (holed.open_segment)(4L) {
+    Ok(file) => file
+    Err(e) => abort("open middle: \{e}")
+  }
+  let _ = (middle.append)(b"xx")
+  let _ = (holed.open_segment)(8L)
+  match @log.SegmentedLog::open_store(holed, 0) {
+    Err(Storage(msg)) => assert_true(msg.contains("hole"))
+    Ok(_) => abort("a hole was accepted")
+    Err(e) => abort("unexpected: \{e}")
+  }
+}
