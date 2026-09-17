@@ -57,12 +57,20 @@ fn cmd_consume(argv : Array[String]) -> Unit {
 }
 
 ///|
+/// Prints one record, and flushes. A redirected stdout is
+/// block-buffered, so a consumer that is killed mid-stream (a group
+/// member whose process is stopped, a reader in a pipeline that gets a
+/// signal) would otherwise lose everything it had already printed —
+/// and "what was delivered" is exactly what at-least-once accounting is
+/// built on. The cost is one flush per record on a CLI, which is not a
+/// hot path.
 fn print_entry(entry : @log.LogEntry) -> Unit {
   let key = @utf8.decode_lossy(entry.record.key[0:entry.record.key.length()])
   let value = @utf8.decode_lossy(
     entry.record.value[0:entry.record.value.length()],
   )
   println("\{entry.offset}\t\{entry.record.timestamp}\t\{key}\t\{value}")
+  flush_streams()
 }
 
 ///|

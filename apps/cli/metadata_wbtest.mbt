@@ -291,3 +291,192 @@ test "the storage policy knobs read the environment" {
   assert_eq(retention_policy().max_age_ms, 0L)
   assert_eq(roll_after_ms(), 0L)
 }
+
+// ---------------------------------------------------------------------
+// Consumer groups at the coordinator (P9/T50). The kernel's rules are
+// tested in core/group_test; what is tested here is the layer that
+// turns requests into them: the fence mapping, what a non-member gets,
+// and the floors retention is allowed to see.
+
+///|
+fn join_req(
+  group : String,
+  member : String,
+  topics : Array[String],
+) -> @client.GroupJoin {
+  @client.GroupJoin::{
+    group,
+    member: @client.WireGroupMember::{ id: member, address: "test:1" },
+    topics,
+  }
+}
+
+///|
+/// A registry with one topic declared, so partitions exist to assign.
+/// Each test gets its own directory: the registry persists committed
+/// offsets, so a shared path would leak one test's commits into the
+/// next (which is exactly how the first version of this fixture failed).
+fn group_fixture(tag : String, name : String) -> (GroupRegistry, MetadataStore) {
+  let store = memory_metadata_store()
+  let _ = create_topic(store, decl(name, 2, 1))
+  let dir = "/tmp/moonflux_group_fixture_\{tag}"
+  let _ = @fs.remove_file("\{dir}/groups.json")
+  (GroupRegistry::new(dir, 3000L), store)
+}
+
+///|
+test "joining assigns the declared partitions and a stale epoch is refused" {
+  let (registry, store) = group_fixture("assign", "events")
+  let view = match
+    registry.join(join_req("g", "m1", ["events"]), store, 1000L) {
+    Ok(view) => view
+    Err(e) => abort("join: \{e}")
+  }
+  assert_eq(view.partitions.length(), 2)
+  assert_eq(view.members, 1)
+  let epoch = view.epoch
+  // a commit from the member it holds, at the current generation: fine
+  let commit = @client.GroupCommit::{
+    group: "g",
+    member: "m1",
+    epoch,
+    topic: "events",
+    partition: 0,
+    offset: 5L,
+  }
+  assert_true(registry.commit(commit, store) is Ok(_))
+  // the fence: a generation that is not current is refused, whatever
+  // member sends it
+  let stale = @client.GroupCommit::{
+    group: "g",
+    member: "m1",
+    epoch: epoch - 1L,
+    topic: "events",
+    partition: 0,
+    offset: 9L,
+  }
+  match registry.commit(stale, store) {
+    Err(e) => assert_true("\{e}".contains("epoch"))
+    Ok(_) => abort("a stale generation was accepted")
+  }
+  // a second member moves the generation, so the first member's epoch
+  // is stale even though it is still in the group
+  let _ = registry.join(join_req("g", "m2", ["events"]), store, 1100L)
+  match registry.commit(commit, store) {
+    Err(e) => assert_true("\{e}".contains("epoch"))
+    Ok(_) =>
+      abort("the previous generation was still accepted after a rebalance")
+  }
+  // and the partition now belongs to someone else: recompute at the
+  // current generation and the *other* member's commit is the one that
+  // lands — a member only writes what it holds
+  let m2_view = match
+    registry.join(join_req("g", "m2", ["events"]), store, 1200L) {
+    Ok(view) => view
+    Err(e) => abort("rejoin: \{e}")
+  }
+  let mine = m2_view.partitions[0]
+  let m1_own = @client.GroupCommit::{
+    group: "g",
+    member: "m1",
+    epoch: m2_view.epoch,
+    topic: mine.topic,
+    partition: mine.partition,
+    offset: 7L,
+  }
+  match registry.commit(m1_own, store) {
+    Err(e) => assert_true("\{e}".contains("does not hold"))
+    Ok(_) => abort("a member committed a partition it does not hold")
+  }
+}
+
+///|
+test "a stranger cannot commit, and leaving moves the generation" {
+  let (registry, store) = group_fixture("stranger", "events")
+  let view = match
+    registry.join(join_req("g", "m1", ["events"]), store, 1000L) {
+    Ok(view) => view
+    Err(e) => abort("join: \{e}")
+  }
+  let stranger = @client.GroupCommit::{
+    group: "g",
+    member: "nobody",
+    epoch: view.epoch,
+    topic: "events",
+    partition: 0,
+    offset: 1L,
+  }
+  assert_true(registry.commit(stranger, store) is Err(_))
+  // joining an unknown group is an error, not an implicit creation: a
+  // member that misspells a group should be told
+  let beat = @client.GroupHeartbeat::{
+    group: "other",
+    member: @client.WireGroupMember::{ id: "m1", address: "test:1" },
+  }
+  assert_true(registry.heartbeat(beat, store, 1000L) is Err(_))
+  // a graceful leave moves the generation immediately
+  assert_true(registry.leave("g", "m1") is Ok(_))
+  match registry.find("g") {
+    Some(state) => {
+      assert_true(state.epoch > view.epoch)
+      assert_eq(state.members.length(), 0)
+    }
+    None => abort("the group vanished on leave")
+  }
+  // leaving a group that does not exist is not an error (idempotent)
+  assert_true(registry.leave("g", "m1") is Ok(_))
+}
+
+///|
+test "floors only reflect groups that actually committed" {
+  let (registry, store) = group_fixture("floors", "events")
+  let p0 = @cluster.PartitionId::{ topic: "events", index: 0 }
+  let p1 = @cluster.PartitionId::{ topic: "events", index: 1 }
+  // a group that joined but never committed holds nothing back
+  let _ = registry.join(join_req("g", "m1", ["events"]), store, 1000L)
+  assert_eq(registry.floors([p0, p1]).length(), 0)
+  let view = match
+    registry.join(join_req("g", "m1", ["events"]), store, 1100L) {
+    Ok(view) => view
+    Err(e) => abort("join: \{e}")
+  }
+  let _ = registry.commit(
+    @client.GroupCommit::{
+      group: "g",
+      member: "m1",
+      epoch: view.epoch,
+      topic: "events",
+      partition: 0,
+      offset: 4L,
+    },
+    store,
+  )
+  let floors = registry.floors([p0, p1])
+  // only the committed partition has a floor: the other one is "no
+  // consumer", which is a different fact from "a consumer is at zero"
+  assert_eq(floors.length(), 1)
+  assert_eq(floors[0].topic, "events")
+  assert_eq(floors[0].partition, 0)
+  assert_eq(floors[0].floor, 4L)
+  // a second group that is further behind lowers the floor: retention
+  // must satisfy the slowest reader, not the fastest
+  let view2 = match
+    registry.join(join_req("g2", "m9", ["events"]), store, 1200L) {
+    Ok(view) => view
+    Err(e) => abort("join g2: \{e}")
+  }
+  let _ = registry.commit(
+    @client.GroupCommit::{
+      group: "g2",
+      member: "m9",
+      epoch: view2.epoch,
+      topic: "events",
+      partition: 0,
+      offset: 1L,
+    },
+    store,
+  )
+  let both = registry.floors([p0])
+  assert_eq(both.length(), 1)
+  assert_eq(both[0].floor, 1L)
+}

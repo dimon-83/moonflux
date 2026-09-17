@@ -77,6 +77,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p6-functions.sh" scripts/e2e-p6-functions.sh
   step "e2e-p7-partitions.sh" scripts/e2e-p7-partitions.sh
   step "e2e-p8-storage.sh" scripts/e2e-p8-storage.sh
+  step "e2e-p9-groups.sh" scripts/e2e-p9-groups.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

@@ -397,7 +397,42 @@ fn report_to_control(
 fn assignments_of(
   payload : Bytes,
 ) -> Result[Array[@client.AssignmentView], String] {
-  @client.decode_assignments(payload)
+  match @client.decode_assignments_full(payload) {
+    Ok(parts) => {
+      let (assignments, _floors) = parts
+      Ok(assignments)
+    }
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// The same reply's floors, keyed the way the host table looks them up.
+fn floors_of(payload : Bytes) -> Result[Array[@client.GroupFloor], String] {
+  match @client.decode_assignments_full(payload) {
+    Ok(parts) => {
+      let (_assignments, floors) = parts
+      Ok(floors)
+    }
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// The floor a host should remember for a partition: the entry the
+/// coordinator sent, or None when it sent nothing (no group consumes
+/// this partition).
+fn floor_for(
+  floors : Array[@client.GroupFloor],
+  topic : String,
+  partition : Int,
+) -> Int64? {
+  for floor in floors {
+    if floor.topic == topic && floor.partition == partition {
+      return Some(floor.floor)
+    }
+  }
+  None
 }
 
 ///|
@@ -535,8 +570,15 @@ fn cmd_spu(argv : Array[String]) -> Unit {
                       "placement: \{assignments.length()} partition(s) assigned to this node",
                     )
                   }
+                  let floors = match floors_of(payload) {
+                    Ok(floors) => floors
+                    Err(_) => []
+                  }
                   for assignment in assignments {
-                    hosts.adopt(assignment)
+                    hosts.adopt(
+                      assignment,
+                      floor_for(floors, assignment.topic, assignment.partition),
+                    )
                   }
                   hosts.retain(assignments)
                   // one partition at a time, serving connections in
@@ -893,9 +935,20 @@ fn handle_control_connection(
             // the reply carries this node's assignments: placement is
             // the control plane's state, and this is the channel the
             // node already polls (README 决策 29)
+            let assignments = placement.assignments_for(record.address)
+            // the floors: what consumers still need on the partitions
+            // this node holds, so its retention can respect them
+            let partitions : Array[@cluster.PartitionId] = []
+            for assignment in assignments {
+              partitions.push(@cluster.PartitionId::{
+                topic: assignment.topic,
+                index: assignment.partition,
+              })
+            }
             Ok(
-              @client.encode_assignments(
-                placement.assignments_for(record.address),
+              @client.encode_assignments_full(
+                assignments,
+                groups.floors(partitions),
               ),
             )
           }
@@ -1114,6 +1167,10 @@ struct PartitionHost {
   /// partition to ("" = no election pending); carried in the
   /// assignment so a candidate needs no extra round trip to notice
   mut nominated : String
+  /// the oldest offset consumers still need (P9/T50). `None` means no
+  /// group is consuming this partition — which is *not* the same as a
+  /// group sitting at zero, and retention must not conflate them.
+  mut group_floor : Int64?
 }
 
 ///|
@@ -1137,6 +1194,7 @@ fn PartitionHost::new(
     last_acked: -1L,
     reported_failure: false,
     nominated: "",
+    group_floor: None,
   }
 }
 
@@ -1690,6 +1748,7 @@ fn HostTable::get(
 fn HostTable::adopt(
   self : HostTable,
   assignment : @client.AssignmentView,
+  group_floor : Int64?,
 ) -> Unit {
   let view = @client.PartitionView::{
     leader: assignment.leader,
@@ -1701,6 +1760,7 @@ fn HostTable::adopt(
       let host = self.hosts[i]
       let leader_changed = host.leader_addr != assignment.leader
       host.adopt_view(view)
+      host.group_floor = group_floor
       self.hosts[i] = host
       if leader_changed {
         note(
@@ -1717,6 +1777,7 @@ fn HostTable::adopt(
         assignment.partition,
       )
       host.adopt_view(view)
+      host.group_floor = group_floor
       self.hosts.push(host)
       note(
         "hosting \{host.label()} (leader \{assignment.leader}, \{assignment.replicas.length()} replica(s))",
@@ -1762,13 +1823,20 @@ fn HostTable::ensure(
       if !view.replicas.contains(self.address) {
         return None
       }
-      self.adopt(@client.AssignmentView::{
-        topic,
-        partition,
-        leader: view.leader,
-        replicas: view.replicas,
-        nominated: view.nominated,
-      })
+      // on-demand resolution has no floors to hand (that is the
+      // heartbeat's job): the host keeps whatever it knew, and a host
+      // that knew nothing keeps None — "no consumer" until told
+      // otherwise, which is the conservative direction for retention
+      self.adopt(
+        @client.AssignmentView::{
+          topic,
+          partition,
+          leader: view.leader,
+          replicas: view.replicas,
+          nominated: view.nominated,
+        },
+        self.get(topic, partition).map(fn(host) { host.group_floor }).flatten(),
+      )
       self.get(topic, partition)
     }
     Err(e) => {
@@ -1856,11 +1924,23 @@ fn HostTable::tick_one(
   if host.is_leader() {
     host.sync_leader_leo()
     if host.topic.length() > 0 {
-      // the floor is this partition's committed prefix: nothing below
-      // it is needed by any replica (README 决策 31)
-      let floor = match host.ledger {
+      // The floor is the committed prefix, lowered by whatever
+      // consumers still need (README 决策 31/32): the replicas bound it
+      // from one side, the slowest group from the other, and deleting
+      // data a consumer has not read yet is the one retention mistake
+      // that cannot be undone.
+      let committed = match host.ledger {
         Some(ledger) => ledger.offset_info().high_watermark
         None => 0L
+      }
+      let floor = match host.group_floor {
+        Some(consumer_floor) =>
+          if consumer_floor < committed {
+            consumer_floor
+          } else {
+            committed
+          }
+        None => committed
       }
       match
         retain_partition(

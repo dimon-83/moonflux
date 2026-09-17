@@ -92,6 +92,8 @@ pub const PROTOCOL_VERSION : Int = 2
 
 pub fn decode_assignments(Bytes) -> Result[Array[AssignmentView], String]
 
+pub fn decode_assignments_full(Bytes) -> Result[(Array[AssignmentView], Array[GroupFloor]), String]
+
 pub fn decode_confirmation(Bytes) -> Result[Confirmation, String]
 
 pub fn decode_error(Bytes) -> (Int, String)
@@ -141,6 +143,8 @@ pub fn decode_wire_topic(Bytes) -> Result[WireTopic, String]
 pub fn decode_wire_topics(Bytes) -> Result[Array[WireTopic], String]
 
 pub fn encode_assignments(Array[AssignmentView]) -> Bytes
+
+pub fn encode_assignments_full(Array[AssignmentView], Array[GroupFloor]) -> Bytes
 
 pub fn encode_confirmation(Confirmation) -> Bytes
 
@@ -265,6 +269,12 @@ pub(all) struct GroupDescription {
   epoch : Int64
   members : Array[WireGroupMember]
   commits : Array[WireGroupPartition]
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct GroupFloor {
+  topic : String
+  partition : Int
+  floor : Int64
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct GroupHeartbeat {

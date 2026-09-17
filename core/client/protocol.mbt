@@ -1057,6 +1057,113 @@ pub fn decode_assignments(
 }
 
 ///|
+/// How far consumers have committed on one partition, as the control
+/// plane tells the node that holds it (P9/T50). The holder needs this
+/// to answer one question honestly: what may retention delete? The
+/// committed prefix bounds it from one side, the slowest consumer from
+/// the other, and only the coordinator knows the second.
+pub(all) struct GroupFloor {
+  topic : String
+  partition : Int
+  /// the oldest offset any group still needs. Deliberately *not*
+  /// "absent means zero": absence means no group is consuming this
+  /// partition, which is a different fact from "a group is at zero".
+  floor : Int64
+} derive(Debug, Eq, Show)
+
+///|
+/// The assignments payload with the consumer floors appended as an
+/// optional section — the same additive shape the node record uses, so
+/// a reader that predates floors reads the assignments and ignores the
+/// tail.
+pub fn encode_assignments_full(
+  assignments : Array[AssignmentView],
+  floors : Array[GroupFloor],
+) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  let head = encode_assignments(assignments)
+  buf.write_bytes(head[0:head.length()])
+  buf.write_leb128(floors.length())
+  for floor in floors {
+    write_field(buf, floor.topic)
+    buf.write_leb128(floor.partition)
+    buf.write_leb128(floor.floor)
+  }
+  buf.to_bytes()
+}
+
+///|
+/// Decodes assignments and, when present, the floors that follow them.
+pub fn decode_assignments_full(
+  payload : Bytes,
+) -> Result[(Array[AssignmentView], Array[GroupFloor]), String] {
+  let assignments = match decode_assignments(payload) {
+    Ok(assignments) => assignments
+    Err(e) => return Err(e)
+  }
+  let floors : Array[GroupFloor] = []
+  if payload.length() == 0 {
+    return Ok((assignments, floors))
+  }
+  // walk the same bytes the assignments decoder walked, then read on
+  let reader = @codec.Reader::new(payload)
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated assignment count")
+  }
+  for _i = 0; _i < count; _i = _i + 1 {
+    let _ = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let _ = match reader.read_uleb128_len() {
+      Ok(v) => v
+      Err(_) => return Err("truncated assignment partition")
+    }
+    let _ = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let replicas = match reader.read_uleb128_len() {
+      Ok(count) => count
+      Err(_) => return Err("truncated assignment replica count")
+    }
+    for _j = 0; _j < replicas; _j = _j + 1 {
+      let _ = match read_field(reader) {
+        Ok(v) => v
+        Err(e) => return Err(e)
+      }
+    }
+    let _ = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+  }
+  // the optional tail: absent when the peer predates floors
+  match reader.read_uleb128_len() {
+    Err(_) => Ok((assignments, floors))
+    Ok(floor_count) => {
+      for _i = 0; _i < floor_count; _i = _i + 1 {
+        let topic = match read_field(reader) {
+          Ok(v) => v
+          Err(e) => return Err(e)
+        }
+        let partition = match reader.read_uleb128_len() {
+          Ok(v) => v
+          Err(_) => return Err("truncated floor partition")
+        }
+        let floor = match reader.read_uleb128() {
+          Ok(v) => v.reinterpret_as_int64()
+          Err(_) => return Err("truncated floor offset")
+        }
+        floors.push(GroupFloor::{ topic, partition, floor })
+      }
+      Ok((assignments, floors))
+    }
+  }
+}
+
+///|
 /// One partition's progress as a node reports it: enough for the
 /// control plane to weigh candidates per partition instead of trusting
 /// one node-level number (P7).

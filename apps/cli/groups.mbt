@@ -409,6 +409,55 @@ fn GroupRegistry::describe(
 }
 
 ///|
+/// The oldest offset any group still needs, per partition — the floor
+/// retention may not delete below. Only groups that have actually
+/// committed participate: a group that never committed is not "behind",
+/// it has not started, and holding the whole log for it would mean
+/// never deleting anything (a consumer that starts after the data is
+/// gone gets a structured offset-out-of-range, which is the standard
+/// answer and the honest one).
+fn GroupRegistry::floors(
+  self : GroupRegistry,
+  partitions : Array[@cluster.PartitionId],
+) -> Array[@client.GroupFloor] {
+  let out : Array[@client.GroupFloor] = []
+  for partition in partitions {
+    let mut best : Int64? = None
+    for state in self.groups {
+      // only groups that declared this topic can constrain it
+      if !state.topics.contains(partition.topic) {
+        continue
+      }
+      let mut committed : Int64? = None
+      for record in state.committed {
+        if record.topic == partition.topic &&
+          record.partition == partition.index {
+          committed = Some(record.offset)
+        }
+      }
+      match committed {
+        Some(offset) =>
+          match best {
+            None => best = Some(offset)
+            Some(current) => if offset < current { best = Some(offset) }
+          }
+        None => ()
+      }
+    }
+    match best {
+      Some(floor) =>
+        out.push(@client.GroupFloor::{
+          topic: partition.topic,
+          partition: partition.index,
+          floor,
+        })
+      None => ()
+    }
+  }
+  out
+}
+
+///|
 /// Every group with its epoch and commit count, for `group list`.
 fn GroupRegistry::list(
   self : GroupRegistry,

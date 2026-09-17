@@ -35,8 +35,73 @@ fn cmd_group(argv : Array[String]) -> Unit {
   match verb {
     "list" => group_list(rest)
     "describe" => group_describe(rest)
-    _ => fail("group: unknown verb '\{verb}' (known: list, describe)")
+    "commit" => group_commit(rest)
+    _ => fail("group: unknown verb '\{verb}' (known: list, describe, commit)")
   }
+}
+
+///|
+/// `moonflux group commit --group G --member M --topic T --partition P
+/// --offset O --epoch E --remote <control plane>` — asserts a commit
+/// from outside the consuming process.
+///
+/// Two honest uses: an operator recovering a group whose data was
+/// consumed out-of-band, and a test that needs to act as a member with
+/// a generation that is not the current one. It is the same request a
+/// live member makes, so it is fenced exactly the same way — there is
+/// no privileged path.
+fn group_commit(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let remote = flags.require("remote")
+  let group = flags.require("group")
+  let member = flags.require("member")
+  let topic = flags.require("topic")
+  let partition = match flags.get("partition") {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) if n >= 0 => n
+        _ => fail("--partition expects a non-negative integer, got \{text}")
+      }
+    None => 0
+  }
+  let offset = match flags.get("offset") {
+    Some(text) =>
+      match (try? @string.parse_int64(text[0:text.length()])) {
+        Ok(n) if n >= 0L => n
+        _ => fail("--offset expects a non-negative integer, got \{text}")
+      }
+    None => fail("--offset is required")
+  }
+  let epoch = match flags.get("epoch") {
+    Some(text) =>
+      match (try? @string.parse_int64(text[0:text.length()])) {
+        Ok(n) => n
+        _ => fail("--epoch expects an integer, got \{text}")
+      }
+    None =>
+      fail("--epoch is required (it is the fence; guessing it is not a thing)")
+  }
+  let commit = @client.GroupCommit::{
+    group,
+    member,
+    epoch,
+    topic,
+    partition,
+    offset,
+  }
+  match
+    group_request(
+      remote,
+      @client.CMD_GROUP_COMMIT,
+      @client.encode_group_commit(commit),
+    ) {
+    Ok(_) =>
+      println(
+        "committed \{topic}[\{partition}] at \{offset} for group \{group} (generation \{epoch})",
+      )
+    Err(e) => fail("group commit: \{e}")
+  }
+  cli_exit(0)
 }
 
 ///|
@@ -100,9 +165,44 @@ fn group_describe(argv : Array[String]) -> Unit {
   for member in desc.members {
     println("  member \{member.id}\t\{member.address}")
   }
+  // Lag is derived, and it involves two authorities: the coordinator
+  // knows what was committed, the partition's leader knows how far the
+  // log goes. The CLI asks both, so the number is observed rather than
+  // remembered — the same stance the project takes for replica lag.
   for commit in desc.commits {
+    let mut lag_text = "lag=?"
+    match leader_of(remote, commit.topic, commit.partition) {
+      Some(leader) => {
+        let ref = @client.PartitionRef::{
+          topic: commit.topic,
+          partition: commit.partition,
+        }
+        match
+          group_request(
+            leader,
+            @client.CMD_OFFSET_INFO,
+            @client.encode_partition_ref(ref),
+          ) {
+          Ok(info) =>
+            match @client.decode_offset_info(info) {
+              Ok(pair) => {
+                let (_hw, leo) = pair
+                let lag = if leo > commit.committed {
+                  leo - commit.committed
+                } else {
+                  0L
+                }
+                lag_text = "lag=\{lag}"
+              }
+              Err(_) => ()
+            }
+          Err(_) => ()
+        }
+      }
+      None => ()
+    }
     println(
-      "  \{commit.topic}[\{commit.partition}]\tcommitted=\{commit.committed}",
+      "  \{commit.topic}[\{commit.partition}]\tcommitted=\{commit.committed}\t\{lag_text}",
     )
   }
   cli_exit(0)
@@ -152,7 +252,7 @@ fn consume_group(
     Err(e) => fail("group join: \{e}")
   }
   warn(
-    "joined \{group} as \{member} at generation \{view.epoch} (\{view.members} member(s)); holding \{view.partitions.length()} partition(s)",
+    "joined \{group} as \{member} at generation \{view.epoch} (\{view.members} member(s)): \{membership_text(member, view.partitions)}",
   )
   // the broker is discovered from the leader of each partition: a
   // member reads from leaders, exactly like any other consumer
@@ -205,12 +305,44 @@ fn consume_group(
     let now = @env.now().reinterpret_as_int64()
     if now - last_commit >= commit_ms {
       last_commit = now
+      // The heartbeat is what keeps this member alive, and it is not
+      // the same thing as a commit: a member that is caught up has
+      // nothing to commit, and a member that stopped speaking would be
+      // swept and lose its partitions. It also carries the reply that
+      // tells us the generation moved.
+      let beat = @client.GroupHeartbeat::{
+        group,
+        member: @client.WireGroupMember::{
+          id: member,
+          address: "cli:\{cli_pid()}",
+        },
+      }
+      match
+        group_request(
+          sc_addr,
+          @client.CMD_GROUP_HEARTBEAT,
+          @client.encode_group_heartbeat(beat),
+        ) {
+        Ok(payload) =>
+          match @client.decode_group_view(payload) {
+            Ok(fresh) =>
+              if fresh.epoch != epoch {
+                epoch = fresh.epoch
+                adopt_view(cursors, fresh, from)
+                warn(
+                  "generation moved to \{epoch} for \{group}: \{membership_text(member, fresh.partitions)}",
+                )
+              }
+            Err(_) => ()
+          }
+        Err(e) => warn("heartbeat \{group}: \{e}")
+      }
       let stale = commit_cursors(sc_addr, group, member, epoch, cursors)
       if stale {
-        // the generation moved: this member's partitions are not its
-        // own any more. Re-join to learn the new share instead of
-        // committing into a fence.
-        warn("generation moved; rejoining \{group}")
+        // the commit was refused because the generation moved between
+        // the heartbeat and now: re-join rather than push against a
+        // fence (a re-join is idempotent for a member already in)
+        warn("commit refused at generation \{epoch}; rejoining \{group}")
         match
           group_request(
             sc_addr,
@@ -222,9 +354,6 @@ fn consume_group(
               Ok(fresh) => {
                 epoch = fresh.epoch
                 adopt_view(cursors, fresh, from)
-                warn(
-                  "rejoined \{group} at generation \{epoch}; holding \{fresh.partitions.length()} partition(s)",
-                )
               }
               Err(_) => ()
             }
@@ -243,6 +372,29 @@ fn consume_group(
       idle = false
     }
   }
+}
+
+///|
+/// What a member holds, as one line: `member m1 holds events[0],events[1]`.
+/// The coordinator knows this; logging it makes a rebalance reviewable
+/// from the member's own log, and gives the gate a precise statement to
+/// check (covers everything, overlaps nothing) instead of a count.
+fn membership_text(
+  member : String,
+  partitions : Array[@client.WireGroupPartition],
+) -> String {
+  let sb = StringBuilder::new()
+  sb.write_string("member \{member} holds ")
+  if partitions.length() == 0 {
+    sb.write_string("(nothing)")
+  }
+  for i, p in partitions {
+    if i > 0 {
+      sb.write_string(",")
+    }
+    sb.write_string("\{p.topic}[\{p.partition}]")
+  }
+  sb.to_string()
 }
 
 ///|
