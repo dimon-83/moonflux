@@ -107,9 +107,20 @@ pub fn operator_engine(
           }
         }
       }
+      // The wall clock lives here, in the adapter, and it is used for
+      // *reporting* only: the enforceable budget is fuel, because fuel
+      // is reproducible and a clock is not (README 决策 33).
+      let last_ms : Array[Int?] = [None]
       Ok(@operator.OperatorInstance::{
         abi_version: out[0],
-        process: fn(records) { process_batch(session, records) },
+        process: fn(records) {
+          let started = @env.now().reinterpret_as_int64()
+          let result = process_batch(session, records)
+          let elapsed = @env.now().reinterpret_as_int64() - started
+          last_ms[0] = Some((if elapsed < 0L { 0L } else { elapsed }).to_int())
+          result
+        },
+        last_call_ms: fn() { last_ms[0] },
         close: fn() { we_session_free(session.handle) },
       })
     },

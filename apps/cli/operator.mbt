@@ -67,7 +67,23 @@ fn operator_verify(argv : Array[String]) -> Unit {
   let path = flags.require("file")
   match operator_load(path) {
     Ok(instance) => {
+      // verify proves the module loads and speaks the ABI; it also
+      // times one empty batch, because "it loads" and "it is fast
+      // enough to sit in a data path" are different questions and an
+      // operator should see both. The number is reported, never a
+      // pass/fail gate (README 决策 33).
+      let empty : Array[@protocol.Record] = []
+      let started = @env.now().reinterpret_as_int64()
+      match (instance.process)(empty) {
+        Ok(_) => ()
+        Err(e) => fail("verify: the module refused an empty batch: \{e}")
+      }
+      let elapsed = @env.now().reinterpret_as_int64() - started
+      let elapsed_ms = (if elapsed < 0L { 0L } else { elapsed }).to_int()
       println("ok: \{path} speaks ABI v1 and accepted init")
+      println(
+        "timing: one empty batch took \{elapsed_ms}ms (internal hint \{@operator.call_timeout_hint_ms(Internal)}ms; reported, not enforced)",
+      )
       (instance.close)()
       cli_exit(0)
     }
@@ -108,6 +124,12 @@ fn operator_describe(argv : Array[String]) -> Unit {
   )
   println(
     "budget      tenant: \{@operator.max_records_per_call(Tenant)} records / \{@operator.fuel_per_call(Tenant)} fuel",
+  )
+  println(
+    "wall clock  report-only thresholds (not enforcement): internal \{@operator.call_timeout_hint_ms(Internal)}ms / user \{@operator.call_timeout_hint_ms(User)}ms / tenant \{@operator.call_timeout_hint_ms(Tenant)}ms",
+  )
+  println(
+    "note        fuel is the reproducible budget; a wall-clock gate would make the same batch pass or fail by machine load (README 决策 33)",
   )
   (instance.close)()
   cli_exit(0)

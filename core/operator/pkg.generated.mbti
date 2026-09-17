@@ -31,6 +31,8 @@ pub fn fuel_per_call(BudgetTier) -> Int64
 
 pub fn max_records_per_call(BudgetTier) -> Int
 
+pub fn over_time_hint(BudgetTier, Int) -> Bool
+
 pub fn passthrough_engine() -> OperatorEngine
 
 pub fn validate_abi_version(Int) -> Result[Unit, OperatorError]
@@ -59,6 +61,7 @@ pub(all) struct OperatorEngine {
 pub(all) struct OperatorInstance {
   abi_version : Int
   process : (Array[@protocol.Record]) -> Result[Array[@protocol.Record], OperatorError]
+  last_call_ms : () -> Int?
   close : () -> Unit
 }
 

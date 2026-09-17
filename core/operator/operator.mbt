@@ -34,8 +34,9 @@ pub const EXPORT_PROCESS = "mf_op_process"
 pub const ENVELOPE_BASE_OFFSET : Int64 = -1L
 
 // Budget tiers (report 5.5 grading; P1 experience carried over).
-// The host adapter must enforce the wall-clock part; the kernel
-// pins the record-count part and publishes the timeout hints.
+// Enforcement is record count (kernel) + fuel (host, deterministic).
+// The wall-clock number is an observation threshold, not a gate:
+// see `call_timeout_hint_ms` for why (README 决策 33).
 
 ///|
 pub(all) enum BudgetTier {
@@ -58,14 +59,35 @@ pub fn max_records_per_call(tier : BudgetTier) -> Int {
 }
 
 ///|
-/// Wall-clock hint for the host adapter's per-call timeout (ms).
-/// The kernel never reads a clock; the adapter enforces this.
+/// The wall clock is a *reporting* threshold, never an enforcement one
+/// (README 决策 33). Two reasons, and the second is the one that
+/// settles it:
+///
+///   * enforcement belongs to fuel, which is deterministic: the same
+///     batch fails the same way on a loaded machine and an idle one;
+///   * a wall-clock gate would make the *same batch* pass or fail
+///     depending on machine load, which is exactly what the replay red
+///     line (AGENTS §5) forbids. A budget that cannot be replayed is
+///     not a budget, it is a coin toss.
+///
+/// So this number is what an operator's *observation* is compared
+/// against (`over_time_hint`), and the adapter measures the call. A
+/// call that exceeds it is reported, not killed.
 pub fn call_timeout_hint_ms(tier : BudgetTier) -> Int {
   match tier {
     Internal => 1000
     User => 500
     Tenant => 200
   }
+}
+
+///|
+/// Whether a call that took `elapsed_ms` should be *reported* as over
+/// its tier's hint. The honest shape of the wall-clock rule: it decides
+/// what to say, not what to do — the call has already returned its
+/// result by the time anyone can ask.
+pub fn over_time_hint(tier : BudgetTier, elapsed_ms : Int) -> Bool {
+  elapsed_ms > call_timeout_hint_ms(tier)
 }
 
 ///|
@@ -206,6 +228,11 @@ pub(all) struct OperatorInstance {
     Array[@protocol.Record],
     OperatorError,
   ]
+  /// How long the last process call took, as the **adapter** measured
+  /// it (None when the adapter cannot measure — the in-kernel reference
+  /// engine has no clock and no need for one). The kernel only reports
+  /// this; it never gates on it (README 决策 33).
+  last_call_ms : () -> Int?
   close : () -> Unit
 }
 
@@ -236,6 +263,7 @@ pub fn passthrough_engine() -> OperatorEngine {
           }
           Ok(decoded)
         },
+        last_call_ms: fn() { None },
         close: fn() { () },
       })
     },
@@ -264,6 +292,7 @@ pub fn fn_engine(
           }
           Ok(transform(records))
         },
+        last_call_ms: fn() { None },
         close: fn() { () },
       })
     },

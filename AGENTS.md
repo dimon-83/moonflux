@@ -184,6 +184,7 @@ moonflux/
 - **guest 无导入**：算子模块不得有 import 段（无 WASI、无 IO、无时钟、无随机源）。这不是约定而是结构性事实——宿主的"纯函数"假设建立在它之上；构建门禁 `tools/probe_operator_exports.py` 以编译器 WAT 为真相源。
 - **配置只走 `mf_op_init`**：spec 的 `config` 对象原样透传给 guest，宿主不解释其语义（语义属算子）。
 - **双预算**：记录数上限 + 指令数（fuel）上限随 tier 收紧；预算超限报 `BudgetExceeded`，**不**报裸 trap。fuel 是确定性计量（无时钟），重放同一批数据得到同一结果——这条与内核红线同源。
+- **墙钟只报告、不设门禁**（决策 33）：耗时由 adapter 测量（`last_call_ms`），超档只告警/打印（`over_time_hint`）；**不得**把墙钟接成 pass/fail 判据——那会让同一批数据因机器负载时而通过时而失败，破坏重放。要收紧就调 fuel（确定性）。
 - **失败一律 fail-closed**：算子拒绝 / trap / 预算超限都必须变成结构化错误，且**已产出的一半批次绝不落 Sink**（`scripts/crosscheck-operators.sh` 的 fail-closed 四条腿是这条纪律的门禁）。
 - **语义变更必须对拍**：任何算子语义调整都要有 native-vs-wasm 的字节级证据；测试向量放数据文件（`scripts/testdata/operator-golden.txt`，由 `tools/gen_operator_golden.py` 生成），手改即失败。
 

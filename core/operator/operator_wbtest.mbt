@@ -145,3 +145,20 @@ test "fn engine applies the native transform (crosscheck baseline)" {
     Err(e) => abort("process: \{e}")
   }
 }
+
+///|
+test "the wall-clock hint reports, it does not enforce" {
+  // the hint is monotone across tiers (tighter trust, tighter number)
+  assert_true(call_timeout_hint_ms(Internal) > call_timeout_hint_ms(User))
+  assert_true(call_timeout_hint_ms(User) > call_timeout_hint_ms(Tenant))
+  // and it is a threshold: exactly at the hint is fine, one over is a
+  // report. Nothing here can stop a call that already returned — that
+  // is the point (a clock cannot be a replayable budget).
+  let hint = call_timeout_hint_ms(Tenant)
+  assert_true(!over_time_hint(Tenant, hint))
+  assert_true(over_time_hint(Tenant, hint + 1))
+  assert_true(!over_time_hint(Internal, hint))
+  // fuel is the enforceable one, and it is the same number every time
+  assert_eq(fuel_per_call(Tenant), fuel_per_call(Tenant))
+  assert_true(fuel_per_call(Internal) > fuel_per_call(Tenant))
+}

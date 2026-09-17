@@ -10,6 +10,7 @@ supported_targets = "native"
 
 import {
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
   "moonflux/core/operator",
   "moonflux/core/protocol",
 }

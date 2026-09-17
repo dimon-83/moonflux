@@ -138,7 +138,22 @@ fn apply_nodes(
       }
       Wasm(instance) =>
         match (instance.process)(current) {
-          Ok(out) => current = out
+          Ok(out) => {
+            current = out
+            // the wall clock is reported, not enforced (README 决策
+            // 33): a call over its tier's hint is worth saying out
+            // loud, and killing it would make the same batch pass or
+            // fail by machine load
+            match (instance.last_call_ms)() {
+              Some(elapsed) =>
+                if @operator.over_time_hint(Internal, elapsed) {
+                  note(
+                    "warning: operator call took \{elapsed}ms (internal hint \{@operator.call_timeout_hint_ms(Internal)}ms); fuel is the enforced budget",
+                  )
+                }
+              None => ()
+            }
+          }
           Err(e) => return Err("wasm: \{e}")
         }
     }

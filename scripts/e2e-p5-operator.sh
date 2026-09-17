@@ -55,6 +55,16 @@ grep -q "tenant: 1000 records / 2000000 fuel" "$WORK/describe.out" \
   || { cat "$WORK/describe.out"; fail "the tenant budget does not match core/operator"; }
 pass "describe reports the ABI version and the enforced budget tiers"
 
+# the wall clock is a report, not a gate (README 决策 33): the module
+# surface must say so, and verify must actually time a call
+"$EXE" operator describe --file "$UPPER" | grep -q "report-only" \
+  || fail "describe does not say the wall-clock numbers are report-only"
+"$EXE" operator describe --file "$UPPER" | grep -q "fuel is the reproducible budget" \
+  || fail "describe does not explain what enforces the budget"
+"$EXE" operator verify --file "$UPPER" | grep -q "reported, not enforced" \
+  || fail "verify does not report its timing as an observation"
+pass "the wall clock is documented (and timed) as an observation, never a gate"
+
 # ---- 4. list shows health, not just names ------------------------------
 OUT="$("$EXE" operator list)"
 printf '%s\n' "$OUT" | grep -q "operator-upper	ok" || { printf '%s\n' "$OUT"; fail "operator-upper is not listed ok"; }
