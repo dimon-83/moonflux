@@ -6,15 +6,40 @@
 #include <stdint.h>
 #include <string.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+/*
+ * SIGPIPE, ignored once per process.
+ *
+ * A write to a peer that has gone away raises SIGPIPE, whose default
+ * action is to kill the process — so a server whose client disconnects at
+ * the wrong moment dies with it. The syscall is supposed to report the
+ * fact (EPIPE) instead, and ignoring the signal is what lets it: the
+ * write then fails and the connection is closed, which is the behaviour
+ * every one of these call sites already handles.
+ *
+ * This was a real crash (exit code 141) on the control plane: a peer that
+ * connected and then vanished took the whole process down with it. The
+ * disposition is process-wide, so setting it once covers TLS writes too
+ * (SSL_write calls send() internally).
+ */
+static void mf_net_ignore_sigpipe(void) {
+  static int done = 0;
+  if (!done) {
+    signal(SIGPIPE, SIG_IGN);
+    done = 1;
+  }
+}
 
 /*
  * Resolves host (name or numeric) and returns a connected socket,
  * trying each address in order. Returns fd or -errno.
  */
 int mf_net_connect(const uint8_t *host, int host_len, int port) {
+  mf_net_ignore_sigpipe();
   char hostz[512];
   if (host_len < 0 || host_len >= 512) return -EINVAL;
   memcpy(hostz, host, host_len);
@@ -45,6 +70,7 @@ int mf_net_connect(const uint8_t *host, int host_len, int port) {
 }
 
 int mf_net_bind_listen(const uint8_t *host, int host_len, int port) {
+  mf_net_ignore_sigpipe();
   char hostz[512];
   if (host_len < 0 || host_len >= 512) return -EINVAL;
   memcpy(hostz, host, host_len);
@@ -109,6 +135,7 @@ int mf_net_accept(int fd) {
  * then accept. ms <= 0 means "block forever".
  */
 int mf_net_accept_timeout(int fd, int ms) {
+  mf_net_ignore_sigpipe();
   if (ms <= 0) {
     return mf_net_accept(fd);
   }
@@ -253,6 +280,7 @@ int mf_net_recv(int fd, uint8_t *buf, int len) {
 int mf_net_close(int fd) { return close(fd); }
 
 int mf_net_socketpair(int *pair) {
+  mf_net_ignore_sigpipe();
   int fds[2];
   if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) return -errno;
   pair[0] = fds[0];

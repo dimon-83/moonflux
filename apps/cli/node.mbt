@@ -542,51 +542,6 @@ fn cmd_spu(argv : Array[String]) -> Unit {
 }
 
 ///|
-/// How long a control connection may spend in its TLS handshake. Shorter
-/// than the hub's 2s on purpose: the control plane serves one connection
-/// at a time, so a peer that stalls in the handshake delays the *whole*
-/// control plane — and a node that misses its heartbeat window gets
-/// declared offline and triggers an election it did not need. A healthy
-/// handshake on loopback is sub-millisecond, so this is still ~500x
-/// headroom.
-///
-/// The structural fix (a poll-driven control plane that serves many
-/// connections, like the data hub) is a larger refactor and is recorded
-/// as a follow-up in the P12 ticket; this bound is what keeps the
-/// consequence of *not* having it small.
-const CONTROL_HANDSHAKE_DEADLINE_MS : Int = 500
-
-///|
-/// The `Conn` for an accepted control connection, `None` when the TLS
-/// handshake failed (the connection is dropped, and the caller closes
-/// the socket). The control plane serves one connection at a time, so
-/// this is the blocking-with-a-deadline form rather than a session the
-/// poll loop drives — a peer that opens a socket and says nothing costs
-/// one handshake timeout, not the process.
-fn control_conn(
-  stream : @net.TcpStream,
-  tls : @tls.TlsContext?,
-) -> @client.Conn? {
-  match tls {
-    None => Some(@native.from_stream(stream))
-    Some(context) =>
-      match
-        @native.accept_tls_conn(
-          stream,
-          context,
-          CONTROL_HANDSHAKE_DEADLINE_MS,
-          HOUSEKEEPING_INTERVAL_MS,
-        ) {
-        Ok(conn) => Some(conn)
-        Err(e) => {
-          note("dropping a control connection: \{e}")
-          None
-        }
-      }
-  }
-}
-
-///|
 /// `moonflux sc --listen host:port --data-dir D`
 ///
 /// The control plane: accepts node reports, keeps the table, and
@@ -606,7 +561,11 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     Ok(port) => port
     Err(_) => port
   }
-  match listener.set_accept_timeout_ms(HOUSEKEEPING_INTERVAL_MS) {
+  // The accept timeout is the *loop* tick, like the data plane's: a
+  // blocking accept makes every poll cost a full timeout, and the loop
+  // has housekeeping to do (sweeps, reconcile) whether or not anyone is
+  // connecting.
+  match listener.set_accept_timeout_ms(POLL_TICK_MS) {
     Ok(_) => ()
     Err(e) => fail("accept timeout: \{e}")
   }
@@ -624,29 +583,35 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   // other mode this process runs in
   let control_auth = AuthConfig::load(data_dir)
   announce_auth_mode(data_dir, control_auth)
-  // and the transport this port speaks (P12). The control port is where
-  // a forged REGISTER or SYNC_ACK would land, so it is the port whose
-  // credentials matter most; TLS is configured here for the same reason.
-  let control_tls = tls_listener(flags)
   let store = file_metadata_store(data_dir)
   let placement = PlacementState::new(data_dir)
+  // The control plane is served by the same hub as the data plane (P13).
+  // It used to accept one connection at a time and serve it to
+  // completion, which made a single slow peer everyone's problem — and
+  // with TLS in front, a peer that connected and said nothing could cost
+  // a healthy node its liveness window. One thread, poll-driven, is the
+  // shape the whole project runs on; the control plane was the last
+  // server still doing it the other way.
+  let hub = match tls_listener(flags) {
+    None => ConnectionHub::new(listener, POLL_TICK_MS)
+    Some(context) =>
+      ConnectionHub::new(listener, POLL_TICK_MS)
+      .with_tls(context)
+      .with_handshake_deadline(CONTROL_HANDSHAKE_DEADLINE_MS)
+  }
+  let handler = HubHandler::{
+    on_frame: fn(frame, identity) {
+      let reply = dispatch_control_frame(
+        frame, table, placement, store, groups, asset, identity,
+      )
+      @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1 }
+    },
+    auth: AuthGate::{ config: control_auth },
+    on_ready: fn() { () },
+  }
+  note("serving connections concurrently (one thread, poll-driven)")
   while true {
-    match listener.accept() {
-      Ok(stream) => {
-        // the handshake happens before the handler sees anything: a
-        // peer that cannot complete it never reaches a command
-        match control_conn(stream, control_tls) {
-          None => ()
-          Some(conn) =>
-            handle_control_connection(
-              conn, table, placement, store, groups, asset, control_auth,
-            )
-        }
-        let _ = stream.close()
-      }
-      Err(TimedOut) => ()
-      Err(e) => fail("accept: \{e}")
-    }
+    let _ = hub.poll_once(handler, fn(_kind) { () })
     // consumer-group members go silent on the same clock: the sweep
     // moves their groups' generations, which is what starts the next
     // rebalance (the survivors learn it in their heartbeat reply)
@@ -664,6 +629,15 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     placement.tick(table)
   }
 }
+
+///|
+/// How long a control connection may spend in its TLS handshake. Tighter
+/// than the hub's 2s default on purpose, for the same reason the hub runs
+/// one handshake per round (P13): the cost is paid by the loop, and the
+/// loop is what keeps a heartbeat inside its liveness window. A healthy
+/// handshake on loopback is sub-millisecond, so this is still ~500x
+/// headroom.
+const CONTROL_HANDSHAKE_DEADLINE_MS : Int = 500
 
 ///|
 /// How long a node-to-node control call may take. Comfortably longer
@@ -872,380 +846,309 @@ fn NodeTable::snapshot(self : NodeTable) -> Array[@client.NodeRecord] {
 /// REGISTER / HEARTBEAT / NODES. Data commands against the control
 /// port get a structured refusal — the control plane is not a broker,
 /// and silently proxying would hide a misconfigured client.
-fn handle_control_connection(
-  conn : @client.Conn,
+fn dispatch_control_frame(
+  frame : @client.Frame,
   table : NodeTable,
   placement : PlacementState,
   store : MetadataStore,
   groups : GroupRegistry,
   asset : ClusterAsset,
-  auth_config : AuthConfig,
-) -> Unit {
-  let hello = match conn.recv_first() {
-    @client.Got(frame) => frame
-    @client.Eof => return
-    @client.Garbage(_) => return
-    @client.WrongVersion(_) => {
-      let _ = conn.send_frame(@client.Frame::{
-        cmd: @client.CMD_ERR,
-        rid: 0,
-        payload: @client.encode_error(
-          @client.ERR_UNSUPPORTED_VERSION,
-          "control plane speaks frame version \{@client.PROTOCOL_VERSION}",
-        ),
-      })
-      return
-    }
+  identity : @auth.Identity?,
+) -> (Int, Bytes) {
+  // one permission check for every control command (P12), before the
+  // payload is parsed: the control port is where a forged REGISTER or
+  // SYNC_ACK would land, and a refusal must not depend on the request
+  // being well-formed
+  match identity {
+    Some(resolved) =>
+      if !@auth.permit(resolved.role, frame.cmd) {
+        return (
+          @client.CMD_ERR,
+          @client.encode_error(
+            @client.ERR_FORBIDDEN,
+            "\{resolved.name} (\{@auth.role_name(resolved.role)}) may not issue command \{frame.cmd}",
+          ),
+        )
+      }
+    None => ()
   }
-  if hello.cmd != @client.CMD_HELLO {
-    let _ = conn.send_frame(@client.Frame::{
-      cmd: @client.CMD_ERR,
-      rid: hello.rid,
-      payload: @client.encode_error(
-        @client.ERR_SEQUENCE,
-        "expected HELLO first",
-      ),
-    })
-    return
-  }
-  let _ = conn.send_frame(@client.Frame::{
-    cmd: @client.CMD_WELCOME,
-    rid: hello.rid,
-    payload: @client.encode_hello(1, 0),
-  })
-  // the credential exchange, before any command is served (P12): the
-  // control port is where a forged REGISTER or SYNC_ACK would land, so
-  // it is the port that most needs to know who is talking
-  let mut identity : @auth.Identity? = None
-  while true {
-    let frame = match conn.recv_frame() {
-      Ok(Some(frame)) => frame
-      Ok(None) => return
-      Err(_) => return
-    }
-    if frame.cmd == @client.CMD_AUTH {
-      let token = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
-      let outcome = AuthGate::{ config: auth_config }.present(token)
-      let response = match outcome {
-        Accepted(resolved) => {
-          identity = Some(resolved)
-          note(
-            "control connection authenticated as \{resolved.name} (\{@auth.role_name(resolved.role)})",
+  let reply = match frame.cmd {
+    @client.CMD_HELLO => {
+      // The hub hands the handshake frame to the same dispatcher every
+      // other command goes through (that is how `serve` and the data node
+      // are built), so the control plane answers it here: major version
+      // gate, then WELCOME.
+      let (major, _minor) = match @client.decode_hello(frame.payload) {
+        Ok(parts) => parts
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
           )
-          @client.Frame::{
-            cmd: @client.CMD_OK,
-            rid: frame.rid,
-            payload: @utf8.encode(@auth.role_name(resolved.role)),
-          }
-        }
-        NotRequired =>
-          @client.Frame::{
-            cmd: @client.CMD_OK,
-            rid: frame.rid,
-            payload: @utf8.encode("none"),
-          }
-        Rejected(reason) =>
-          @client.Frame::{
-            cmd: @client.CMD_ERR,
-            rid: frame.rid,
-            payload: @client.encode_error(
-              @client.ERR_AUTH_REQUIRED,
-              "\{reason}: this control plane requires a valid credential",
-            ),
-          }
       }
-      match conn.send_frame(response) {
-        Ok(_) => ()
-        Err(_) => return
+      if major != 1 {
+        return (
+          @client.CMD_ERR,
+          @client.encode_error(
+            @client.ERR_UNSUPPORTED_VERSION,
+            "control plane speaks major version 1 (frames v2); client sent \{major}",
+          ),
+        )
       }
-      if response.cmd == @client.CMD_ERR {
-        return
-      }
-      continue
+      // the reply's *command* is WELCOME, not OK: this arm answers the
+      // handshake rather than a request, so it returns the frame itself
+      return (@client.CMD_WELCOME, @client.encode_hello(1, 0))
     }
-    if auth_config.required() && identity is None {
-      let _ = conn.send_frame(@client.Frame::{
-        cmd: @client.CMD_ERR,
-        rid: frame.rid,
-        payload: @client.encode_error(
-          @client.ERR_AUTH_REQUIRED,
-          "authenticate first: send CMD_AUTH with this node's credential",
-        ),
-      })
-      return
-    }
-    match identity {
-      Some(resolved) =>
-        if !@auth.permit(resolved.role, frame.cmd) {
-          let _ = conn.send_frame(@client.Frame::{
-            cmd: @client.CMD_ERR,
-            rid: frame.rid,
-            payload: @client.encode_error(
-              @client.ERR_FORBIDDEN,
-              "\{resolved.name} (\{@auth.role_name(resolved.role)}) may not issue command \{frame.cmd}",
-            ),
-          })
-          continue
-        }
-      None => ()
-    }
-    let reply = match frame.cmd {
-      @client.CMD_REGISTER | @client.CMD_HEARTBEAT =>
-        match @client.decode_node_full(frame.payload) {
-          Ok(parts) => {
-            let (record, reports) = parts
-            let first_contact = table.observe(record, reports, now_ms())
-            if first_contact && frame.cmd == @client.CMD_REGISTER {
-              note(
-                "node \{record.id} (\{@client.role_name(record.role)}) registered at \{record.address}",
-              )
-            }
-            // the reply carries this node's assignments: placement is
-            // the control plane's state, and this is the channel the
-            // node already polls (README 决策 29)
-            let assignments = placement.assignments_for(record.address)
-            // the floors: what consumers still need on the partitions
-            // this node holds, so its retention can respect them
-            let partitions : Array[@cluster.PartitionId] = []
-            for assignment in assignments {
-              partitions.push(@cluster.PartitionId::{
-                topic: assignment.topic,
-                index: assignment.partition,
-              })
-            }
-            Ok(
-              @client.encode_assignments_full(
-                assignments,
-                groups.floors(partitions),
-                asset.revision,
-              ),
-            )
-          }
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, "bad node record: \{e}"))
-        }
-      @client.CMD_NODES => Ok(@client.encode_nodes(table.snapshot()))
-      @client.CMD_TOPIC_CREATE =>
-        match @client.decode_wire_topic(frame.payload) {
-          Ok(wire) =>
-            match
-              create_topic(store, ClusterMetadataTopic::{
-                name: wire.name,
-                partitions: wire.partitions,
-                replication_factor: wire.replication_factor,
-              }) {
-              Ok(_) => {
-                note(
-                  "topic \{wire.name} declared (\{wire.partitions} partition(s), \{wire.replication_factor} replica(s))",
-                )
-                // the next reconcile tick turns the declaration into
-                // placement — no further instruction is needed
-                Ok(@client.encode_wire_topic(wire))
-              }
-              Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
-            }
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
-        }
-      @client.CMD_TOPIC_LIST =>
-        match list_topics(store) {
-          Ok(topics) => {
-            let wire : Array[@client.WireTopic] = []
-            for topic in topics {
-              wire.push(@client.WireTopic::{
-                name: topic.name,
-                partitions: topic.partitions,
-                replication_factor: topic.replication_factor,
-              })
-            }
-            Ok(@client.encode_wire_topics(wire))
-          }
-          Err(e) => Err((@client.ERR_STORAGE, "\{e}"))
-        }
-      @client.CMD_TOPIC_DELETE =>
-        match @client.decode_wire_topic(frame.payload) {
-          Ok(wire) =>
-            match delete_topic(store, wire.name) {
-              Ok(_) => {
-                note(
-                  "topic \{wire.name} undeclared; its partitions will be removed",
-                )
-                Ok(b"")
-              }
-              Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
-            }
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
-        }
-      // the cluster's pipeline (P11): published here, pulled by nodes
-      @client.CMD_CLUSTER_PIPELINE_APPLY => {
-        let text = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
-        match asset.publish(text, store) {
-          Ok(revision) => {
+    @client.CMD_REGISTER | @client.CMD_HEARTBEAT =>
+      match @client.decode_node_full(frame.payload) {
+        Ok(parts) => {
+          let (record, reports) = parts
+          let first_contact = table.observe(record, reports, now_ms())
+          if first_contact && frame.cmd == @client.CMD_REGISTER {
             note(
-              "cluster pipeline applied (revision \{revision}, \{text.length()} bytes); data nodes will pull it on their next heartbeat",
-            )
-            Ok(
-              @client.encode_cluster_pipeline(@client.ClusterPipeline::{
-                revision,
-                spec_json: "",
-              }),
+              "node \{record.id} (\{@client.role_name(record.role)}) registered at \{record.address}",
             )
           }
-          Err(e) => Err((@client.ERR_TRANSFORM, e))
+          // the reply carries this node's assignments: placement is
+          // the control plane's state, and this is the channel the
+          // node already polls (README 决策 29)
+          let assignments = placement.assignments_for(record.address)
+          // the floors: what consumers still need on the partitions
+          // this node holds, so its retention can respect them
+          let partitions : Array[@cluster.PartitionId] = []
+          for assignment in assignments {
+            partitions.push(@cluster.PartitionId::{
+              topic: assignment.topic,
+              index: assignment.partition,
+            })
+          }
+          Ok(
+            @client.encode_assignments_full(
+              assignments,
+              groups.floors(partitions),
+              asset.revision,
+            ),
+          )
         }
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, "bad node record: \{e}"))
       }
-      @client.CMD_CLUSTER_PIPELINE_FETCH =>
-        // the empty payload asks "which revision?"; anything else asks
-        // for the document. The revision rides every heartbeat; the
-        // document only when it changed.
-        if frame.payload.length() == 0 {
+    @client.CMD_NODES => Ok(@client.encode_nodes(table.snapshot()))
+    @client.CMD_TOPIC_CREATE =>
+      match @client.decode_wire_topic(frame.payload) {
+        Ok(wire) =>
+          match
+            create_topic(store, ClusterMetadataTopic::{
+              name: wire.name,
+              partitions: wire.partitions,
+              replication_factor: wire.replication_factor,
+            }) {
+            Ok(_) => {
+              note(
+                "topic \{wire.name} declared (\{wire.partitions} partition(s), \{wire.replication_factor} replica(s))",
+              )
+              // the next reconcile tick turns the declaration into
+              // placement — no further instruction is needed
+              Ok(@client.encode_wire_topic(wire))
+            }
+            Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
+          }
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+      }
+    @client.CMD_TOPIC_LIST =>
+      match list_topics(store) {
+        Ok(topics) => {
+          let wire : Array[@client.WireTopic] = []
+          for topic in topics {
+            wire.push(@client.WireTopic::{
+              name: topic.name,
+              partitions: topic.partitions,
+              replication_factor: topic.replication_factor,
+            })
+          }
+          Ok(@client.encode_wire_topics(wire))
+        }
+        Err(e) => Err((@client.ERR_STORAGE, "\{e}"))
+      }
+    @client.CMD_TOPIC_DELETE =>
+      match @client.decode_wire_topic(frame.payload) {
+        Ok(wire) =>
+          match delete_topic(store, wire.name) {
+            Ok(_) => {
+              note(
+                "topic \{wire.name} undeclared; its partitions will be removed",
+              )
+              Ok(b"")
+            }
+            Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
+          }
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+      }
+    // the cluster's pipeline (P11): published here, pulled by nodes
+    @client.CMD_CLUSTER_PIPELINE_APPLY => {
+      let text = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
+      match asset.publish(text, store) {
+        Ok(revision) => {
+          note(
+            "cluster pipeline applied (revision \{revision}, \{text.length()} bytes); data nodes will pull it on their next heartbeat",
+          )
           Ok(
             @client.encode_cluster_pipeline(@client.ClusterPipeline::{
-              revision: asset.revision,
+              revision,
               spec_json: "",
             }),
           )
-        } else if asset.spec_json.length() == 0 {
-          Err(
-            (@client.ERR_BAD_PAYLOAD, "no pipeline is applied on this cluster"),
-          )
-        } else {
-          Ok(
-            @client.encode_cluster_pipeline(@client.ClusterPipeline::{
-              revision: asset.revision,
-              spec_json: asset.spec_json,
-            }),
-          )
         }
-      @client.CMD_FUNCTION_SET_FETCH => {
-        // the control plane is the authoritative copy of the rule
-        // assets; a node that needs one pulls it (P11/T54). The reply
-        // is the stored document as-is — including its revision, which
-        // is the number a node compares against its own to know
-        // whether it is behind.
-        let name = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
-        match get_function_set(store, name) {
-          Ok(set) => {
-            let text = encode_function_set_doc(set).stringify()
-            Ok(@utf8.encode(text[0:text.length()]))
-          }
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
-        }
+        Err(e) => Err((@client.ERR_TRANSFORM, e))
       }
-      // consumer groups (P9): the control plane is the coordinator
-      @client.CMD_GROUP_JOIN =>
-        match @client.decode_group_join(frame.payload) {
-          Ok(join) =>
-            match groups.join(join, store, now_ms()) {
-              Ok(view) => Ok(@client.encode_group_view(view))
-              Err(e) => Err((@client.ERR_GROUP, e))
-            }
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
-        }
-      @client.CMD_GROUP_HEARTBEAT =>
-        match @client.decode_group_heartbeat(frame.payload) {
-          Ok(beat) =>
-            match groups.heartbeat(beat, store, now_ms()) {
-              Ok(view) => Ok(@client.encode_group_view(view))
-              Err(e) => Err((@client.ERR_GROUP, e))
-            }
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
-        }
-      // leaving is a heartbeat that says goodbye: same fields, one
-      // different consequence
-      @client.CMD_GROUP_LEAVE =>
-        match @client.decode_group_heartbeat(frame.payload) {
-          Ok(beat) =>
-            match groups.leave(beat.group, beat.member.id) {
-              Ok(_) => Ok(b"")
-              Err(e) => Err((@client.ERR_GROUP, e))
-            }
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
-        }
-      @client.CMD_GROUP_COMMIT =>
-        match @client.decode_group_commit(frame.payload) {
-          Ok(commit) =>
-            match groups.commit(commit, store) {
-              Ok(_) => Ok(b"")
-              Err(e) => Err((@client.ERR_GROUP, e))
-            }
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
-        }
-      @client.CMD_GROUP_DESCRIBE => {
-        let group = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
-        if group.length() == 0 {
-          // an empty name lists the groups; the reply is JSON so the
-          // CLI can print a table without a second codec
-          let all : Array[Json] = []
-          for entry in groups.list() {
-            let (name, epoch, members, commits) = entry
-            let doc : Map[String, Json] = {}
-            doc["name"] = Json::string(name)
-            doc["epoch"] = Json::number(epoch.to_double())
-            doc["members"] = Json::number(members.to_double())
-            doc["commits"] = Json::number(commits.to_double())
-            all.push(Json::object(doc))
-          }
-          let text = Json::array(all).stringify()
+    }
+    @client.CMD_CLUSTER_PIPELINE_FETCH =>
+      // the empty payload asks "which revision?"; anything else asks
+      // for the document. The revision rides every heartbeat; the
+      // document only when it changed.
+      if frame.payload.length() == 0 {
+        Ok(
+          @client.encode_cluster_pipeline(@client.ClusterPipeline::{
+            revision: asset.revision,
+            spec_json: "",
+          }),
+        )
+      } else if asset.spec_json.length() == 0 {
+        Err((@client.ERR_BAD_PAYLOAD, "no pipeline is applied on this cluster"))
+      } else {
+        Ok(
+          @client.encode_cluster_pipeline(@client.ClusterPipeline::{
+            revision: asset.revision,
+            spec_json: asset.spec_json,
+          }),
+        )
+      }
+    @client.CMD_FUNCTION_SET_FETCH => {
+      // the control plane is the authoritative copy of the rule
+      // assets; a node that needs one pulls it (P11/T54). The reply
+      // is the stored document as-is — including its revision, which
+      // is the number a node compares against its own to know
+      // whether it is behind.
+      let name = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
+      match get_function_set(store, name) {
+        Ok(set) => {
+          let text = encode_function_set_doc(set).stringify()
           Ok(@utf8.encode(text[0:text.length()]))
-        } else {
-          match groups.describe(group) {
-            Ok(desc) => Ok(@client.encode_group_description(desc))
+        }
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
+      }
+    }
+    // consumer groups (P9): the control plane is the coordinator
+    @client.CMD_GROUP_JOIN =>
+      match @client.decode_group_join(frame.payload) {
+        Ok(join) =>
+          match groups.join(join, store, now_ms()) {
+            Ok(view) => Ok(@client.encode_group_view(view))
             Err(e) => Err((@client.ERR_GROUP, e))
           }
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+      }
+    @client.CMD_GROUP_HEARTBEAT =>
+      match @client.decode_group_heartbeat(frame.payload) {
+        Ok(beat) =>
+          match groups.heartbeat(beat, store, now_ms()) {
+            Ok(view) => Ok(@client.encode_group_view(view))
+            Err(e) => Err((@client.ERR_GROUP, e))
+          }
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+      }
+    // leaving is a heartbeat that says goodbye: same fields, one
+    // different consequence
+    @client.CMD_GROUP_LEAVE =>
+      match @client.decode_group_heartbeat(frame.payload) {
+        Ok(beat) =>
+          match groups.leave(beat.group, beat.member.id) {
+            Ok(_) => Ok(b"")
+            Err(e) => Err((@client.ERR_GROUP, e))
+          }
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+      }
+    @client.CMD_GROUP_COMMIT =>
+      match @client.decode_group_commit(frame.payload) {
+        Ok(commit) =>
+          match groups.commit(commit, store) {
+            Ok(_) => Ok(b"")
+            Err(e) => Err((@client.ERR_GROUP, e))
+          }
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+      }
+    @client.CMD_GROUP_DESCRIBE => {
+      let group = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
+      if group.length() == 0 {
+        // an empty name lists the groups; the reply is JSON so the
+        // CLI can print a table without a second codec
+        let all : Array[Json] = []
+        for entry in groups.list() {
+          let (name, epoch, members, commits) = entry
+          let doc : Map[String, Json] = {}
+          doc["name"] = Json::string(name)
+          doc["epoch"] = Json::number(epoch.to_double())
+          doc["members"] = Json::number(members.to_double())
+          doc["commits"] = Json::number(commits.to_double())
+          all.push(Json::object(doc))
+        }
+        let text = Json::array(all).stringify()
+        Ok(@utf8.encode(text[0:text.length()]))
+      } else {
+        match groups.describe(group) {
+          Ok(desc) => Ok(@client.encode_group_description(desc))
+          Err(e) => Err((@client.ERR_GROUP, e))
         }
       }
-      cmd if is_function_set_command(cmd) =>
-        match dispatch_function_set(frame, store) {
-          Ok(payload) => Ok(payload)
-          Err((_code, message)) => Err((@client.ERR_BAD_PAYLOAD, message))
-        }
-      @client.CMD_CONFIRM =>
-        match @client.decode_confirmation(frame.payload) {
-          Ok(confirmation) =>
-            match
-              placement.confirm(
-                confirmation.partition.topic,
-                confirmation.partition.partition,
-                confirmation.candidate,
-              ) {
-              Ok(_) => Ok(b"")
-              Err(e) => Err((@client.ERR_SEQUENCE, e))
-            }
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
-        }
-      @client.CMD_LEADER =>
-        match @client.decode_partition_ref(frame.payload) {
-          Ok(ref) =>
-            Ok(
-              @client.encode_partition_view(
-                placement.view(ref.topic, ref.partition),
-              ),
-            )
-          Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
-        }
-      @client.CMD_PRODUCE | @client.CMD_FETCH =>
-        Err(
-          (
-            @client.ERR_WRONG_ROLE,
-            "this is the control plane; produce/fetch belong to a data node",
-          ),
-        )
-      _ => Err((@client.ERR_UNKNOWN_COMMAND, "unknown command \{frame.cmd}"))
     }
-    let frame_out = match reply {
-      Ok(payload) =>
-        @client.Frame::{ cmd: @client.CMD_OK, rid: frame.rid, payload }
-      Err((code, message)) =>
-        @client.Frame::{
-          cmd: @client.CMD_ERR,
-          rid: frame.rid,
-          payload: @client.encode_error(code, message),
-        }
-    }
-    match conn.send_frame(frame_out) {
-      Ok(_) => ()
-      Err(_) => return
-    }
+    cmd if is_function_set_command(cmd) =>
+      match dispatch_function_set(frame, store) {
+        Ok(payload) => Ok(payload)
+        Err((_code, message)) => Err((@client.ERR_BAD_PAYLOAD, message))
+      }
+    @client.CMD_CONFIRM =>
+      match @client.decode_confirmation(frame.payload) {
+        Ok(confirmation) =>
+          match
+            placement.confirm(
+              confirmation.partition.topic,
+              confirmation.partition.partition,
+              confirmation.candidate,
+            ) {
+            Ok(_) => Ok(b"")
+            Err(e) => Err((@client.ERR_SEQUENCE, e))
+          }
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+      }
+    @client.CMD_LEADER =>
+      match @client.decode_partition_ref(frame.payload) {
+        Ok(ref) =>
+          Ok(
+            @client.encode_partition_view(
+              placement.view(ref.topic, ref.partition),
+            ),
+          )
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+      }
+    @client.CMD_PRODUCE | @client.CMD_FETCH =>
+      Err(
+        (
+          @client.ERR_WRONG_ROLE,
+          "this is the control plane; produce/fetch belong to a data node",
+        ),
+      )
+    _ => Err((@client.ERR_UNKNOWN_COMMAND, "unknown command \{frame.cmd}"))
   }
+  let frame_out = match reply {
+    Ok(payload) =>
+      @client.Frame::{ cmd: @client.CMD_OK, rid: frame.rid, payload }
+    Err((code, message)) =>
+      @client.Frame::{
+        cmd: @client.CMD_ERR,
+        rid: frame.rid,
+        payload: @client.encode_error(code, message),
+      }
+  }
+  (frame_out.cmd, frame_out.payload)
 }
 
 // ---------------------------------------------------------------------
@@ -1494,7 +1397,8 @@ fn PartitionHost::replicate_once(
   // churn was the largest remaining per-tick cost (decision 30's
   // follow-up). A dropped link is redialled next round.
   if self.sync is None {
-    self.sync = match SyncLink::connect(self.leader_addr, self.link_auth) {
+    self.sync = match
+      SyncLink::connect(self.leader_addr, self.link_auth, pump) {
       Ok(link) => {
         note(
           "sync link to \{self.leader_addr} for \{self.label()} open (\{link.opens} dial(s) this incarnation)",

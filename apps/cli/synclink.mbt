@@ -35,8 +35,10 @@ pub struct SyncLink {
   /// be partially here, and dropping them would misparse the stream
   inbox : Array[Byte]
   /// how many times this link (or its predecessors) had to be dialled:
-  /// reported so churn is visible instead of merely absent
-  mut opens : Int
+  /// reported so churn is visible instead of merely absent. Constant per
+  /// incarnation — the node redials by dropping the link and dialling a
+  /// fresh one next round, so this is the count at *this* dial.
+  opens : Int
   mut rounds : Int
 }
 
@@ -48,6 +50,7 @@ pub struct SyncLink {
 fn SyncLink::connect(
   address : String,
   link_auth : PeerLink,
+  pump : () -> Unit,
 ) -> Result[SyncLink, String] {
   let (host, port) = parse_listen_addr(address)
   let (stream, tls) = match dial_stream(host, port, link_auth) {
@@ -63,15 +66,21 @@ fn SyncLink::connect(
     opens: 1,
     rounds: 0,
   }
-  // one handshake, then the link is ready for requests. It waits
-  // without pumping: nothing of ours is in flight yet and the caller
-  // dialled a moment ago, so there is no connection of its own to serve
-  // in the meantime.
+  // One handshake, then the link is ready for requests — and it is
+  // pumped while it happens, like every other wait in this file.
+  //
+  // The first version did not pump here, on the reasoning that "nothing
+  // of ours is in flight yet, so there is nothing of ours to serve". That
+  // reasoning forgot the *peer*: while this node waits for a WELCOME, it
+  // may be the very node someone else is waiting for. Three nodes each
+  // dialling in a ring then wait on each other with nobody polling, and
+  // the whole cluster goes deaf for the length of the deadline — repeated
+  // every tick, because the links never come up (P13 found this by
+  // sampling a stalled node: all of its time was in this function).
   let deadline = now_ms() + HANDSHAKE_TIMEOUT_MS.to_int64()
-  let idle_pump = fn() { () }
   match
     send_all(
-      idle_pump,
+      pump,
       stream,
       @client.encode_frame(@client.Frame::{
         cmd: @client.CMD_HELLO,
@@ -86,7 +95,7 @@ fn SyncLink::connect(
       return Err("hello: \{e}")
     }
   }
-  let welcome = match await_frame(idle_pump, stream, link.inbox, deadline) {
+  let welcome = match await_frame(pump, stream, link.inbox, deadline) {
     Ok(frame) => frame
     Err(e) => {
       link.close()
@@ -108,7 +117,7 @@ fn SyncLink::connect(
     Some(token) => {
       match
         send_all(
-          idle_pump,
+          pump,
           stream,
           @client.encode_frame(@client.Frame::{
             cmd: @client.CMD_AUTH,
@@ -123,7 +132,7 @@ fn SyncLink::connect(
           return Err("auth: \{e}")
         }
       }
-      let reply = match await_frame(idle_pump, stream, link.inbox, deadline) {
+      let reply = match await_frame(pump, stream, link.inbox, deadline) {
         Ok(frame) => frame
         Err(e) => {
           link.close()
@@ -218,21 +227,6 @@ fn SyncLink::call(
     return Err("rejected (code \{code}): \{message}")
   }
   Ok(reply.payload)
-}
-
-///|
-/// Dials a *fresh* link to the same peer, keeping the churn count. Used
-/// after a link misbehaved: the count is what makes "it reconnected"
-/// observable in a log rather than invisible.
-fn SyncLink::redial(self : SyncLink) -> Result[SyncLink, String] {
-  let opens = self.opens + 1
-  match SyncLink::connect(self.address, self.link) {
-    Ok(fresh) => {
-      fresh.opens = opens
-      Ok(fresh)
-    }
-    Err(e) => Err(e)
-  }
 }
 
 ///|

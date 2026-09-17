@@ -85,6 +85,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p9-groups.sh" scripts/e2e-p9-groups.sh
   step "e2e-p11-assets.sh" scripts/e2e-p11-assets.sh
   step "e2e-p12-security.sh" scripts/e2e-p12-security.sh
+  step "e2e-p13-control-plane.sh" scripts/e2e-p13-control-plane.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

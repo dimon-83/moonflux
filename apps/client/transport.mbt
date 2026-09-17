@@ -156,49 +156,6 @@ pub fn tls_stream_over(
 }
 
 ///|
-/// Negotiates TLS on an already-accepted socket and returns the blocking
-/// `Conn` over it — what a handler that serves one connection to
-/// completion needs (the control plane's accept loop). The handshake is
-/// bounded: a peer that connects and then says nothing is dropped, not
-/// waited on.
-pub fn accept_tls_conn(
-  stream : @net.TcpStream,
-  context : @tls.TlsContext,
-  handshake_timeout_ms : Int,
-  io_timeout_ms : Int,
-) -> Result[Conn, String] {
-  let session = match context.attach(stream.raw_fd()) {
-    Ok(session) => session
-    Err(e) => return Err(e)
-  }
-  let deadline = deadline_after(handshake_timeout_ms)
-  let mut done = false
-  let mut failure = ""
-  while !done {
-    match session.accept() {
-      Ok(Done) => done = true
-      Ok(Pending(want_write)) => {
-        let _ = @net.poll_fds([stream.raw_fd()], 50, want_write)
-        if past_deadline(deadline) {
-          failure = "TLS handshake timed out"
-          break
-        }
-      }
-      Err(e) => {
-        failure = e
-        break
-      }
-    }
-  }
-  if !done {
-    session.close()
-    let _ = stream.close()
-    return Err(failure)
-  }
-  Ok(conn_over_stream(tls_stream_over(stream, session), io_timeout_ms))
-}
-
-///|
 /// Dials a peer, negotiates TLS, and hands back the **non-blocking**
 /// stream — what the replication link needs, because it waits by polling
 /// the node's own loop rather than by blocking (P10's shape, now over

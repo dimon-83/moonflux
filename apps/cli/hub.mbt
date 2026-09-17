@@ -56,12 +56,22 @@ pub struct HubConnection {
   /// unauthenticated: the transport refuses to serve commands then, so
   /// a handler never sees `None` on a path that requires an identity.
   mut identity : @auth.Identity?
+  /// when the TLS handshake must be finished by (0 for plaintext). A
+  /// deadline the *loop* checks, not one the socket enforces: no call in
+  /// this file waits for a peer any more.
+  tls_deadline : Int64
+  /// the configured handshake window, for the log line when it expires
+  window_hint_ms : Int
   /// a label for logs: "tcp" or "websocket"
   mut kind : String
 }
 
 ///|
 pub(all) enum Phase {
+  /// A TLS session is being negotiated on this connection. It is stepped
+  /// once per poll round and never waited on (P13): waiting is what made
+  /// a peer that connects and says nothing expensive.
+  TlsHandshake
   /// Waiting for the handshake (HELLO as a frame, or an HTTP upgrade).
   Handshake
   /// Handshake done; frames are serviced as they complete.
@@ -103,6 +113,12 @@ pub struct ConnectionHub {
   /// the longest frame header + the largest payload this server accepts
   max_frame : Int
   poll_timeout_ms : Int
+  /// how long one accepted connection may spend in its TLS handshake.
+  /// A parameter, not a constant, because the cost of a peer that
+  /// connects and says nothing is paid by the *loop*: the control plane
+  /// keeps a 3s liveness window, so it takes a tighter bound than a data
+  /// port whose peers are all nodes it already knows.
+  handshake_deadline_ms : Int
 }
 
 ///|
@@ -116,6 +132,7 @@ pub fn ConnectionHub::new(
     conns: [],
     max_frame: @client.MAX_FRAME_PAYLOAD + 13,
     poll_timeout_ms,
+    handshake_deadline_ms: HANDSHAKE_DEADLINE_MS,
   }
 }
 
@@ -131,63 +148,45 @@ pub fn ConnectionHub::with_tls(
     conns: self.conns,
     max_frame: self.max_frame,
     poll_timeout_ms: self.poll_timeout_ms,
+    handshake_deadline_ms: self.handshake_deadline_ms,
+  }
+}
+
+///|
+/// The same hub, with a tighter handshake bound. See
+/// `handshake_deadline_ms`: this is the knob that decides how much a
+/// peer that connects and says nothing can cost the loop.
+pub fn ConnectionHub::with_handshake_deadline(
+  self : ConnectionHub,
+  ms : Int,
+) -> ConnectionHub {
+  ConnectionHub::{
+    listener: self.listener,
+    tls: self.tls,
+    conns: self.conns,
+    max_frame: self.max_frame,
+    poll_timeout_ms: self.poll_timeout_ms,
+    handshake_deadline_ms: ms,
   }
 }
 
 ///|
 /// Registers an accepted stream as a connection.
 ///
-/// The TLS handshake is the one blocking moment, and it is *bounded*: it
-/// runs here on the blocking socket with a receive deadline, and only
-/// then does the connection go non-blocking for the rest of its life.
-/// Driving it cooperatively from the poll loop was the first design, and
-/// it stalled — both peers can end up polling for the direction the other
-/// has already taken — while a deadline is what actually stops a peer
-/// that opens a socket and says nothing.
+/// The TLS handshake is **stepped, not waited on** (P13). The session is
+/// attached here and driven one step per poll round from `service`; the
+/// deadline below is checked by the loop. The first design ran the
+/// handshake to completion here with a receive deadline, which is simpler
+/// to read and was wrong in the way that matters: a peer that connects
+/// and says nothing held the loop for the whole deadline, and enough of
+/// them starved the connections that had real work (a measured failure —
+/// a live node was declared dead). Bounding how many such waits a round
+/// may do only converts it into head-of-line blocking, because the stalled
+/// peer sits at the front of the backlog. Not waiting at all is the fix.
 fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
-  let mut session : @tls.TlsSession? = None
-  match self.tls {
-    None => ()
-    Some(context) => {
-      match stream.set_recv_timeout_ms(HANDSHAKE_DEADLINE_MS) {
-        Ok(_) => ()
-        Err(e) => {
-          note("dropping a connection: cannot set a handshake deadline (\{e})")
-          return
-        }
-      }
-      let attached = match context.attach(stream.raw_fd()) {
-        Ok(attached) => attached
-        Err(e) => {
-          note("dropping a connection: \{e}")
-          return
-        }
-      }
-      match attached.accept() {
-        Ok(Done) => session = Some(attached)
-        Ok(Pending(_)) => {
-          note(
-            "dropping a connection: TLS handshake did not finish within \{HANDSHAKE_DEADLINE_MS}ms",
-          )
-          attached.close()
-          let _ = stream.close()
-          return
-        }
-        Err(e) => {
-          note("TLS handshake failed: \{e}")
-          attached.close()
-          // and close the *socket*: freeing the session leaves the
-          // connection open, and a caller that is waiting for a reply
-          // then waits forever (a plaintext client against a TLS port is
-          // exactly that caller)
-          let _ = stream.close()
-          return
-        }
-      }
-      // the session's reads are poll-driven from here on
-      let _ = stream.set_recv_timeout_ms(0)
-    }
-  }
+  // non-blocking *before* the session is attached: every SSL call must
+  // return "wants more" rather than block, which is what lets the loop
+  // step it
   match stream.set_nonblocking(true) {
     Ok(_) => ()
     Err(e) => {
@@ -195,32 +194,82 @@ fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
       return
     }
   }
-  let plain = stream.stream()
-  match session {
+  match self.tls {
     None =>
       self.conns.push(HubConnection::{
         socket: stream,
-        stream: plain,
+        stream: stream.stream(),
         tls: None,
         inbox: b"",
         decoded: b"",
         outbox: b"",
         phase: Handshake,
+        tls_deadline: 0L,
+        window_hint_ms: 0,
         kind: "tcp",
         identity: None,
       })
-    Some(ready) =>
+    Some(context) => {
+      let attached = match context.attach(stream.raw_fd()) {
+        Ok(attached) => attached
+        Err(e) => {
+          note("dropping a connection: \{e}")
+          let _ = stream.close()
+          return
+        }
+      }
       self.conns.push(HubConnection::{
         socket: stream,
-        stream: @native.tls_stream_over(stream, ready),
-        tls: Some(ready),
+        stream: @native.tls_stream_over(stream, attached),
+        tls: Some(attached),
         inbox: b"",
         decoded: b"",
         outbox: b"",
-        phase: Handshake,
+        phase: TlsHandshake,
+        tls_deadline: now_ms() + self.handshake_deadline_ms.to_int64(),
+        window_hint_ms: self.handshake_deadline_ms,
         kind: "tls",
         identity: None,
       })
+    }
+  }
+}
+
+///|
+/// The deadline this connection was given, for the log line. Kept as a
+/// derived read rather than a second stored field: two copies of a
+/// number is one copy too many.
+fn HubConnection::handshake_ms_hint(self : HubConnection) -> Int {
+  self.window_hint_ms
+}
+
+///|
+/// One step of a TLS handshake. `true` when the connection moved on (or
+/// was dropped), so the caller knows whether its phase changed.
+fn step_handshake(conn : HubConnection) -> Unit {
+  let session = match conn.tls {
+    Some(session) => session
+    None => {
+      conn.phase = Handshake
+      return
+    }
+  }
+  match session.accept() {
+    Ok(Done) => conn.phase = Handshake
+    Ok(Pending(_)) =>
+      // nothing to do: the next round steps it again. There is no
+      // direction to poll for here — SSL_accept reads and writes the
+      // socket itself, and a step that is not ready costs nothing.
+      if conn.tls_deadline != 0L && now_ms() > conn.tls_deadline {
+        note(
+          "dropping a connection: TLS handshake did not finish within \{conn.handshake_ms_hint()}ms",
+        )
+        conn.phase = Closed
+      }
+    Err(e) => {
+      note("TLS handshake failed: \{e}")
+      conn.phase = Closed
+    }
   }
 }
 
@@ -240,7 +289,9 @@ pub fn ConnectionHub::poll_once(
   on_new_connection : (String) -> Unit,
 ) -> Int {
   // 1. accept everything that is waiting: a backlog must not sit until
-  //    the next tick just because one connection is busy
+  //    the next tick just because one connection is busy. Accepting is
+  //    cheap now, TLS included — the handshake is attached and then
+  //    *stepped* (see `adopt`), so there is no wait to budget for.
   while true {
     match self.listener.accept() {
       Ok(stream) => {
@@ -259,6 +310,15 @@ pub fn ConnectionHub::poll_once(
         note("accept: \{e}")
         break
       }
+    }
+  }
+  // 1b. advance every TLS session that is still negotiating. This is the
+  //     whole of the handshake as far as a peer can see: a step that is
+  //     not ready returns immediately, so a peer that says nothing costs
+  //     one call per round until its deadline — not a stalled loop.
+  for conn in self.conns {
+    if conn.phase is TlsHandshake {
+      step_handshake(conn)
     }
   }
   if self.conns.length() == 0 {
@@ -283,6 +343,10 @@ pub fn ConnectionHub::poll_once(
   //    more complete frames
   for index in ready {
     let conn = self.conns[index]
+    if conn.phase is TlsHandshake {
+      // its bytes belong to the handshake, not to the protocol above it
+      continue
+    }
     match read_available(conn) {
       Ok(_) => ()
       Err(e) =>
@@ -299,7 +363,7 @@ pub fn ConnectionHub::poll_once(
     }
   }
   for i in 0..<self.conns.length() {
-    if self.conns[i].phase is Closed {
+    if self.conns[i].phase is Closed || self.conns[i].phase is TlsHandshake {
       continue
     }
     service(self.conns[i], handler)
@@ -312,6 +376,11 @@ pub fn ConnectionHub::poll_once(
       // closing handshake is written here rather than vanishing
       let _ = flush(conn)
       (conn.stream.close)()
+      continue
+    }
+    if conn.phase is TlsHandshake {
+      // nothing can be written before the session is up
+      alive.push(conn)
       continue
     }
     match flush(conn) {
@@ -360,6 +429,9 @@ fn read_available(conn : HubConnection) -> Result[Unit, String] {
 /// loop.
 fn service(conn : HubConnection, handler : HubHandler) -> Unit {
   match conn.phase {
+    TlsHandshake =>
+      // handled by `step_handshake` in the poll loop, before this runs
+      ()
     Handshake => {
       if conn.inbox.length() >= 4 && looks_like_http(conn.inbox[0:4].to_owned()) {
         // a browser: finish the HTTP upgrade if it is complete
