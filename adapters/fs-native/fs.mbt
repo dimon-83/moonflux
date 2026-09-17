@@ -286,3 +286,31 @@ pub fn write_file(path : String, data : Bytes) -> Result[Unit, FsError] {
   let _ = f.flush()
   f.close()
 }
+
+///|
+/// Lists a directory's entries (excluding "." and ".."), sorted so two
+/// calls agree. The C side writes NUL-separated names into a caller
+/// buffer, which this splits — the FFI returns one int, not a list.
+pub fn list_dir(path : String) -> Result[Array[String], FsError] {
+  let path_bytes = @utf8.encode(path[0:path.length()])
+  let buf : FixedArray[Byte] = FixedArray::make(262144, b'\x00')
+  let written = fs_list_dir(path_bytes, path_bytes.length(), buf, buf.length())
+  if written < 0 {
+    return Err(Io(-written, "list_dir"))
+  }
+  let out : Array[String] = []
+  let mut start = 0
+  for i in 0..<written {
+    if buf[i] == b'\x00' {
+      if i > start {
+        // a NUL-terminated name cannot contain 0x00, so lossy here is
+        // lossless for every byte the directory entry can carry
+        let name_bytes = Bytes::from_array(buf[start:i])
+        out.push(@utf8.decode_lossy(name_bytes[0:name_bytes.length()]))
+      }
+      start = i + 1
+    }
+  }
+  out.sort()
+  Ok(out)
+}

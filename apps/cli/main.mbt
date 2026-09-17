@@ -67,6 +67,7 @@ fn usage() -> Unit {
   )
   println("  sc       --listen host:port [--data-dir D]")
   println("  topic    create|list|delete ...")
+  println("  operator verify|describe|list ...")
   println("  cluster  nodes   --remote host:port")
   println("  cluster  status  --remote host:port")
   println("  cluster  leader  --topic T --remote host:port")
@@ -154,7 +155,8 @@ fn main {
     text == "spu" ||
     text == "sc" ||
     text == "cluster" ||
-    text == "topic"
+    text == "topic" ||
+    text == "operator"
   }
 
   let start = if args.length() > 0 && is_command(args[0]) {
@@ -178,6 +180,7 @@ fn main {
     "sc" => cmd_sc(rest)
     "cluster" => cmd_cluster(rest)
     "topic" => cmd_topic(rest)
+    "operator" => cmd_operator(rest)
     _ => usage()
   }
 }

@@ -1,3 +1,4 @@
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <fcntl.h>
@@ -79,6 +80,41 @@ int mf_fs_mkdirs(const uint8_t *buf, int len) {
  * file and rename it into place, so a reader never observes a
  * half-written document.
  */
+
+/*
+ * Lists a directory's entries into `out` as NUL-separated names
+ * (excluding "." and ".."). Returns the total bytes written, or -errno.
+ * The caller sizes the buffer; 256 KiB is plenty for a build tree.
+ */
+int mf_fs_list_dir(const uint8_t *path, int path_len, uint8_t *out,
+                   int out_len) {
+  char pathz[1024];
+  if (path_len < 0 || path_len >= 1024) return -EINVAL;
+  memcpy(pathz, path, path_len);
+  pathz[path_len] = 0;
+  DIR *dir = opendir(pathz);
+  if (dir == NULL) return -errno;
+  int written = 0;
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    const char *name = entry->d_name;
+    if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0))) {
+      continue;
+    }
+    int len = 0;
+    while (name[len] != 0) len++;
+    if (written + len + 1 > out_len) {
+      closedir(dir);
+      return -ENOSPC;
+    }
+    memcpy(out + written, name, len);
+    written += len;
+    out[written] = 0;
+    written += 1;
+  }
+  closedir(dir);
+  return written;
+}
 int mf_fs_rename(const uint8_t *from, int from_len, const uint8_t *to,
                  int to_len) {
   char fromz[1024];

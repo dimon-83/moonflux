@@ -73,6 +73,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p4-ws.sh" scripts/e2e-p4-ws.sh
   step "e2e-p5-concurrency.sh" scripts/e2e-p5-concurrency.sh
   step "e2e-p5-partitions.sh" scripts/e2e-p5-partitions.sh
+  step "e2e-p5-operator.sh" scripts/e2e-p5-operator.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

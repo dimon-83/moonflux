@@ -59,3 +59,12 @@ pub extern "C" fn fs_rename(
   to : Bytes,
   to_len : Int,
 ) -> Int = "mf_fs_rename"
+
+///|
+#borrow(path, buf)
+pub extern "C" fn fs_list_dir(
+  path : Bytes,
+  path_len : Int,
+  buf : FixedArray[Byte],
+  buf_len : Int,
+) -> Int = "mf_fs_list_dir"
