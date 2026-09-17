@@ -97,16 +97,42 @@ pub fn socketpair() -> Result[(Conn, Conn), String] {
 }
 
 ///|
-/// Connects a producer over native TCP and performs the handshake.
-pub fn connect_producer(
+/// Connects a producer over native TCP and performs the handshake,
+/// presenting a credential when one is supplied (P12).
+pub fn connect_producer_with(
   host : String,
   port : Int,
+  token : String?,
 ) -> Result[Producer, ClientError] {
   let conn = match tcp(host, port) {
     Ok(conn) => conn
     Err(e) => return Err(@kernel.Transport(e))
   }
-  Producer::from_conn(conn)
+  Producer::from_conn_with(conn, token)
+}
+
+///|
+/// Connects a producer over native TCP and performs the handshake.
+pub fn connect_producer(
+  host : String,
+  port : Int,
+) -> Result[Producer, ClientError] {
+  connect_producer_with(host, port, None)
+}
+
+///|
+/// Connects a consumer over native TCP and performs the handshake,
+/// presenting a credential when one is supplied (P12).
+pub fn connect_consumer_with(
+  host : String,
+  port : Int,
+  token : String?,
+) -> Result[Consumer, ClientError] {
+  let conn = match tcp(host, port) {
+    Ok(conn) => conn
+    Err(e) => return Err(@kernel.Transport(e))
+  }
+  Consumer::from_conn_with(conn, token)
 }
 
 ///|
@@ -115,9 +141,5 @@ pub fn connect_consumer(
   host : String,
   port : Int,
 ) -> Result[Consumer, ClientError] {
-  let conn = match tcp(host, port) {
-    Ok(conn) => conn
-    Err(e) => return Err(@kernel.Transport(e))
-  }
-  Consumer::from_conn(conn)
+  connect_consumer_with(host, port, None)
 }

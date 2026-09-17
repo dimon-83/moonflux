@@ -7,6 +7,7 @@ import {
   "moonflux/core/codec",
   "moonflux/core/log",
   "moonflux/core/operator",
+  "moonflux/core/auth",
   "moonflux/core/cluster",
   "moonflux/core/group",
   "moonflux/core/pipeline",

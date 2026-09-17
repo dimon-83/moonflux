@@ -17,7 +17,16 @@ fn group_request(
   cmd : Int,
   payload : Bytes,
 ) -> Result[Bytes, String] {
-  control_call(sc_addr, cmd, payload)
+  control_call_with_token(sc_addr, cmd, payload, group_token())
+}
+
+///|
+/// The credential a group member presents. Read once here rather than
+/// threaded through every call: a group member has exactly one, and the
+/// alternative is a token parameter on a dozen functions whose only
+/// opinion about it is "pass it on".
+fn group_token() -> String? {
+  @env.get_env_var("MOONFLUX_TOKEN")
 }
 
 ///|

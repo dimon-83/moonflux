@@ -166,6 +166,24 @@ pub const CMD_GROUP_DESCRIBE = 31
 pub const ERR_GROUP = 8
 
 ///|
+/// The server requires authentication and this connection has not
+/// presented a credential (or presented a bad one). Distinct from
+/// `ERR_FORBIDDEN`: one means "say who you are", the other means "not
+/// you".
+pub const ERR_AUTH_REQUIRED = 9
+
+///|
+/// Authenticated, and not allowed to do this.
+pub const ERR_FORBIDDEN = 10
+
+///|
+/// Authentication (P12): the credential exchange that happens right
+/// after HELLO/WELCOME, before any command is served. A command, not a
+/// HELLO field: the handshake payload is a *version*, and overloading it
+/// would make two concerns share one parse.
+pub const CMD_AUTH = 35
+
+///|
 /// One member as it travels: who it is and where it can be reached.
 pub(all) struct WireGroupMember {
   id : String

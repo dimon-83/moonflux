@@ -1,0 +1,7 @@
+// Blackbox tests for the auth kernel: the permission table and the
+// comparison, the way the servers will use them.
+
+import {
+  "moonflux/core/auth",
+  "moonflux/core/client",
+}

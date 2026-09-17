@@ -40,6 +40,51 @@ pub impl Show for ClientError with fn output(self, logger) {
 }
 
 ///|
+/// Performs the HELLO/WELCOME handshake on a fresh connection, and then
+/// the credential exchange when a token is supplied (P12).
+///
+/// The token is a *parameter*, never read from the environment: the
+/// kernel does not know what a credential file or an env var is, and a
+/// client library that read one would make every embedding of it a
+/// security decision it did not make.
+pub fn handshake_with(
+  conn : Conn,
+  token : String?,
+) -> Result[(Int, Int), ClientError] {
+  let session = match handshake(conn) {
+    Ok(session) => session
+    Err(e) => return Err(e)
+  }
+  match token {
+    None => Ok(session)
+    Some(token) => {
+      match
+        conn.send_frame(Frame::{
+          cmd: CMD_AUTH,
+          rid: 1,
+          payload: @utf8.encode(token[0:token.length()]),
+        }) {
+        Ok(_) => ()
+        Err(e) => return Err(Transport(e))
+      }
+      let reply = match conn.recv_frame() {
+        Ok(Some(reply)) => reply
+        Ok(None) => return Err(Transport("server closed during authentication"))
+        Err(e) => return Err(Transport(e))
+      }
+      match reply.cmd {
+        CMD_OK => Ok(session)
+        CMD_ERR => {
+          let (code, message) = decode_error(reply.payload)
+          Err(Server(code, message))
+        }
+        other => Err(Protocol("expected OK from AUTH, got cmd \{other}"))
+      }
+    }
+  }
+}
+
+///|
 /// Performs the HELLO/WELCOME handshake on a fresh connection.
 fn handshake(conn : Conn) -> Result[(Int, Int), ClientError] {
   match
@@ -91,6 +136,20 @@ fn request(
     return Err(Protocol("reply request id \{reply.rid} does not match \{rid}"))
   }
   Ok(reply)
+}
+
+///|
+/// Wraps an already-connected pipe (tests, loopback), presenting a
+/// credential when one is supplied (P12).
+pub fn Producer::from_conn_with(
+  conn : Conn,
+  token : String?,
+) -> Result[Producer, ClientError] {
+  let session = match handshake_with(conn, token) {
+    Ok(session) => session
+    Err(e) => return Err(e)
+  }
+  Ok(Producer::{ conn, next_rid: 2, session })
 }
 
 ///|
@@ -156,6 +215,20 @@ pub fn Producer::close(self : Producer) -> Unit {
 }
 
 ///|
+
+///|
+/// Wraps an already-connected pipe (tests, loopback), presenting a
+/// credential when one is supplied (P12).
+pub fn Consumer::from_conn_with(
+  conn : Conn,
+  token : String?,
+) -> Result[Consumer, ClientError] {
+  let session = match handshake_with(conn, token) {
+    Ok(session) => session
+    Err(e) => return Err(e)
+  }
+  Ok(Consumer::{ conn, next_rid: 2, session })
+}
 
 ///|
 /// Wraps an already-connected pipe (tests, loopback).

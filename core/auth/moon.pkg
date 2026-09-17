@@ -1,0 +1,6 @@
+// core/auth: identities, roles and the permission table (P12).
+// Pure computation; compiles for every target.
+
+import {
+  "moonflux/core/client",
+}

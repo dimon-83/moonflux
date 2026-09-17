@@ -36,8 +36,15 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     Err(e) => fail("accept timeout: \{e}")
   }
   let hub = ConnectionHub::new(listener, HUB_TICK_MS)
+  // the credential table, announced at startup so an operator never has
+  // to guess which mode this broker is in
+  let auth_config = AuthConfig::load(data_dir)
+  announce_auth_mode(data_dir, auth_config)
   let handler = HubHandler::{
-    on_frame: fn(frame) { dispatch_session_frame(frame, data_dir, rules, ws) },
+    on_frame: fn(frame, identity) {
+      dispatch_session_frame(frame, data_dir, rules, ws, identity)
+    },
+    auth: AuthGate::{ config: auth_config },
     on_ready: fn() {
       // hot-reload checkpoint: a freshly applied spec is picked up here,
       // exactly as it was on the single-connection path
@@ -96,8 +103,22 @@ fn dispatch_session_frame(
   data_dir : String,
   rules : RuleState,
   ws_enabled : Bool,
+  identity : @auth.Identity?,
 ) -> @client.Frame {
   let _ = ws_enabled
+  // the permission check is the *dispatcher's*, not each handler's
+  // (P12): one place, so a new command cannot slip past it
+  match identity {
+    Some(identity) =>
+      if !@auth.permit(identity.role, frame.cmd) {
+        return err_frame(
+          frame.rid,
+          @client.ERR_FORBIDDEN,
+          "\{identity.name} (\{@auth.role_name(identity.role)}) may not issue command \{frame.cmd}",
+        )
+      }
+    None => ()
+  }
   match frame.cmd {
     @client.CMD_HELLO => {
       let (major, minor) = match @client.decode_hello(frame.payload) {

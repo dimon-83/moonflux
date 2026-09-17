@@ -44,7 +44,8 @@ fn cluster_nodes(argv : Array[String]) -> Unit {
         "cluster nodes: --remote host:port is required (a control plane must be asked, not guessed)",
       )
   }
-  let payload = match control_call(remote, @client.CMD_NODES, b"") {
+  let payload = match
+    control_call_with_token(remote, @client.CMD_NODES, b"", client_token(flags)) {
     Ok(payload) => payload
     Err(e) => fail("cluster nodes: \{e}")
   }
@@ -76,7 +77,12 @@ fn cluster_leader(argv : Array[String]) -> Unit {
   }
   let ref = @client.PartitionRef::{ topic, partition }
   let payload = match
-    control_call(remote, @client.CMD_LEADER, @client.encode_partition_ref(ref)) {
+    control_call_with_token(
+      remote,
+      @client.CMD_LEADER,
+      @client.encode_partition_ref(ref),
+      client_token(flags),
+    ) {
     Ok(payload) => payload
     Err(e) => fail("cluster leader: \{e}")
   }
@@ -110,7 +116,13 @@ fn cluster_offsets(argv : Array[String]) -> Unit {
     topic,
     partition,
   })
-  let payload = match control_call(remote, @client.CMD_OFFSET_INFO, ask) {
+  let payload = match
+    control_call_with_token(
+      remote,
+      @client.CMD_OFFSET_INFO,
+      ask,
+      client_token(flags),
+    ) {
     Ok(payload) => payload
     Err(e) => fail("cluster offsets: \{e}")
   }
@@ -146,10 +158,11 @@ fn cluster_segments(argv : Array[String]) -> Unit {
   }
   let ref = @client.PartitionRef::{ topic, partition }
   let payload = match
-    control_call(
+    control_call_with_token(
       remote,
       @client.CMD_SEGMENTS,
       @client.encode_partition_ref(ref),
+      client_token(flags),
     ) {
     Ok(payload) => payload
     Err(e) => fail("cluster segments: \{e}")
@@ -173,7 +186,8 @@ fn cluster_segments(argv : Array[String]) -> Unit {
 fn cluster_status(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let remote = flags.require("remote")
-  let nodes_payload = match control_call(remote, @client.CMD_NODES, b"") {
+  let nodes_payload = match
+    control_call_with_token(remote, @client.CMD_NODES, b"", client_token(flags)) {
     Ok(payload) => payload
     Err(e) => fail("cluster status: \{e}")
   }
@@ -181,7 +195,13 @@ fn cluster_status(argv : Array[String]) -> Unit {
     Ok(nodes) => nodes
     Err(e) => fail("cluster status: \{e}")
   }
-  let topics_payload = match control_call(remote, @client.CMD_TOPIC_LIST, b"") {
+  let topics_payload = match
+    control_call_with_token(
+      remote,
+      @client.CMD_TOPIC_LIST,
+      b"",
+      client_token(flags),
+    ) {
     Ok(payload) => payload
     Err(e) => fail("cluster status: \{e}")
   }
@@ -212,10 +232,11 @@ fn cluster_status(argv : Array[String]) -> Unit {
     for index in 0..<topic.partitions {
       let ref = @client.PartitionRef::{ topic: topic.name, partition: index }
       let view_payload = match
-        control_call(
+        control_call_with_token(
           remote,
           @client.CMD_LEADER,
           @client.encode_partition_ref(ref),
+          client_token(flags),
         ) {
         Ok(payload) => payload
         Err(_) => continue
@@ -234,10 +255,11 @@ fn cluster_status(argv : Array[String]) -> Unit {
         continue
       }
       let offsets = match
-        control_call(
+        control_call_with_token(
           view.leader,
           @client.CMD_OFFSET_INFO,
           @client.encode_partition_ref(ref),
+          client_token(flags),
         ) {
         Ok(payload) =>
           match @client.decode_offset_info(payload) {

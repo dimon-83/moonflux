@@ -44,6 +44,10 @@ pub struct HubConnection {
   mut outbox : Bytes
   /// the session state: what this connection speaks and where it is
   mut phase : Phase
+  /// who this connection is, once it has said so (P12). `None` while
+  /// unauthenticated: the transport refuses to serve commands then, so
+  /// a handler never sees `None` on a path that requires an identity.
+  mut identity : @auth.Identity?
   /// a label for logs: "tcp" or "websocket"
   mut kind : String
 }
@@ -64,9 +68,19 @@ pub(all) enum Phase {
 /// hub only decides *when* they run.
 pub(all) struct HubHandler {
   /// Handles one complete frame, returning the reply frame to send.
-  on_frame : (@client.Frame) -> @client.Frame
+  ///
+  /// The identity is the *connection's*, resolved by the AUTH exchange
+  /// this layer owns (it already owns the handshake): `None` means the
+  /// session has not authenticated, and a handler that needs an
+  /// identity must say so rather than invent one.
+  on_frame : (@client.Frame, @auth.Identity?) -> @client.Frame
   /// Called once the handshake completes (after WELCOME is queued).
   on_ready : () -> Unit
+  /// The node's credential table. Owned here because *this* is the
+  /// layer that knows whether a connection has presented a credential —
+  /// per-connection session state, which is precisely what the hub has
+  /// and a dispatcher does not.
+  auth : AuthGate
 }
 
 ///|
@@ -110,6 +124,7 @@ fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
     outbox: b"",
     phase: Handshake,
     kind: "tcp",
+    identity: None,
   })
 }
 
@@ -279,7 +294,7 @@ fn service(conn : HubConnection, handler : HubHandler) -> Unit {
       match next_frame(conn) {
         Ok(None) => ()
         Ok(Some(frame)) => {
-          let reply = (handler.on_frame)(frame)
+          let reply = (handler.on_frame)(frame, conn.identity)
           queue(conn, @client.encode_frame_bytes(reply))
           if reply.cmd == @client.CMD_ERR {
             // a refused handshake ends the session, as it does on the
@@ -320,7 +335,66 @@ fn service(conn : HubConnection, handler : HubHandler) -> Unit {
             return
           }
         }
-        let reply = (handler.on_frame)(frame)
+        // the credential exchange is the *transport's* business (P12):
+        // it is per-connection session state, and it must happen before
+        // any command reaches a handler
+        if frame.cmd == @client.CMD_AUTH {
+          let token = @utf8.decode_lossy(
+            frame.payload[0:frame.payload.length()],
+          )
+          let reply = match handler.auth.present(token) {
+            Accepted(identity) => {
+              conn.identity = Some(identity)
+              note(
+                "connection authenticated as \{identity.name} (\{@auth.role_name(identity.role)})",
+              )
+              @client.Frame::{
+                cmd: @client.CMD_OK,
+                rid: frame.rid,
+                payload: @utf8.encode(@auth.role_name(identity.role)),
+              }
+            }
+            NotRequired =>
+              // no credentials configured on this node: the session is
+              // trusted (and says so), so permission checks still have
+              // a role to work with
+              @client.Frame::{
+                cmd: @client.CMD_OK,
+                rid: frame.rid,
+                payload: @utf8.encode("none"),
+              }
+            Rejected(reason) =>
+              @client.Frame::{
+                cmd: @client.CMD_ERR,
+                rid: frame.rid,
+                payload: @client.encode_error(
+                  @client.ERR_AUTH_REQUIRED,
+                  "\{reason}: this node requires a valid credential",
+                ),
+              }
+          }
+          queue(conn, @client.encode_frame_bytes(reply))
+          if reply.cmd == @client.CMD_ERR {
+            conn.phase = Closed
+            return
+          }
+          continue
+        }
+        // everything else waits until the session is identified
+        if handler.auth.config.required() && conn.identity is None {
+          let reply = @client.Frame::{
+            cmd: @client.CMD_ERR,
+            rid: frame.rid,
+            payload: @client.encode_error(
+              @client.ERR_AUTH_REQUIRED,
+              "authenticate first: send CMD_AUTH with this node's credential",
+            ),
+          }
+          queue(conn, @client.encode_frame_bytes(reply))
+          conn.phase = Closed
+          return
+        }
+        let reply = (handler.on_frame)(frame, conn.identity)
         queue(conn, @client.encode_frame_bytes(reply))
       }
     }

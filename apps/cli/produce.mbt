@@ -15,7 +15,8 @@ fn cmd_produce(argv : Array[String]) -> Unit {
     None => 0
   }
   match flags.get("remote") {
-    Some(addr) => produce_remote(topic, partition, file, addr)
+    Some(addr) =>
+      produce_remote(topic, partition, file, addr, client_token(flags))
     None => {
       let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
       produce_local(topic, file, data_dir)
@@ -66,13 +67,14 @@ fn produce_remote(
   partition : Int,
   file : String,
   addr : String,
+  token : String?,
 ) -> Unit {
   let records = match file_records(file) {
     Ok(records) => records
     Err(e) => fail(e)
   }
   let (host, port) = parse_listen_addr(addr)
-  let producer = match @native.connect_producer(host, port) {
+  let producer = match @native.connect_producer_with(host, port, token) {
     Ok(producer) => producer
     Err(e) => fail("connect \{host}:\{port}: \{e}")
   }

@@ -204,6 +204,18 @@ fn valid_topic(topic : String) -> Bool {
 }
 
 ///|
+/// The credential this process presents, from `--token` or the
+/// environment. Read here, in the app layer, because the kernel's client
+/// takes tokens as parameters — a library that read an env var would
+/// make every embedding of it a security decision its user did not make.
+fn client_token(flags : Flags) -> String? {
+  match flags.get("token") {
+    Some(token) => Some(token)
+    None => @env.get_env_var("MOONFLUX_TOKEN")
+  }
+}
+
+///|
 /// Splits "host:port" (IPv4/name only for P1).
 fn parse_listen_addr(addr : String) -> (String, Int) {
   match addr.rev_split_once(":") {

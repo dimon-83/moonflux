@@ -102,6 +102,20 @@ fn control_call(
 }
 
 ///|
+/// The same call, presenting a credential (P12). Every control call in
+/// this codebase goes through here, so a node with a token configured
+/// authenticates wherever it is talking — to the control plane and to a
+/// partition's leader alike.
+fn control_call_with_token(
+  addr : String,
+  cmd : Int,
+  payload : Bytes,
+  token : String?,
+) -> Result[Bytes, String] {
+  control_call_full(addr, cmd, payload, CONTROL_CALL_TIMEOUT_MS, token)
+}
+
+///|
 /// The peer-to-peer deadline. Shorter than the control plane's on
 /// purpose (P7): a node talks to *every* partition's leader each tick,
 /// and a busy peer must not hold this node's loop — the same "deadline,
@@ -126,6 +140,17 @@ fn control_call_with_timeout(
   payload : Bytes,
   timeout_ms : Int,
 ) -> Result[Bytes, String] {
+  control_call_full(addr, cmd, payload, timeout_ms, None)
+}
+
+///|
+fn control_call_full(
+  addr : String,
+  cmd : Int,
+  payload : Bytes,
+  timeout_ms : Int,
+  token : String?,
+) -> Result[Bytes, String] {
   let (host, port) = parse_listen_addr(addr)
   // a deadline, not a wait: every node is a single-threaded loop, so
   // a busy peer must fail this call rather than block this node's
@@ -134,7 +159,7 @@ fn control_call_with_timeout(
     Ok(conn) => conn
     Err(e) => return Err("connect \{addr}: \{e}")
   }
-  let result = control_call_on(conn, cmd, payload)
+  let result = control_call_on(conn, cmd, payload, token)
   (conn.close)()
   result
 }
@@ -144,6 +169,7 @@ fn control_call_on(
   conn : @client.Conn,
   cmd : Int,
   payload : Bytes,
+  token : String?,
 ) -> Result[Bytes, String] {
   match
     conn.send_frame(@client.Frame::{
@@ -162,6 +188,31 @@ fn control_call_on(
       }
     Ok(None) => return Err("control plane closed during handshake")
     Err(e) => return Err("handshake: \{e}")
+  }
+  // the credential, before the request (P12): a node with a token
+  // authenticates on every call, because the peer may require it
+  match token {
+    Some(token) => {
+      match
+        conn.send_frame(@client.Frame::{
+          cmd: @client.CMD_AUTH,
+          rid: 0,
+          payload: @utf8.encode(token[0:token.length()]),
+        }) {
+        Ok(_) => ()
+        Err(e) => return Err("auth: \{e}")
+      }
+      match conn.recv_frame() {
+        Ok(Some(frame)) =>
+          if frame.cmd == @client.CMD_ERR {
+            let (code, msg) = @client.decode_error(frame.payload)
+            return Err("authentication rejected (code \{code}): \{msg}")
+          }
+        Ok(None) => return Err("peer closed during authentication")
+        Err(e) => return Err("auth: \{e}")
+      }
+    }
+    None => ()
   }
   match conn.send_frame(@client.Frame::{ cmd, rid: 1, payload }) {
     Ok(_) => ()
@@ -189,9 +240,15 @@ fn report_to_control(
   record : @client.NodeRecord,
   reports : Array[@client.PartitionReport],
   cmd : Int,
+  token : String?,
 ) -> Result[Bytes, String] {
   let payload = match
-    control_call(sc_addr, cmd, @client.encode_node_full(record, reports)) {
+    control_call_with_token(
+      sc_addr,
+      cmd,
+      @client.encode_node_full(record, reports),
+      token,
+    ) {
     Ok(payload) => payload
     Err(e) => return Err(e)
   }
@@ -319,11 +376,19 @@ fn cmd_spu(argv : Array[String]) -> Unit {
   // the heartbeat reply; a node with no control plane falls back to the
   // degenerate single-node placement (partition 0 of its applied topic)
   // and says so, because then nobody else is holding the data.
-  let hosts = HostTable::new(data_dir, identity.id, "\{host}:\{actual}")
+  let hosts = HostTable::new(
+    data_dir,
+    identity.id,
+    "\{host}:\{actual}",
+    client_token(flags),
+  )
   let sc_addr = match sc {
     Some(addr) => addr
     None => ""
   }
+  // this node's credential (P12): presented to the control plane and to
+  // every partition's leader, because either may require it
+  let sc_token = client_token(flags)
   hosts.applied_topic = applied_topic(data_dir)
   if sc is None {
     hosts.self_place("no control plane configured")
@@ -340,11 +405,16 @@ fn cmd_spu(argv : Array[String]) -> Unit {
   // deadline, every replication call timing out). The heartbeat keeps
   // its own 500ms cadence through the gate below.
   let hub = ConnectionHub::new(listener, POLL_TICK_MS)
+  let auth_config = AuthConfig::load(data_dir)
+  announce_auth_mode(data_dir, auth_config)
   let handler = HubHandler::{
-    on_frame: fn(frame) {
-      let reply = dispatch_data_frame(frame, data_dir, rules, hosts, sc_addr)
+    on_frame: fn(frame, identity) {
+      let reply = dispatch_data_frame(
+        frame, data_dir, rules, hosts, sc_addr, identity,
+      )
       @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1 }
     },
+    auth: AuthGate::{ config: auth_config },
     on_ready: fn() { () },
   }
   // the pump: what every outbound call does first. It is the same
@@ -381,7 +451,8 @@ fn cmd_spu(argv : Array[String]) -> Unit {
           } else {
             @client.CMD_REGISTER
           }
-          match report_to_control(sc_addr, record, hosts.reports(), cmd) {
+          match
+            report_to_control(sc_addr, record, hosts.reports(), cmd, sc_token) {
             Ok(payload) => {
               if not(registered) {
                 registered = true
@@ -415,6 +486,7 @@ fn cmd_spu(argv : Array[String]) -> Unit {
                         file_metadata_store(data_dir),
                         revision,
                         adoption,
+                        sc_token,
                       )
                     }
                     None => ()
@@ -491,13 +563,17 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   let groups = GroupRegistry::new(data_dir, NODE_TIMEOUT_MS.to_int64())
   // the cluster's applied pipeline: the authority nodes pull from (P11)
   let asset = ClusterAsset::load(data_dir)
+  // the control plane's credential table (P12), announced like every
+  // other mode this process runs in
+  let control_auth = AuthConfig::load(data_dir)
+  announce_auth_mode(data_dir, control_auth)
   let store = file_metadata_store(data_dir)
   let placement = PlacementState::new(data_dir)
   while true {
     match listener.accept() {
       Ok(stream) => {
         handle_control_connection(
-          stream, table, placement, store, groups, asset,
+          stream, table, placement, store, groups, asset, control_auth,
         )
         let _ = stream.close()
       }
@@ -736,6 +812,7 @@ fn handle_control_connection(
   store : MetadataStore,
   groups : GroupRegistry,
   asset : ClusterAsset,
+  auth_config : AuthConfig,
 ) -> Unit {
   let conn = @native.from_stream(stream)
   let hello = match conn.recv_first() {
@@ -770,11 +847,81 @@ fn handle_control_connection(
     rid: hello.rid,
     payload: @client.encode_hello(1, 0),
   })
+  // the credential exchange, before any command is served (P12): the
+  // control port is where a forged REGISTER or SYNC_ACK would land, so
+  // it is the port that most needs to know who is talking
+  let mut identity : @auth.Identity? = None
   while true {
     let frame = match conn.recv_frame() {
       Ok(Some(frame)) => frame
       Ok(None) => return
       Err(_) => return
+    }
+    if frame.cmd == @client.CMD_AUTH {
+      let token = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
+      let outcome = AuthGate::{ config: auth_config }.present(token)
+      let response = match outcome {
+        Accepted(resolved) => {
+          identity = Some(resolved)
+          note(
+            "control connection authenticated as \{resolved.name} (\{@auth.role_name(resolved.role)})",
+          )
+          @client.Frame::{
+            cmd: @client.CMD_OK,
+            rid: frame.rid,
+            payload: @utf8.encode(@auth.role_name(resolved.role)),
+          }
+        }
+        NotRequired =>
+          @client.Frame::{
+            cmd: @client.CMD_OK,
+            rid: frame.rid,
+            payload: @utf8.encode("none"),
+          }
+        Rejected(reason) =>
+          @client.Frame::{
+            cmd: @client.CMD_ERR,
+            rid: frame.rid,
+            payload: @client.encode_error(
+              @client.ERR_AUTH_REQUIRED,
+              "\{reason}: this control plane requires a valid credential",
+            ),
+          }
+      }
+      match conn.send_frame(response) {
+        Ok(_) => ()
+        Err(_) => return
+      }
+      if response.cmd == @client.CMD_ERR {
+        return
+      }
+      continue
+    }
+    if auth_config.required() && identity is None {
+      let _ = conn.send_frame(@client.Frame::{
+        cmd: @client.CMD_ERR,
+        rid: frame.rid,
+        payload: @client.encode_error(
+          @client.ERR_AUTH_REQUIRED,
+          "authenticate first: send CMD_AUTH with this node's credential",
+        ),
+      })
+      return
+    }
+    match identity {
+      Some(resolved) =>
+        if !@auth.permit(resolved.role, frame.cmd) {
+          let _ = conn.send_frame(@client.Frame::{
+            cmd: @client.CMD_ERR,
+            rid: frame.rid,
+            payload: @client.encode_error(
+              @client.ERR_FORBIDDEN,
+              "\{resolved.name} (\{@auth.role_name(resolved.role)}) may not issue command \{frame.cmd}",
+            ),
+          })
+          continue
+        }
+      None => ()
     }
     let reply = match frame.cmd {
       @client.CMD_REGISTER | @client.CMD_HEARTBEAT =>
@@ -1087,6 +1234,9 @@ struct PartitionHost {
   /// Dropped on any error, redialled on the next round; `None` means
   /// "not connected", which is the normal state for a leader.
   mut link : SyncLink?
+  /// the credential this node presents to its leader (P12); copied from
+  /// the table so the host can dial without reaching back up
+  mut token : String?
 }
 
 ///|
@@ -1112,6 +1262,7 @@ fn PartitionHost::new(
     nominated: "",
     group_floor: None,
     link: None,
+    token: None,
   }
 }
 
@@ -1273,7 +1424,7 @@ fn PartitionHost::replicate_once(
   // churn was the largest remaining per-tick cost (decision 30's
   // follow-up). A dropped link is redialled next round.
   if self.link is None {
-    self.link = match SyncLink::connect(self.leader_addr) {
+    self.link = match SyncLink::connect(self.leader_addr, self.token) {
       Ok(link) => {
         note(
           "sync link to \{self.leader_addr} for \{self.label()} open (\{link.opens} dial(s) this incarnation)",
@@ -1466,10 +1617,16 @@ fn ask_leader(
   sc_addr : String,
   topic : String,
   partition : Int,
+  token : String?,
 ) -> Result[@client.PartitionView, String] {
   let ref = @client.PartitionRef::{ topic, partition }
   let payload = match
-    control_call(sc_addr, @client.CMD_LEADER, @client.encode_partition_ref(ref)) {
+    control_call_with_token(
+      sc_addr,
+      @client.CMD_LEADER,
+      @client.encode_partition_ref(ref),
+      token,
+    ) {
     Ok(payload) => payload
     Err(e) => return Err(e)
   }
@@ -1585,16 +1742,18 @@ fn confirm_leadership(
   topic : String,
   partition : Int,
   candidate : String,
+  token : String?,
 ) -> Result[Unit, String] {
   let confirmation = @client.Confirmation::{
     partition: @client.PartitionRef::{ topic, partition },
     candidate,
   }
   match
-    control_call(
+    control_call_with_token(
       sc_addr,
       @client.CMD_CONFIRM,
       @client.encode_confirmation(confirmation),
+      token,
     ) {
     Ok(_) => Ok(())
     Err(e) => Err(e)
@@ -1614,6 +1773,9 @@ struct HostTable {
   data_dir : String
   node_id : String
   address : String
+  /// the credential this node presents to peers (P12): the table is the
+  /// per-node context, so the token lives here and each host copies it
+  token : String?
   /// the topic the applied pipeline writes to ("" = none). Placement
   /// wins whenever a control plane declares this topic; when nobody
   /// declares it, this node is the only holder there is, and that is
@@ -1628,8 +1790,9 @@ fn HostTable::new(
   data_dir : String,
   node_id : String,
   address : String,
+  token : String?,
 ) -> HostTable {
-  HostTable::{ data_dir, node_id, address, applied_topic: "", hosts: [] }
+  HostTable::{ data_dir, node_id, address, token, applied_topic: "", hosts: [] }
 }
 
 ///|
@@ -1650,6 +1813,7 @@ fn HostTable::self_place(self : HostTable, reason : String) -> Unit {
         self.applied_topic,
         0,
       )
+      host.token = self.token
       host.adopt_view(@client.PartitionView::{
         leader: self.address,
         replicas: [self.address],
@@ -1724,6 +1888,7 @@ fn HostTable::adopt(
       )
       host.adopt_view(view)
       host.group_floor = group_floor
+      host.token = self.token
       self.hosts.push(host)
       note(
         "hosting \{host.label()} (leader \{assignment.leader}, \{assignment.replicas.length()} replica(s))",
@@ -1756,7 +1921,7 @@ fn HostTable::ensure(
     }
     return None
   }
-  match ask_leader(sc_addr, topic, partition) {
+  match ask_leader(sc_addr, topic, partition, self.token) {
     Ok(view) => {
       if view.replicas.length() == 0 &&
         topic == self.applied_topic &&
@@ -1915,6 +2080,7 @@ fn HostTable::tick_one(
               host.topic,
               host.partition,
               host.address,
+              self.token,
             ) {
             Ok(_) => ()
             Err(e) => note("warning: could not confirm leadership: \{e}")
@@ -2025,7 +2191,22 @@ fn dispatch_data_frame(
   rules : RuleState,
   hosts : HostTable,
   sc_addr : String,
+  identity : @auth.Identity?,
 ) -> (Int, Bytes) {
+  // one permission check for every data command (P12)
+  match identity {
+    Some(identity) =>
+      if !@auth.permit(identity.role, frame.cmd) {
+        return (
+          @client.CMD_ERR,
+          @client.encode_error(
+            @client.ERR_FORBIDDEN,
+            "\{identity.name} (\{@auth.role_name(identity.role)}) may not issue command \{frame.cmd}",
+          ),
+        )
+      }
+    None => ()
+  }
   match frame.cmd {
     @client.CMD_HELLO => {
       // the hub delivers the handshake frame to the same dispatcher the

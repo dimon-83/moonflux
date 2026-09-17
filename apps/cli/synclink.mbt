@@ -21,6 +21,8 @@
 /// A connection to one peer, reused across rounds.
 pub struct SyncLink {
   address : String
+  /// the credential to present on (re)dial (P12)
+  token : String?
   stream : @net.TcpStream
   /// bytes received beyond the last frame: the next reply may already
   /// be partially here, and dropping them would misparse the stream
@@ -36,7 +38,10 @@ pub struct SyncLink {
 /// non-blocking for the life of the link; waiting is done by pumping
 /// (the node must keep serving its own connections while it waits —
 /// that is what made the multi-partition ring work at all, decision 30).
-fn SyncLink::connect(address : String) -> Result[SyncLink, String] {
+fn SyncLink::connect(
+  address : String,
+  token : String?,
+) -> Result[SyncLink, String] {
   let (host, port) = parse_listen_addr(address)
   let stream = match @net.TcpStream::connect(host, port) {
     Ok(stream) => stream
@@ -49,7 +54,14 @@ fn SyncLink::connect(address : String) -> Result[SyncLink, String] {
       return Err("nonblocking: \{e}")
     }
   }
-  let link = SyncLink::{ address, stream, inbox: [], opens: 1, rounds: 0 }
+  let link = SyncLink::{
+    address,
+    token,
+    stream,
+    inbox: [],
+    opens: 1,
+    rounds: 0,
+  }
   // one handshake, then the link is ready for requests. It waits
   // without pumping: nothing of ours is in flight yet and the caller
   // dialled a moment ago, so there is no connection of its own to serve
@@ -88,6 +100,42 @@ fn SyncLink::connect(address : String) -> Result[SyncLink, String] {
   if welcome.cmd != @client.CMD_WELCOME {
     link.close()
     return Err("expected WELCOME, got cmd \{welcome.cmd}")
+  }
+  // the credential, once per link (P12): the handshake is the part the
+  // link exists to pay for once, and authentication is part of it
+  match token {
+    Some(token) => {
+      match
+        send_all(
+          idle_pump,
+          stream,
+          @client.encode_frame(@client.Frame::{
+            cmd: @client.CMD_AUTH,
+            rid: 0,
+            payload: @utf8.encode(token[0:token.length()]),
+          }),
+          deadline,
+        ) {
+        Ok(_) => ()
+        Err(e) => {
+          link.close()
+          return Err("auth: \{e}")
+        }
+      }
+      let reply = match await_frame(idle_pump, stream, link.inbox, deadline) {
+        Ok(frame) => frame
+        Err(e) => {
+          link.close()
+          return Err("auth: \{e}")
+        }
+      }
+      if reply.cmd == @client.CMD_ERR {
+        let (code, message) = @client.decode_error(reply.payload)
+        link.close()
+        return Err("authentication rejected (code \{code}): \{message}")
+      }
+    }
+    None => ()
   }
   Ok(link)
 }
@@ -138,7 +186,7 @@ fn SyncLink::call(
 /// observable in a log rather than invisible.
 fn SyncLink::redial(self : SyncLink) -> Result[SyncLink, String] {
   let opens = self.opens + 1
-  match SyncLink::connect(self.address) {
+  match SyncLink::connect(self.address, self.token) {
     Ok(fresh) => {
       fresh.opens = opens
       Ok(fresh)
