@@ -59,7 +59,7 @@
 | P12 | **安全面**：内核鉴权语义（身份/角色/闭合权限表）+ 握手期认证 + TLS 传输（含节点间）+ 授权门禁 | 关闭认证时行为与 P11 完全一致且启动明示；无凭据/坏 token 被拒且不入日志；只读能读不能写；**客户端身份发节点命令被拒**；错 CA/无证书/明文被拒且服务端存活；TLS+认证下复制逐字节一致 | ✅ 2026-09-17（`scripts/e2e-p12-security.sh`，7 条腿；矩阵 #17–19） |
 | P13 | **控制面改为 poll 驱动**：`sc` 接入 `ConnectionHub` + 逐帧分发器 + 步进式 TLS 握手 | 沉默对端不夺走健康节点的存活窗且不触发选举；慢客户端不阻塞他人命令；安全面不回退；真死仍判离线；并发客户端各自正确应答 | ✅ 2026-09-17（`scripts/e2e-p13-control-plane.sh`，5 条腿；执行中修掉环状死锁与 SIGPIPE，见决策 36） |
 
-- 详细路线图与依据见 README「路线图」与报告 3.4 / 4.4 / 6.4。
+- 详细路线图、里程碑台账与排期见 [docs/project-roadmap.md](docs/project-roadmap.md)（进度管理单一真相，决策 37）；依据见报告 3.4 / 4.4 / 6.4。
 - 阶段推进以**门禁**为准；门禁必须可证伪、可复现（对拍脚本 / 基准 / 故障注入），不得以"看起来能跑"代替。
 
 **P3 集群语义纪律（做集群相关改动前先读；决策依据见 README 决策 17–21）**
@@ -247,11 +247,15 @@ moonflux/
 
 | 文档类型 | 位置 | 权威内容 |
 | :--- | :--- | :--- |
-| 项目定义 | [README.md](README.md) | 定位 / 能力对标 / 范围 / 路线图 / **关键决策记录** / 待办 |
+| 项目介绍 | [README.md](README.md) | 定位 / 核心主张 / 快速开始 / 能力与范围摘要 / **文档导航** / **关键决策记录**（权威位置） |
 | 工作规约 | 本文件（AGENTS.md） | 金规则 / 内核红线 / 验证流程 / 文档规范等执行纪律（§1–§10） |
 | 立项评估报告 | [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md) | 对标事实：§2 功能实录、§4 后端、§5 mbel、§6 编辑器 |
 | 参考系统作业规则 | [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md) | 在 `~/workspace/fluvio` 内的 agent 硬规则 |
 | 对标语义台账 | [docs/compatibility-matrix.md](docs/compatibility-matrix.md) | 每条对标语义的验证状态与证据入口（状态图例的单一真相） |
+| 架构说明 | [docs/architecture.md](docs/architecture.md) | 分层与包清单 / 事件循环 / 协议 / 存储 / 复制与控制面 / 安全 / 算子 / 验证体系（"为什么是这个形状"的唯一位置） |
+| 实用文档 | [docs/user-guide.md](docs/user-guide.md) | 构建 / 快速开始 / CLI 参考 / 集群与消费组 / 安全配置 / 存储运维 / 故障排查（"怎么用"的唯一位置） |
+| 功能矩阵 | [docs/feature-matrix.md](docs/feature-matrix.md) | **能力清单的单一真相**：功能 × 状态 × 证据入口（与兼容性矩阵分工：那里管"对标语义验证状态"） |
+| 进度管理 | [docs/project-roadmap.md](docs/project-roadmap.md) | **进度与排期的单一真相**：阶段详情 / 里程碑台账 / 待办（README 只留摘要与链接，决策 37） |
 | 规划类 | `docs/*-roadmap.md`（实例 [cli-roadmap.md](docs/cli-roadmap.md)） | 分阶段映射、边界声明、勘误清单 |
 | 实证类 | `docs/*-spike.md`（实例 [p2-wasm-host-spike.md](docs/p2-wasm-host-spike.md)） | 探针命令与输出、选型依据、落地回填 |
 | 工作项（ticket） | `.scratch/moonflux-p{N}/issues/NN-slug.md` | What to build / Blocked by / Status / 勾选清单 |
@@ -265,7 +269,7 @@ moonflux/
 | :--- | :--- |
 | 语义借鉴 / 架构选型 | README「关键决策记录」（编号 + 日期 + 报告章节依据；§7） |
 | 金规则变更 | README「关键决策记录」+ 本文件 §1（规则表与依据列） |
-| 阶段 / 门禁状态变化 | README 路线图 + §2 阶段表（涉评估结论时同步报告） |
+| 阶段 / 门禁状态变化 | [docs/project-roadmap.md](docs/project-roadmap.md) + §2 阶段表（涉评估结论时同步报告） |
 | 新增 / 变更对标语义 | compatibility-matrix 入表或状态迁移（附证据入口） |
 | 命令面 / 目录结构变化 | §3 目录与包结构；（如涉及 CLI）回填 `docs/cli-roadmap.md` |
 | 新增文档 | 两处资产索引登记 |
@@ -276,7 +280,11 @@ moonflux/
 
 | 资产 | 位置 | 说明 |
 | :--- | :--- | :--- |
-| 项目定义 | [README.md](README.md) | 定位 / 能力对标表 / 范围 / 路线图 / 决策记录 |
+| 项目介绍 | [README.md](README.md) | 定位 / 核心主张 / 快速开始 / 能力摘要 / 文档导航 / 关键决策记录（权威） |
+| 架构总览 | [docs/architecture.md](docs/architecture.md) | 架构说明的单一位置：分层 / 事件循环 / 协议 / 存储 / 复制 / 安全 / 算子 / 验证体系 |
+| 实用文档 | [docs/user-guide.md](docs/user-guide.md) | 操作手册的单一位置：构建 / 快速开始 / CLI / 集群 / 安全 / 运维 / 排障 |
+| 功能矩阵 | [docs/feature-matrix.md](docs/feature-matrix.md) | 能力清单的单一真相：功能 × 状态 × 证据入口 |
+| 路线图与进度 | [docs/project-roadmap.md](docs/project-roadmap.md) | 进度与排期的单一真相：阶段详情 / 里程碑台账 / 待办 |
 | 立项评估报告 | [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md) | 架构与选型的全部证据（7 章） |
 | 对标参考工作规约 | [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md) | 在 Fluvio 参考仓库作业时的硬规则 |
 | CLI 命令工具规划 | [docs/cli-roadmap.md](docs/cli-roadmap.md) | 命令面分阶段规划（对标 Fluvio CLI；README 决策 13） |

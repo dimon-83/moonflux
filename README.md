@@ -1,99 +1,117 @@
 # moonflux — MoonBit 全栈流式计算平台
 
-> **正式立项**：2026-09-15 · **项目目录**：`~/workspace/moonflux` · **对标参考**：[Fluvio](../fluvio) · **组件资产**：[mbel](../mbel)（动态规则引擎候选）、[mbel-orch](../mbel-orch)（函数分发平台设计参考）
+> **正式立项**：2026-09-15 · **项目目录**：`~/workspace/moonflux` · **对标参考**：[Fluvio](../fluvio) · **组件资产**：[mbel](../mbel)（动态规则引擎）、[mbel-orch](../mbel-orch)（函数分发设计参考）· **状态**：P0–P13 全部达成，门禁 31 步全绿（[路线图与进度](docs/project-roadmap.md)）
 
-## 定位
+## 这是什么
 
 **moonflux 是一个用 MoonBit 全栈开发的流式计算平台，与 Fluvio 具备同等的能力与地位。**
 
-- **全栈 MoonBit**：从内核（编解码 / 线协议 / 算子语义 / 存储 / 复制状态机）到系统集成（异步网络 / TLS / 集群管理）、从 CLI 到 Web 可视化编辑器，单一语言贯穿全栈；借此换取三样东西——native 与 WASM 双形态的可移植性、沙箱安全与内存安全、AI 辅助开发效率。
-- **能力对等**：目标能力面与 Fluvio 同级——分区提交日志、复制与选主、推送式消费、版本化线协议、客户端 SDK、沙箱化可编程算子、连接器框架、云原生部署、可视化拖拽管道编辑器。
-- **与 Fluvio 的关系**：Fluvio 是**对标系统与设计参考**（架构研究、能力基准、语义参照），**不是宿主、不是依赖**，moonflux 独立成体系。立项评估报告对 Fluvio 的全面剖析（架构 / 功能 / 协议 / 复制 / 算子运行时）是 moonflux 的设计知识库；报告中"移植可行性"章节的技术结论（分层递进、能力缺口清单、验证门禁）转化为 moonflux 的工程路径与选型依据。
+- **全栈 MoonBit**：从内核（编解码 / 线协议 / 存储 / 复制状态机 / 权限表）到系统集成（网络 / TLS / wasmtime 宿主）、从 CLI 到 Web 拖拽编辑器，单一语言贯穿；换来三样东西——native 与 WASM 双形态可移植、沙箱与内存安全、AI 辅助开发效率。
+- **能力对等**：分区提交日志、follower 拉取复制与集中提名选主、消费组与托管偏移、版本化线协议、沙箱化可编程算子、动态表达式规则、连接器框架、TLS + 认证授权、可视化编辑器。
+- **与 Fluvio 的关系**：Fluvio 是**对标系统与设计参考**（架构研究、能力基准、语义参照），**不是宿主、不是依赖**；对标语义逐条建账验证（[兼容性矩阵](docs/compatibility-matrix.md)）。
 
 **名称**：**Moon**Bit × **Flux**（流）。
 
-## 能力对标（目标态）
-
-| 能力域 | Fluvio（参考实现） | moonflux（目标） | 启动阶段 |
-| :--- | :--- | :--- | :--- |
-| 内核与线协议 | 自研二进制协议（版本化 + derive 宏 + varint） | 自建（MoonBit 核心库的 LEB128 / 字节序原语齐备） | P0 |
-| 连接器框架（Source/Sink） | Connector 框架 + 外部仓库生产件 | 自建：**Native 外部读写框架**（HTTP / 文件 / MQTT / Kafka / 硬件直采）+ mbel 表达式 transforms | P0 框架 / P1 连接器 |
-| 分区日志存储 | commit log（segment / index / checkpoint / retention） | 自建（P0 单机最小 → P3 完整；单写多读 + 零拷贝目标） | P0 |
-| 沙箱化可编程算子 | SmartModule（wasmtime + core-wasm ABI） | 自建同等能力；叠加 mbel **动态表达式规则**（改规则免编译） | P2（Native 先行，WASM 后置） |
-| 客户端 SDK | Rust + wasm 浏览器 + 多语言 | MoonBit native（P1 雏形）→ wasm 浏览器（P4） | P1 / P4 |
-| 复制与选主 | follower 拉取 + ISR 等价（LRS）+ 集中提名选主 | 自建（对标同语义，含水位与故障恢复） | P3 |
-| 控制面与元数据 | SC 调和循环 + 多类 Spec + K8s operator | 自建（level-triggered 调和 + 声明式 Spec；**元数据存储可插拔：本地存储优先，K8s CRD 可选**） | P3 |
-| 管道构建体验 | CLI / 配置文件（无拖拽编辑器） | **可视化拖拽编辑器（一等产品特性）** | P0′ / P4 |
-
 ## 核心主张
 
-1. **全栈单语言**：MoonBit 贯穿全栈，"一内核多后端"是手段而非目的——同一份内核定义可编译为 WASM 沙箱算子、Native 服务端、浏览器客户端三种形态（架构纪律由 MoonBit `supported_targets` 依赖 fail-fast 在编译期强制，见报告 4.5）。
-2. **动态性内建**：表达式 / 算子即配置——mbel 表达式引擎作为动态规则层，规则变更秒级生效、免编译免重启；可视化拖拽编辑器直接建立在"配置即规则"之上（报告 5.4 / 6.3）。
-3. **对标为主、移植可选**：以 Fluvio 为设计参考自建同等能力；**不反对代码级移植**——若能显著加速实现（Rust→MoonBit 翻译），经「MoonBit 语境合理性」四检后即可采用（AGENTS.md §1.1），验收门槛与自建一致。报告 3.3 的能力缺口（异步运行时、TLS、K8s client、WASM 宿主嵌入）是自建 backlog 与选型清单——MoonBit 生态每补齐一项，实现成本就下降一档（同时也是移植可行性的输入）。
-4. **分阶段达成、门禁推进**：全平台不可能一步到位；按 **Native 最小闭环 → 连接器与外设 → WASM 算子沙箱 → 分布式 → 全平台体验** 的递进路径推进（**Native 先行**：Source/Sink 与数据面需要独立的外部读写能力），每个阶段设可证伪的门禁（见路线图）。
+1. **一内核多后端**：同一份内核编译为 Native 服务端、WASM 沙箱算子、浏览器客户端三种形态；依赖方向 `core ← adapters ← apps` 由 MoonBit `supported_targets` 的依赖 fail-fast 在**编译期**强制（报告 4.5）。
+2. **内核是纯计算**：零 IO、零第三方依赖（仅 `moonbitlang/core`）、无 panic 解析、时钟与随机注入——确定性重放与故障重放的前提（AGENTS.md §5）。
+3. **动态性内建**：mbel 表达式作为消费路径的动态规则，改规则秒级生效、免编译免重启；表达式函数集是版本化资产，发布期拦截错误（决策 10/27）。
+4. **对标为主、移植可选**：以 Fluvio 为设计参考自建同等能力；代码级移植（Rust→MoonBit）若能显著加速实现，经「MoonBit 语境合理性」四检后可用（AGENTS.md §1.1），验收门槛与自建一致。
+5. **分阶段达成、门禁推进**：每个能力面以**可证伪的门禁**收口（故障注入、对拍、拒绝路径断言），不以"看起来能跑"代替（AGENTS.md §2）。
 
-## 范围
+## 快速开始
 
-**目标态（全平台）**：即上方「能力对标」表——数据面（存储 / 复制 / 读写服务）、控制面（元数据调和 / 放置与选主 / 集群生命周期）、协议与 SDK（线协议 / 多路复用 / native + wasm 客户端）、可编程层（沙箱算子 + 动态表达式规则）、产品化（CLI / PipelineSpec / 可视化编辑器 / K8s 部署）。
+```bash
+moon build --target native          # 单二进制：_build/native/debug/build/apps/cli/cli.exe
 
-**分期入口（工程路径）**：P0 算子沙箱与内核起步（1–2 周 PoC）→ P0′ PipelineSpec 先行 → P1 算子 SDK 完备 → P2 数据面 MVP → P3 复制与控制面 → P4 全平台体验。
+cli.exe serve --data-dir d --listen 127.0.0.1:19420 &
+cli.exe pipeline apply -f demo.json --data-dir d
+cli.exe produce --topic events --file in.txt --remote 127.0.0.1:19420
+cli.exe consume --topic events --remote 127.0.0.1:19420
+```
 
-**暂不涉及**：SDF 等价的有状态 SQL 层（远期，视需要）；生产连接器目录（按需求逐步自建）。**代码级移植不是禁区**——按模块做"移植 vs 自建"决策（四检见 AGENTS.md §1.1）。
+五分钟跑通、最小集群、消费组、函数集、TLS + 认证、故障排查——见 **[实用文档](docs/user-guide.md)**。
+
+## 架构一瞥
+
+```mermaid
+flowchart LR
+    subgraph core["core/（内核：零 IO、零第三方依赖、全后端可编译）"]
+        K["protocol · log · replica · cluster<br/>group · auth · spec · operator · client"]
+    end
+    subgraph adapters["adapters/（单目标薄适配，能力可缺席）"]
+        A["fs-native · net-native<br/>tls-native · wasmtime-native"]
+    end
+    subgraph apps["apps/（入口与产品）"]
+        P["cli · client · connectors · transform<br/>editor-kernel · operator-sdk"]
+    end
+    P --> A
+    P --> K
+    A --> K
+```
+
+箭头 = **依赖方向**（`core ← adapters ← apps`），违规在 `moon build --target X` 直接失败；运行时数据流见[架构总览](docs/architecture.md) §1。
+
+三种服务端（`serve` / `spu` / `sc`）是**同一个单线程事件循环**：accept → poll → 逐帧分发 → flush，绝不阻塞在单个对端上（P13 后三者同形）。复制是 follower 拉取原始帧（字节一致）；水位 `HW = min(LEO)` 只前进；放置与提名是控制面的**状态**、随心跳应答下发；控制面从不拨号数据节点。完整阐述（协议、存储不变量、复制、安全、算子、验证体系）见 **[架构总览](docs/architecture.md)**。
+
+## 能力与范围
+
+能力清单（每项的状态与门禁证据）见 **[功能矩阵](docs/feature-matrix.md)**。与 Fluvio 逐条对标语义的验证状态见 **[兼容性矩阵](docs/compatibility-matrix.md)**。
+
+| 能力域 | 一句话现状 |
+| :--- | :--- |
+| 数据面 | 分区日志、段滚动/索引/retention、崩溃恢复 ✅；compaction ⏳（待键语义） |
+| 复制与集群 | follower 拉取、逐分区水位/选主、分歧回归、资产下发 ✅；镜像 ⏳ |
+| 消费语义 | 重放、提交读开关、消费组（至少一次、世代围栏）✅；事务 ⏳ |
+| 可编程 | 表达式 + 函数集 + wasm 算子沙箱（双预算、fail-closed）✅；ABI v2 ⏳（设计稿） |
+| 接入与协议 | 帧协议 v2、多路复用、WS、认证/授权/TLS（含节点间）✅；MQTT/Kafka 连接器 ⏳ |
+| 产品面 | CLI、PipelineSpec、Web 编辑器 ✅；多语言 SDK / K8s ⏳（K8s 有意排最后） |
+
+## 文档导航
+
+| 想了解 | 去哪里 |
+| :--- | :--- |
+| 怎么构建、怎么用、怎么排障 | [`docs/user-guide.md`](docs/user-guide.md) |
+| 架构为什么是这个形状、代码在哪 | [`docs/architecture.md`](docs/architecture.md) |
+| 现在能做什么、什么状态 | [`docs/feature-matrix.md`](docs/feature-matrix.md) |
+| 做到哪一步了、接下来做什么 | [`docs/project-roadmap.md`](docs/project-roadmap.md) |
+| 与 Fluvio 对标语义的验证状态 | [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) |
+| 在 Fluvio 参考仓库作业的规则 | [`docs/fluvio-reference-guide.md`](docs/fluvio-reference-guide.md) |
+| 立项的技术依据（Fluvio 全景剖析） | [`docs/fluvio-moonbit-evaluation.md`](docs/fluvio-moonbit-evaluation.md) |
+| 给 agent 的工程纪律（必读） | [`AGENTS.md`](AGENTS.md) |
 
 ## 资产索引
 
 | 资产 | 位置 | 说明 |
 | :--- | :--- | :--- |
-| **项目规约** | [`AGENTS.md`](AGENTS.md) | 项目章程：金规则 7 条 / 内核红线 / 验证流程 / 对标参考使用规则 / 不做清单 / 文档规范（§10） |
-| **立项评估报告 v1.6** | [`docs/fluvio-moonbit-evaluation.md`](docs/fluvio-moonbit-evaluation.md) | 七章：Fluvio 全景 / 功能详解 / 分层路径与能力缺口 / Native×WASM 后端 / mbel 评估 / 可视化编辑器 / 结论路线图 |
-| 对标参考工作规约 | [`docs/fluvio-reference-guide.md`](docs/fluvio-reference-guide.md) | 在 Fluvio 参考仓库内作业（研究/对照/互操作测试）时的 agent 硬规则（自 fluvio 仓库迁入） |
+| **项目规约** | [`AGENTS.md`](AGENTS.md) | 项目章程：金规则 7 条 / 内核红线 / 验证流程 / 事件循环与安全纪律 / 不做清单 / 文档规范（§10） |
+| **架构总览** | [`docs/architecture.md`](docs/architecture.md) | 分层与包清单 / 事件循环 / 协议 / 存储 / 复制与控制面 / 安全 / 算子 / 验证体系 |
+| **实用文档** | [`docs/user-guide.md`](docs/user-guide.md) | 构建 / 快速开始 / CLI 参考 / 集群与消费组 / 安全配置 / 存储运维 / 故障排查 |
+| **功能矩阵** | [`docs/feature-matrix.md`](docs/feature-matrix.md) | 能力清单的单一真相：功能 × 状态 × 证据入口 |
+| **路线图与进度** | [`docs/project-roadmap.md`](docs/project-roadmap.md) | 进度管理的单一真相：阶段详情 / 里程碑台账 / 排期 |
 | 兼容性矩阵 | [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) | 每个对标语义的验证状态与证据入口（图例单一真相） |
-| 算子 ABI v2 设计稿 | [`docs/operator-abi-v2-scalar.md`](docs/operator-abi-v2-scalar.md) | 不可信标量函数的沙箱路线（只设计不实现，决策 28） |
-| 算子沙箱取证 | [`docs/p2-wasm-host-spike.md`](docs/p2-wasm-host-spike.md) | wasmtime 进程内宿主的探针实证与落地实录（类型镜像尺寸、后台编译 panic） |
 | CLI 命令工具规划 | [`docs/cli-roadmap.md`](docs/cli-roadmap.md) | 命令面现状盘点 + 对标 Fluvio CLI 的分阶段映射（决策 13） |
-| 安全面取证客户端 | [`scripts/mfs_probe.py`](scripts/mfs_probe.py) | 独立实现的 MFS 客户端（Python）：安全门禁用它伪造节点命令，断言针对**服务端授权**而非 CLI 愿意发什么 |
-| mbel 表达式引擎 | [`../mbel`](../mbel) | v0.3.3；moonflux 动态规则层的候选内核（评估与生产化清单见报告第五章） |
-| mbel-orch 设计文档 | [`../mbel-orch`](../mbel-orch) | 函数管理与分发平台（设计阶段，可作为 moonflux 算子/插件分发体系的设计参考） |
+| 算子 ABI v2 设计稿 | [`docs/operator-abi-v2-scalar.md`](docs/operator-abi-v2-scalar.md) | 不可信标量函数的沙箱路线（只设计不实现，决策 28） |
+| 算子沙箱取证 | [`docs/p2-wasm-host-spike.md`](docs/p2-wasm-host-spike.md) | wasmtime 进程内宿主的探针实证与落地实录 |
+| 立项评估报告 v1.6 | [`docs/fluvio-moonbit-evaluation.md`](docs/fluvio-moonbit-evaluation.md) | 七章：Fluvio 全景 / 功能详解 / 分层路径 / 后端 / mbel / 编辑器 / 结论路线图 |
+| 对标参考工作规约 | [`docs/fluvio-reference-guide.md`](docs/fluvio-reference-guide.md) | 在 Fluvio 参考仓库内作业时的 agent 硬规则 |
+| 安全面取证客户端 | [`scripts/mfs_probe.py`](scripts/mfs_probe.py) | 独立实现的 MFS 客户端（Python）：安全门禁用它伪造节点命令，断言针对**服务端授权** |
+| mbel 表达式引擎 | [`../mbel`](../mbel) | v0.3.3；动态规则层的候选内核（评估见报告第五章） |
+| mbel-orch 设计文档 | [`../mbel-orch`](../mbel-orch) | 函数管理与分发平台（设计参考） |
 
-## 路线图（首期）
-
-| 阶段 | 里程碑 | 交付物 | 门禁（可证伪） |
-| :--- | :--- | :--- | :--- |
-| **P0**（2–4 周） | **Native 最小闭环** | 内核 codec 子集 + `fs-native` / `net-native` 适配 + 单机最小分区日志 + CLI（produce/consume）+ 文件 Source → topic → stdout Sink 贯通 demo | ✅ 达成（2026-09-15）：`scripts/e2e-p0.sh` 全绿；协议对拍 `scripts/crosscheck-protocol.sh` 全绿 |
-| **P0′**（并行） | 产品化地基 | `PipelineSpec` v1alpha1 + CLI `pipeline apply/plan`（声明式管道编译） | ✅ 达成（2026-09-15）：`scripts/e2e-p0p.sh` 全绿；spec 编译为可运行拓扑 + plan 差异预览 |
-| **P1** | **连接器与外设** | 连接器框架 + HTTP/文件/MQTT/Kafka Source & Sink + mbel 表达式 transforms（Native 内嵌）；协议服务化与客户端 SDK 雏形 | ✅ 达成（2026-09-15）：`scripts/e2e-p1-connectors.sh`（file/stdin/http 三源 + stdout/http 双汇）与 `scripts/e2e-p1-rules.sh`（不重启 serve 秒级换规则）全绿；MQTT/Kafka 连接器与多路复用按路线图留待后续 |
-| **P2** | WASM 算子沙箱 | 算子 guest SDK + 沙箱 ABI + 全算子 + WASM×Native 双后端测试矩阵 | ✅ 达成（2026-09-16）：`scripts/crosscheck-operators.sh` 全绿——同一批 golden records 经 mbel 原生实现与 wasm 算子输出**字节级一致**；trap / 拒绝 / 死循环三类失败 fail-closed；算子已进 `pipeline run` 与 `serve` 两条消费路径 |
-| **P3** | 分布式能力 | 复制（ISR 等价语义）+ 选主 + 元数据调和（本地多进程优先） | ✅ 达成（2026-09-16）：`scripts/e2e-p3-{replication,failover,nodes,metadata}.sh` 全绿——HW 只在副本确认后推进、宕机/恢复后水位一致、静默 leader 被替换（提名→自我提升→确认）、旧 leader 回归自降并字节级追平、`kill -9` 后记录数守恒 |
-| **P4** | 全平台体验 | 客户端 SDK 完备（native + js 浏览器）、Web 拖拽编辑器、部署形态（**本地单/多进程优先，K8s 可选**） | ✅ 达成（2026-09-17）：真实浏览器里 compose → deploy → run → consume 跑通（`scripts/e2e-p4-editor.sh`，4 条断言；浏览器阶段由 agent/人驱动）；客户端内核化后同一份逻辑在 native 与 wasm-gc 双后端有测试 |
-| **P5** | 并发与运维面 | 连接多路复用 + 多分区存储 + 算子管理命令面 | ✅ 达成（2026-09-17）：并发（六腿）、多分区（五腿）、算子管理（四腿）门禁全绿；**如实标注**：非 0 分区的复制与索引/retention 仍在（矩阵 #10） |
-
-| **P6** | 规则资产 | mbel 函数集：版本化规则资产（`function-set` 命令面）+ spec 按名引用 + 发布期静态检查与纯度策略 | ✅ 达成（2026-09-17）：`scripts/e2e-p6-functions.sh` 10 条断言全绿——部署/列表带单调 revision、引用缺失或越界函数在 apply 被拒、不纯函数体在部署被拒、更新后**必须 re-apply** 才换绑（revision 记入 `topology.json`）；**如实标注**：不可信标量函数不在本路径（ABI v2 设计稿见决策 28） |
-
-| **P7** | 多分区复制 | 数据节点多分区宿主 + 逐分区水位/选主 + 分区分辨的运维面 | ✅ 达成（2026-09-17）：`scripts/e2e-p7-partitions.sh` 7 条腿全绿——3 分区 RF=2 跨 3 节点，逐分区复制与确认、**分区隔离**（死一个节点只让它持有的分区水位停滞，其它分区继续推进）、逐分区换主且不打扰邻居、分歧回归按分区截断并报告、`cluster status` 逐分区展示 leader/replicas/水位；矩阵 #10 转 ✅ |
-
-| **P8** | 存储完备 | 段滚动 + 稀疏索引 + retention（策略注入时钟，安全下界由应用给出） | ✅ 达成（2026-09-17）：`scripts/e2e-p8-storage.sh` 7 条腿全绿——滚动产生多段且**段精确铺满偏移空间**、跨段读取与单段一致、删掉全部 `.idx` 后读取逐字节不变、retention 只删 floor 以下的整段并让更老的读**结构化拒绝**、撕裂尾恰好损失它自己那一段、复制的 follower 段文件与 leader **逐段字节一致** |
-
-| **P9** | 消费组与托管偏移 | 控制面即协调者：加入/心跳/提交/离开 + 世代围栏 + range 分配 + 偏移持久化；retention 下界接上最慢消费者 | ✅ 达成（2026-09-17）：`scripts/e2e-p9-groups.sh` 7 条腿全绿——份额覆盖全部分区且两两不交（稳定后）、成员死亡后存活者接管并**从提交偏移续读**、12 条生产 / 18 次投递**无缺口**（至少一次）、过期世代提交被拒、偏移跨控制面重启存活、**消费者地板挡住 retention**、`group describe` 的滞后是观测值 |
-
-| **P11** | 控制面资产下发 | pipeline spec 与函数集由控制面持有、数据节点拉取（心跳带修订、文档按需取；节点是缓存不是权威） | ✅ 达成（2026-09-17）：`scripts/e2e-p11-assets.sh` 7 条腿全绿——**一次发布两个节点都采纳**并使规则真的生效、修订不变时不重复拉取、后加入的节点自行取得当前修订、控制面消失后节点继续服务（且只报一次）、只在控制面创建的函数集在两个节点都能编译运行、控制面修订回退**不会**把节点拖回去 |
-
-> **为什么 Native 先行**（2026-09-15 修订）：数据源（Source）与数据汇（Sink）需要**独立的外部读写能力**——网络 / 文件 / 协议 / MQ / 硬件直采，**WASM 沙箱不能自主 IO**，只能做宿主中介的计算；连接器与数据面又是平台的第一梯队能力，因此承载它们的 Native 必须先行。WASM 保留为"数据路径内算子沙箱"（可编程差异化），在 P2 落地；**内核全后端可编译的纪律由 CI 矩阵从第一天保持**（不依赖 WASM 先行来倒逼，见 AGENTS.md §4/§5）。
->
-> **K8s 与阶段的关系**：P0–P3 **不依赖 K8s**，全部在本地单机/多进程推进与验收；K8s 仅是 P4 的可选部署目标之一，且只贡献两件事——元数据后端（CRD）与生命周期自动化（operator/Helm）。数据面、复制、选主、元数据调和是**任何部署模型都需要**的架构能力（对标参考系统在 local 与 K8s 两种模式下共用同一套控制器与复制协议）。
-
-## 目录规划（代码启动后）
+## 代码结构
 
 ```
 moonflux/
-├── README.md              # 本文件：项目定义
-├── AGENTS.md              # 项目规约（章程：金规则 / 内核红线 / 验证流程 / 文档规范）
-├── docs/                  # 评估报告与设计文档
-├── core/                  # 内核：codec / protocol / 算子语义 / 存储 / 复制状态机（全后端可编译）
-├── adapters/              # abi-wasm / net-native / net-js / fs-native（单目标薄适配）
-└── apps/                  # 算子模板 / cli / 服务端 / web-client（按目标打包）
+├── AGENTS.md              # 项目规约（章程）：任何任务开始前必读
+├── docs/                  # 产品文档（架构/实用/功能矩阵/路线图）+ 对标与设计文档
+├── core/                  # 内核：零 IO、零第三方依赖、全后端可编译
+├── adapters/              # 单目标薄适配：fs/net/tls/wasmtime-native
+├── apps/                  # 入口与产品：cli / client / connectors / transform / editor-kernel / operator-sdk
+├── scripts/               # 门禁（gates.sh + e2e-*）与对拍工具
+└── web/editor/            # Web 编辑器前端
 ```
-
-> `core → adapters → apps` 的一内核多后端结构由 MoonBit `supported_targets` 依赖 fail-fast 在编译期强制（报告 4.5）；内核零 IO、零第三方依赖是纪律红线。
 
 ## 关键决策记录
 
@@ -145,32 +163,6 @@ moonflux/
 
 36. **控制面也是 poll 驱动的一条循环（2026-09-17，P13）**：P12 留下的边界——控制面一次只服务一条连接，一个"连上不说话"的探测者能把节点挤出存活窗——按数据面的既有形态解决：`sc` 改用 `ConnectionHub`（`dispatch_control_frame` 逐帧分发 + hub 的握手/认证），于是**三种服务端（`serve` / `spu` / `sc`）是同一个循环形状**。执行中两件事被门禁改写，都留痕：① **"每轮至多一次阻塞握手"是错的**——限制"每轮等几次"改不了"等"本身，沉默连接占着 backlog 的位置，真实客户端仍被队头阻塞饿死（门禁三次运行：drain 全红 / 每轮一次红 / 不等待绿）。正解是**步进式握手**：`adopt` 只 attach，连接进入 `TlsHandshake` 阶段，每轮由 `step_handshake` 推进一步（非阻塞 socket 上 `SSL_accept` 立即返回 want-read/want-write），期限到了才丢弃——沉默对端从此只值"每轮一次立即返回的调用"，`MAX_HANDSHAKES_PER_ROUND` 这类预算**不需要存在**。② 门禁顺带逼出两个**既有真 bug**：`SyncLink::connect` 在握手期不泵（注释理由是"我们还没有在途请求"，但漏了**你等 WELCOME 时正是别人在等你的节点**）——三个节点环上同时拨号就互相等死，`sample` 采样显示节点 100% 时间卡在这里；以及垫片用 `send()` 写而没有忽略 SIGPIPE，**对端在 poll 与 write 之间消失就能杀掉整个服务端**（退出码 141，日志无 panic）。两条都修了：握手期也泵（顺带删掉从无调用者的 `redial`），垫片进程级忽略 SIGPIPE 让写失败变成调用点本来就在处理的 `EPIPE`。**判据的进化**也记一笔：P13 门禁腿 1 断言的不是"看起来还行"，而是**三个症状计数器**（`is offline` / `leader of` / `offering`）在探针窗口前后不变——误判离线本身就是代价，而选举与提名是它留下的痕迹；腿 4 是反例腿（kill 一个节点后**必须**仍然打出 offline），防止"不再误判"退化成"不再检测"。
 
-## 待办（下一步）
-
-- [x] `git init` 与远端仓库（如需）（远端待配）
-- [x] P0 达成：内核 codec/protocol/log + fs/net-native 适配 + CLI + 端到端 demo（2026-09-15）
-- [x] P0′ 达成：PipelineSpec v1alpha1 + pipeline plan/apply/run（2026-09-15）
-- [x] P1 达成：mbel 表达式 transforms 接入消费路径 + 版本化协议服务化 + 连接器框架（2026-09-15）
-- [x] P2 达成：算子 guest SDK + ABI v1 + wasmtime 进程内宿主 + native-vs-wasm 对拍门禁（2026-09-16）
-- [x] P3 达成：复制（LRS 等价语义）+ 选主 + 元数据调和，本地多进程最小集群（`sc` + `spu`×2），故障注入门禁全绿（2026-09-16）
-- [x] P4 达成：客户端内核化 + 同端口 WS 网关 + Web 拖拽编辑器（真实浏览器闭环）（2026-09-17）
-- [x] P5 达成：连接多路复用 + 多分区存储与数据路径 + 算子管理命令面（2026-09-17）
-- [x] P6 达成：mbel 函数集作为版本化规则资产（命令面 + spec 引用 + 发布期拦截 + re-apply 换绑），`scripts/e2e-p6-functions.sh` 10 条断言全绿（2026-09-17）
-- [x] P7 达成：多分区复制（宿主表 + 放置随心跳下发 + 逐分区水位/选主 + 协作式节点间调用），`scripts/e2e-p7-partitions.sh` 7 条腿全绿，矩阵 #10 转 ✅（2026-09-17）
-- [x] P8 达成：存储完备（多段日志 + 稀疏索引 + 滚动与 retention + `cluster segments` 运维视图），`scripts/e2e-p8-storage.sh` 7 条腿全绿，矩阵 #10 完全收口（2026-09-17）
-- [x] P9 达成：消费组与托管偏移（协调者 + 世代围栏 + range 分配 + 偏移持久化 + retention 下界合流），`scripts/e2e-p9-groups.sh` 7 条腿全绿，矩阵 #11 收口（2026-09-17）
-- [x] P3 类小项收口：预算语义（fuel 强制 / 墙钟观测 + 耗时上报），矩阵 #14 ⚠️ → ✅（2026-09-17，决策 33）
-- [x] P4 达成：浏览器传输（WS 网关）+ 客户端内核化 + Web 编辑器（真实浏览器端到端门禁）（2026-09-17）
-- [x] P5 之首：连接多路复用（poll 事件循环；P4 编辑器门禁的断言阶段已可在浏览器连接打开时通过）（2026-09-17）
-- [x] P5 达成：连接多路复用 + 多分区存储与按分区读写 + 算子管理 CLI（2026-09-17）
-- [x] ~~下一里程碑候选~~：非 0 分区复制（P7）、段索引与 retention（P8）、消费组（P9）、持久复制连接与预算语义（P10）均已关账
-- [x] P11 达成：控制面资产下发（spec 与函数集由 SC 持有、节点拉取），`scripts/e2e-p11-assets.sh` 7 条腿全绿（2026-09-17）
-- [x] P12 达成：安全面（内核鉴权语义 + 握手期认证 + TLS 传输 + 节点间安全），`scripts/e2e-p12-security.sh` 7 条腿全绿，矩阵新增安全三行 #17–19（2026-09-17，决策 35）
-- [x] P13 达成：控制面改为 poll 驱动（步进式 TLS 握手 + 逐帧分发 + 三处服务端同一形状），`scripts/e2e-p13-control-plane.sh` 5 条腿全绿；执行中修掉环状死锁与 SIGPIPE 两个既有缺陷（2026-09-17，决策 36）
-- [ ] 下一梯队（按优先级，2026-09-17 重排并留痕）：compaction（**待键语义真正投入使用**：实测记录键目前恒为空）→ 编辑器函数集 UI（有需求再启）→ ABI v2 实现（触发条件未出现）
-- [ ] **K8s 部署形态（CRD 元数据后端 + operator）明确排到最后**（2026-09-17，用户裁定并留痕）：AGENTS §1.2 本就把 K8s 定为可选、与本地单二进制并列，且元数据接口可插拔（CRD 是第二个实现而非重写，推迟无锁定成本）；更关键的是它的门禁需要真实集群才可证伪，而本项目要求门禁可复现——把弱门禁排在强门禁之后。真需要时第一步也不是 CRD：清单 + PVC 跑文件后端即可上 K8s
-- [x] 生成项目规约 [`AGENTS.md`](AGENTS.md)（2026-09-15）；随代码结构落地更新其目录与命令章节（2026-09-16 补 §10 文档规范）
-
 ---
 
-*本文件由项目立项日生成（2026-09-15）；结构随报告版本演进，重大变更请同步更新「关键决策记录」。*
+*本 README 由项目立项日生成（2026-09-15），2026-09-17 重构为综合介绍（决策 37）：进度管理移至 [`docs/project-roadmap.md`](docs/project-roadmap.md)。重大变更请同步「关键决策记录」。*
