@@ -253,7 +253,7 @@ moonflux/
 | 参考系统作业规则 | [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md) | 在 `~/workspace/fluvio` 内的 agent 硬规则 |
 | 对标语义台账 | [docs/compatibility-matrix.md](docs/compatibility-matrix.md) | 每条对标语义的验证状态与证据入口（状态图例的单一真相） |
 | 架构说明 | [docs/architecture.md](docs/architecture.md) | 分层与包清单 / 事件循环 / 协议 / 存储 / 复制与控制面 / 安全 / 算子 / 验证体系（"为什么是这个形状"的唯一位置） |
-| 实用文档 | [docs/user-guide.md](docs/user-guide.md) | 构建 / 快速开始 / CLI 参考 / 集群与消费组 / 安全配置 / 存储运维 / 故障排查（"怎么用"的唯一位置） |
+| 实用文档 | [docs/user-guide.md](docs/user-guide.md) | 构建 / 快速开始 / CLI 参考 / 集群与消费组 / 安全配置 / 存储运维 / 实战示例 / 故障排查（"怎么用"的唯一位置） |
 | 功能矩阵 | [docs/feature-matrix.md](docs/feature-matrix.md) | **能力清单的单一真相**：功能 × 状态 × 证据入口（与兼容性矩阵分工：那里管"对标语义验证状态"） |
 | 进度管理 | [docs/project-roadmap.md](docs/project-roadmap.md) | **进度与排期的单一真相**：阶段详情 / 里程碑台账 / 待办（README 只留摘要与链接，决策 37） |
 | 规划类 | `docs/*-roadmap.md`（实例 [cli-roadmap.md](docs/cli-roadmap.md)） | 分阶段映射、边界声明、勘误清单 |
@@ -282,7 +282,7 @@ moonflux/
 | :--- | :--- | :--- |
 | 项目介绍 | [README.md](README.md) | 定位 / 核心主张 / 快速开始 / 能力摘要 / 文档导航 / 关键决策记录（权威） |
 | 架构总览 | [docs/architecture.md](docs/architecture.md) | 架构说明的单一位置：分层 / 事件循环 / 协议 / 存储 / 复制 / 安全 / 算子 / 验证体系 |
-| 实用文档 | [docs/user-guide.md](docs/user-guide.md) | 操作手册的单一位置：构建 / 快速开始 / CLI / 集群 / 安全 / 运维 / 排障 |
+| 实用文档 | [docs/user-guide.md](docs/user-guide.md) | 操作手册的单一位置：构建 / 快速开始 / CLI / 集群 / 安全 / 运维 / 实战示例 / 排障 |
 | 功能矩阵 | [docs/feature-matrix.md](docs/feature-matrix.md) | 能力清单的单一真相：功能 × 状态 × 证据入口 |
 | 路线图与进度 | [docs/project-roadmap.md](docs/project-roadmap.md) | 进度与排期的单一真相：阶段详情 / 里程碑台账 / 待办 |
 | 立项评估报告 | [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md) | 架构与选型的全部证据（7 章） |

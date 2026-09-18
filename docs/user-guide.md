@@ -193,7 +193,248 @@ cli.exe serve --data-dir d --listen 127.0.0.1:19420 --ws
 
 拖拽 Source/Transform/Sink → 部署（`CMD_APPLY_PIPELINE`）→ 在编辑器内消费。编辑器是 spec 的渲染器：它产出的就是 `PipelineSpec`，CLI 与浏览器看到同一个真相。
 
-## 9. 故障排查
+## 9. 实战：五个端到端例子
+
+以下例子都在本机跑过，输出的形状与这里一致（值为一次真实运行的截取）。它们逐级组合前面的能力：表达式 → 函数集 → 算子沙箱 → 分区与消费组 → 集群容错 → 安全拓扑。
+
+> **先过四条表达式的硬边界**（全部实测——踩中任何一条都会在 `apply` 期被拒，而不是等运行期）：
+> 1. **条件表达式的语法取决于位置**。顶层三元 `?:` 只在条件是比较/二元表达式时可用（`value == "x" ? a : b`、`len(value) > 2 ? a : b` ✓）；**条件是函数调用时编译报 `Token ?`**，加一个比较即可（`hasSuffix(value, "a") == true ? a : b` ✓），或把条件逻辑搬进函数体。顶层 `if {}` 不合法（`Token value`）；**函数体里 `?:` 与 `if cond { a } else { b }` 都可用**，条件可以是任意表达式——所以惯例是：条件逻辑写进函数集，顶层只做调用与拼装。
+> 2. **发布期静态检查用探针求值**（`value="a"`、`timestamp` 为数字、`headers_count=0`），表达式必须对**任意字符串**成立。越界访问要自己守卫：`if len(split(line, " ")) > i { ... } else { "" }`，否则越界返回 null、`trim(null)` 被拒。
+> 3. **`get(array, index)` 只认浮点索引**：`get(arr, 0)` 与 `get(arr, int(i))` 都走 fallback 返回 null（mbel 的 parity wart），要用 `i * 1.0` 强制成浮点。
+> 4. **字符串拼接用 `+`**（`concat` 是数组拼接），**`functions` 引用挂在每个用到它的 transform 上**（不是 spec 全局）。
+
+### 9.1 日志富化：多级表达式 + 函数集
+
+一条流水线把原始 access log 变成带级别的运维行。输入 `access.log`：
+
+```
+GET /api/users 200 12
+POST /api/orders 201 340
+GET /static/logo.png 200 3
+GET /api/search 500 4800
+DELETE /api/orders/7 204 95
+```
+
+函数集 `weblog`（条件逻辑都在这里）：
+
+```json
+{"name":"weblog","functions":[
+  {"name":"field","params":["line","i"],
+   "body":"if len(split(line, \" \")) > i { trim(get(split(line, \" \"), i * 1.0)) } else { \"\" }"},
+  {"name":"status_class","params":["code"],
+   "body":"hasPrefix(code, \"2\") ? \"ok\" : (hasPrefix(code, \"4\") ? \"client-error\" : (hasPrefix(code, \"5\") ? \"server-error\" : \"other\"))"},
+  {"name":"is_static","params":["path"],
+   "body":"hasSuffix(path, \".png\") || hasSuffix(path, \".css\") || hasSuffix(path, \".js\")"},
+  {"name":"severity","params":["line"],
+   "body":"if hasPrefix(field(line, 2), \"5\") { \"ALERT\" } else { if hasPrefix(field(line, 2), \"4\") { \"WARN\" } else { \"INFO\" } }"},
+  {"name":"decorate","params":["line"],
+   "body":"severity(line) + \" \" + status_class(field(line, 2)) + \" \" + (is_static(field(line, 1)) ? \"static\" : \"api\") + \" | \" + field(line, 0) + \" \" + field(line, 1) + \" took \" + field(line, 3) + \"ms\""}
+]}
+```
+
+spec（两个表达式阶段：先归一化，再富化）：
+
+```json
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "weblog-enrich" },
+  "spec": {
+    "source": { "type": "file", "path": "access.log" },
+    "transforms": [
+      { "type": "expr", "expr": "trim(value)" },
+      { "type": "expr", "expr": "decorate(value)", "functions": "weblog" }
+    ],
+    "topic": { "name": "web-events" },
+    "sink": { "type": "stdout" }
+  }
+}
+```
+
+```bash
+# 在放 access.log 的目录里执行：spec 里的 source.path 与算子 module 一样，
+# 都是**进程工作目录**相对路径
+cli.exe serve --data-dir d --listen 127.0.0.1:19520 &      # 函数集是节点本地资产，先起服务
+cli.exe function-set create --file weblog.json --remote 127.0.0.1:19520
+cli.exe pipeline apply -f weblog-spec.json --data-dir d
+cli.exe pipeline run --data-dir d
+```
+
+```
+INFO ok api | GET /api/users took 12ms
+INFO ok api | POST /api/orders took 340ms
+INFO ok static | GET /static/logo.png took 3ms
+ALERT server-error api | GET /api/search took 4800ms
+INFO ok api | DELETE /api/orders/7 took 95ms
+```
+
+发布期的拦截同一套资产就能看到（`apply` 而非运行时）：
+
+| 写法 | 结果 |
+| :--- | :--- |
+| `decorate(value)` 但 transform 没写 `"functions": "weblog"` | `static check: Jexl Function field is not defined` |
+| 用集合里没有的名字，如 `nosuch(value)` | `function set weblog: ... no such function`（名字与类型都在 apply 期拦） |
+| 函数体含 `now` | 部署期被拒（确定性红线：重放必须同输入同输出） |
+| 顶层写 `hasSuffix(value,"png") ? … : …`（条件是调用） | `compile: Token ?`——改成 `hasSuffix(value,"png") == true ? … : …` 或搬进函数体（见边界 1） |
+
+规则调优**不需要重启**：改 `decorate` 的阈值/前缀 → `function-set create`（revision +1）→ `pipeline apply`（重新绑定）→ 下一个请求就生效；`topology.json` 里记着绑定的 revision，漂移可见。
+
+### 9.2 沙箱算子的批语义与 fail-closed
+
+算子（wasm）是**批级**节点，表达式是**记录级**节点，两者可以在同一条链上混用：
+
+```json
+{
+  "transforms": [
+    { "type": "expr", "expr": "trim(value)" },
+    { "type": "wasm", "module": "_build/wasm/debug/build/apps/operator-upper/operator-upper.wasm" }
+  ]
+}
+```
+
+`module` 是**节点进程当前目录**可见的路径（上面是仓库根目录下的构建产物），`config` 是 JSON 对象**原样透传给 guest**（宿主不解释语义）。上面的链输出 `GET /API/USERS 200 12`——先按记录 trim，再整批大写。
+
+失败是 **fail-closed** 且**半批不落地**。把 `operator-fixture` 配成拒绝模式（`{"mode":"refuse"}`），先生产再消费：
+
+```
+$ cli.exe produce --topic guard --file access.log --remote 127.0.0.1:19521
+produced 5 records to topic guard[0] at offsets 0..5
+
+$ cli.exe consume --topic guard --remote 127.0.0.1:19521
+（stdout 为空）
+$ echo $?
+error: fetch: Server(code=5, transform: wasm: GuestTrap(operator fixture-refuse: fixture refused this batch on purpose))
+```
+
+记录**已经安全落盘**（0..5），消费者拿到的是结构化错误与 guest 给出的原因——不是"读到一半"。同一模块换成 `{"mode":"identity"}` 即刻恢复可读，`{"mode":"trap"}` / `{"mode":"spin"}` 分别演示失控失败与死循环（后者被 fuel 预算拦下，墙钟只报耗时）。预算与 ABI 细节见 [`cli-roadmap.md`](cli-roadmap.md) 与架构 §8。
+
+### 9.3 分区路由 + 消费组：两个成员分担，坏一个自动接管
+
+按业务分区的经典用法（把分区当分片：`--partition 0/1/2` 由写入方决定）：
+
+```bash
+# 3 分区 RF=1 的 orders，两个节点分摊 leader
+cli.exe sc  --listen 127.0.0.1:19601 --data-dir sc-data &
+cli.exe spu --id spu-a --listen 127.0.0.1:19602 --data-dir a-data --sc 127.0.0.1:19601 &
+cli.exe spu --id spu-b --listen 127.0.0.1:19603 --data-dir b-data --sc 127.0.0.1:19601 &
+cli.exe topic create --name orders --partitions 3 --replication-factor 1 --remote 127.0.0.1:19601
+
+# 写入方按分片寻址（先问 leader，再写它）
+L=$(cli.exe cluster leader --topic orders --partition 0 --remote 127.0.0.1:19601)
+cli.exe produce --topic orders --partition 0 --file p0.txt --remote "$L"
+```
+
+两个成员加入同一个组（各自一个终端，`--follow` 会持续心跳与按间隔提交）：
+
+```bash
+cli.exe consume --topic orders --group billing --member m1 --remote 127.0.0.1:19601 --follow --commit-ms 300
+cli.exe consume --topic orders --group billing --member m2 --remote 127.0.0.1:19601 --follow --commit-ms 300
+cli.exe group describe --name billing --remote 127.0.0.1:19601
+```
+
+```
+group billing	epoch=3
+  member m1	cli:39585
+  member m2	cli:39590
+  orders[0]	committed=4	lag=0
+  orders[1]	committed=4	lag=0
+  orders[2]	committed=4	lag=0
+```
+
+杀掉 m1（`kill`，不是优雅退出——模拟崩溃）：
+
+```
+group billing	epoch=4
+  member m2	cli:39590
+  orders[0]	committed=4	lag=0
+```
+
+**世代（epoch）从 3 走到 4**：成员集合变了才换代，幸存者在心跳应答里学到新分配，从**已提交偏移**续读。语义是**至少一次**：重复允许、缺口不允许；`lag` 是观测值（由 CLI 向各分区 leader 现问）。精确的无缺口断言在 `scripts/e2e-p9-groups.sh`（12 条生产 / 18 次投递、成员死亡后接管、过期世代提交被拒）。
+
+### 9.4 集群容错：RF=2 下杀 leader 会发生什么
+
+3 节点、3 分区、RF=2，每个分区一个 leader 一个 follower。准备就绪时：
+
+```
+[0] leader=127.0.0.1:19703 replicas=127.0.0.1:19703,127.0.0.1:19704 hw=3 leo=3
+[1] leader=127.0.0.1:19704 replicas=127.0.0.1:19704,127.0.0.1:19702 hw=3 leo=3
+[2] leader=127.0.0.1:19702 replicas=127.0.0.1:19702,127.0.0.1:19703 hw=3 leo=3
+```
+
+杀掉 `[0]` 的 leader（19703）后：
+
+```
+[0] leader=127.0.0.1:19704 replicas=127.0.0.1:19703,127.0.0.1:19704 hw=0 leo=3
+[1] leader=127.0.0.1:19704 replicas=127.0.0.1:19704,127.0.0.1:19702 hw=3 leo=3
+[2] leader=127.0.0.1:19702 replicas=127.0.0.1:19702,127.0.0.1:19703 hw=3 leo=3
+```
+
+四件事同时发生，都可从这一屏读出来：① 换主（19704 自我提升，SC 只提名）；② **水位塌到 0**——`HW = min(LEO)` 而副本集合里仍有点不亮的 19703，提交语义因此**停住**（这是设计，不是故障）；③ 记录没丢（`leo=3`）；④ 邻居分区毫发无损（**隔离以分区为单位**）。
+
+水位塌陷时两种读的差别正好演示语义：
+
+```bash
+cli.exe consume --topic metrics --partition 0 --remote 127.0.0.1:19704              # 未提交读（默认，≤ LEO）
+0	1789709606505		p0-m1
+1	1789709606505		p0-m2
+2	1789709606505		p0-m3
+
+cli.exe consume --topic metrics --partition 0 --committed --remote 127.0.0.1:19704  # 提交读（≤ HW）
+（没有输出——HW 是 0）
+```
+
+把节点拉回来（同一 `--data-dir`，日志与身份都在）：
+
+```
+replicating metrics[0] from 127.0.0.1:19704; caught up to 3
+[0] leader=127.0.0.1:19704 replicas=127.0.0.1:19703,127.0.0.1:19704 hw=3 leo=3   ← 水位恢复
+```
+
+控制面的日志给出完整因果链（`node spu-b is offline (no heartbeat within 3000ms)` → `offering metrics[0] to … (least lagging eligible replica; previous leader … is gone)` → `elected … leader of metrics[0]`）。回归时若本地尾巴超出了新 leader 的 LEO，会**按分区截断到帧边界并报告丢弃**——见 `scripts/e2e-p7-partitions.sh` 的重归腿。
+
+### 9.5 安全的生产拓扑：三个身份 + 双向 TLS
+
+一个控制面、一个数据节点，端口全部 TLS（要求客户端证书），凭据表四类角色：
+
+```json
+{"credentials":[
+  {"name":"root",  "token":"root-token-123456", "role":"root"},
+  {"name":"spu-a", "token":"spu-a-node-token",  "role":"node"},
+  {"name":"app",   "token":"app-secret-123456", "role":"read-write"},
+  {"name":"dash",  "token":"dash-secret-1234",  "role":"read-only"}
+]}
+```
+
+```bash
+# 服务端：证书开 TLS，配 --tls-require-client 即双向（节点之间也走同一套）
+cli.exe sc  --listen 127.0.0.1:19801 --data-dir sc-data   --tls-cert sc.pem --tls-key sc.key --tls-ca ca.pem --tls-require-client &
+cli.exe spu --id spu-a --listen 127.0.0.1:19802 --data-dir a-data --sc 127.0.0.1:19801   --token spu-a-node-token   --tls-cert spu-a.pem --tls-key spu-a.key --tls-ca ca.pem --tls-require-client &
+
+# 管理员：root 凭据 + 客户端证书
+cli.exe topic create --name events --partitions 3 --replication-factor 1   --remote 127.0.0.1:19801 --token root-token-123456   --tls-ca ca.pem --tls-cert admin.pem --tls-key admin.key
+
+# 应用：只能写数据面
+cli.exe produce --topic events --file in.txt --remote 127.0.0.1:19802   --token app-secret-123456 --tls-ca ca.pem --tls-cert app.pem --tls-key app.key
+
+# 看板：只能读
+cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-1234 --tls-ca ca.pem --tls-cert dash.pem --tls-key dash.key
+```
+
+每个身份的**越权会被结构化拒绝**（`code 10`），改不了数据面语义：
+
+| 尝试 | 结果 |
+| :--- | :--- |
+| 看板身份 `produce` | `code 10 dash (read-only) may not issue command 3` |
+| 看板身份 `topic delete` | `code 10 …may not issue command 17` |
+| 应用身份伪造 `CMD_REGISTER`（用 `scripts/mfs_probe.py`） | `code 10 app (read-write) may not issue command 7` |
+| 不带 `--token` | `code 9 authenticate first` |
+| 不带客户端证书（服务端 require-client） | 握手失败：`peer did not return a certificate` |
+| 用别的 CA 签的证书 | `certificate verify failed (code 20)` |
+| 明文客户端打 TLS 端口 | 连接被拒（服务端记 `wrong version number` 并继续服务） |
+
+**为什么节点身份是单独一类**：它能发 `SYNC_ACK`，而水位是 `min(LEO)`——伪造一个确认就能推动所有人提交读依赖的高水位。所以 `--token` 给应用的是 `read-write`，绝不给 `node`。完整拒绝矩阵与对拍见 `scripts/e2e-p12-security.sh`（7 条腿，含 TLS 下复制逐字节一致）。
+
+## 10. 故障排查
 
 | 症状 | 大概率原因 / 处置 |
 | :--- | :--- |
@@ -209,7 +450,7 @@ cli.exe serve --data-dir d --listen 127.0.0.1:19420 --ws
 
 **日志纪律**：服务端日志每行都有意义——认证模式与 TLS 在启动时明示；失败只报**状态迁移**（首次失败/恢复），不刷屏；凭据永不入日志。
 
-## 10. 可复现脚本索引
+## 11. 可复现脚本索引
 
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
@@ -222,9 +463,10 @@ cli.exe serve --data-dir d --listen 127.0.0.1:19420 --ws
 | 安全面 | `scripts/e2e-p12-security.sh` |
 | 控制面并发与停摆 | `scripts/e2e-p13-control-plane.sh` |
 | 协议/算子对拍 | `scripts/crosscheck-protocol.sh` · `crosscheck-operators.sh` |
+| §9 实战示例覆盖的语义 | §9.1 函数集与发布期拦截：`scripts/e2e-p6-functions.sh`；§9.2 算子失败语义：`crosscheck-operators.sh`；§9.3 消费组：`scripts/e2e-p9-groups.sh`；§9.4 容错：`scripts/e2e-p3-failover.sh` · `e2e-p7-partitions.sh`；§9.5 安全：`scripts/e2e-p12-security.sh` |
 
 ## 维护规则
 
-- CLI 面变化（新子命令/新 flag/新环境变量）**必须**同步本文 §2–§8 与 [`cli-roadmap.md`](cli-roadmap.md)；新数据文件（`*.json` 落盘物）同步 §"存储运维"。
+- CLI 面变化（新子命令/新 flag/新环境变量）**必须**同步本文 §2–§8；表达式/函数集的语言边界（§9 开头的三条）按 mbel 版本更新，若上游修掉 parity wart 也在此注明 与 [`cli-roadmap.md`](cli-roadmap.md)；新数据文件（`*.json` 落盘物）同步 §"存储运维"。
 - 排查表按"真实踩到"增补（一行一个症状 + 一个原因），不预设。
 - 行为语义的验证状态不在本文维护——见 [`compatibility-matrix.md`](compatibility-matrix.md) 与 [`feature-matrix.md`](feature-matrix.md)。
