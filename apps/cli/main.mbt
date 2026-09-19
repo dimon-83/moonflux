@@ -59,7 +59,7 @@ fn usage() -> Unit {
   println("")
   println("commands:")
   println(
-    "  produce  --topic T --file F [--partition N] [--data-dir D] [--remote host:port]",
+    "  produce  --topic T --file F [--key K | --key-separator S] [--partition N] [--data-dir D] [--remote host:port]",
   )
   println(
     "  consume  --topic T [--from N] [--partition N] [--group G [--member M] [--follow] [--commit-ms N]] [--data-dir D] [--remote host:port]",

@@ -23,13 +23,48 @@ pub(all) struct Sink {
 }
 
 ///|
+/// How a text source shapes each line into a record key (P14). `NoKey`
+/// is the original behaviour; `ConstKey` stamps every record with the
+/// same key; `SplitAt` cuts each line at its **first** separator into
+/// (key, value).
+pub(all) enum KeyMode {
+  NoKey
+  ConstKey(Bytes)
+  SplitAt(String)
+} derive(Eq, Debug)
+
+///|
+/// The records a text shaping produced, and how many lines a
+/// `SplitAt` mode skipped because they carried no separator.
+pub(all) struct ShapedText {
+  records : Array[@protocol.Record]
+  skipped : Int
+} derive(Debug)
+
+///|
 /// Splits text into non-empty lines as value-only records with the
 /// given timestamps (the shared record-shaping rule of text sources).
 pub fn records_from_text(
   text : String,
   timestamp : Int64,
 ) -> Array[@protocol.Record] {
+  text_records_keyed(text, timestamp, NoKey).records
+}
+
+///|
+/// The shared record-shaping rule of text sources, with the key modes
+/// `produce --key / --key-separator` selects. A `SplitAt` line with no
+/// separator is **skipped and counted** rather than keyed with the
+/// whole line: the operator asked for a key, and inventing one would
+/// put the line's text where the key belongs (the reference system's
+/// CLI skips the same lines — report §2.3.4).
+pub fn text_records_keyed(
+  text : String,
+  timestamp : Int64,
+  mode : KeyMode,
+) -> ShapedText {
   let records : Array[@protocol.Record] = []
+  let mut skipped = 0
   for line in text.split("\n") {
     let line = line.to_owned()
     let line = if line.has_suffix("\r") {
@@ -38,15 +73,52 @@ pub fn records_from_text(
       line
     }
     if line.length() > 0 {
-      records.push(@protocol.Record::{
-        timestamp,
-        key: b"",
-        value: @utf8.encode(line[0:line.length()]),
-        headers: [],
-      })
+      let shaped : (Bytes, StringView)? = match mode {
+        NoKey => Some((b"", line[0:line.length()]))
+        ConstKey(key) => Some((key, line[0:line.length()]))
+        SplitAt(sep) =>
+          match line.find(sep) {
+            Some(at) =>
+              Some(
+                (
+                  @utf8.encode(line[0:at]),
+                  line[at + sep.length():line.length()],
+                ),
+              )
+            None => None
+          }
+      }
+      match shaped {
+        Some((key, value)) =>
+          records.push(@protocol.Record::{
+            timestamp,
+            key,
+            value: @utf8.encode(value),
+            headers: [],
+          })
+        None => skipped = skipped + 1
+      }
     }
   }
-  records
+  ShapedText::{ records, skipped }
+}
+
+///|
+/// Keyed file read for `produce`: the same reader and the same shaping
+/// rule as `file_source` (`file_source` itself delegates to
+/// `text_records_keyed` with `NoKey`), plus the key mode and the skip
+/// count the command reports.
+pub fn file_records_keyed(
+  path : String,
+  timestamp : Int64,
+  mode : KeyMode,
+) -> Result[ShapedText, String] {
+  let bytes = match @fs.read_file(path) {
+    Ok(bytes) => bytes
+    Err(e) => return Err("read \{path}: \{e}")
+  }
+  let text = @utf8.decode_lossy(bytes[0:bytes.length()])
+  Ok(text_records_keyed(text, timestamp, mode))
 }
 
 ///|

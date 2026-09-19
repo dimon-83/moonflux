@@ -72,6 +72,37 @@ test "text records: CRLF trimmed, blank lines dropped" {
 }
 
 ///|
+test "keyed shaping: split at the first separator, keep the rest in the value" {
+  let shaped = text_records_keyed(
+    "a:1\nb:2:3\n:emptykey\r\nno-separator\n",
+    9L,
+    SplitAt(":"),
+  )
+  assert_eq(shaped.skipped, 1)
+  assert_eq(shaped.records.length(), 3)
+  assert_eq(@utf8.decode_lossy(shaped.records[0].key), "a")
+  assert_eq(value_text(shaped.records[0]), "1")
+  assert_eq(@utf8.decode_lossy(shaped.records[1].key), "b")
+  assert_eq(value_text(shaped.records[1]), "2:3")
+  // a separator at the head is an empty key, not a skipped line
+  assert_eq(shaped.records[2].key.length(), 0)
+  assert_eq(value_text(shaped.records[2]), "emptykey")
+  assert_eq(shaped.records[0].timestamp, 9L)
+}
+
+///|
+test "keyed shaping: a constant key stamps every record; NoKey is the old rule" {
+  let constant = text_records_keyed("x\ny\n", 0L, ConstKey(b"k"))
+  assert_eq(constant.skipped, 0)
+  assert_eq(constant.records.length(), 2)
+  assert_eq(@utf8.decode_lossy(constant.records[0].key), "k")
+  assert_eq(@utf8.decode_lossy(constant.records[1].key), "k")
+  let plain = text_records_keyed("x\ny\n", 0L, NoKey)
+  assert_eq(plain.records.length(), 2)
+  assert_eq(plain.records[0].key.length(), 0)
+}
+
+///|
 test "file source pulls records through the fs adapter" {
   let _ = @fs.mkdirs("/tmp/moonflux_connectors_test")
   let path = "/tmp/moonflux_connectors_test/connector.txt"
