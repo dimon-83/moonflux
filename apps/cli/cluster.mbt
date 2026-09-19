@@ -143,12 +143,16 @@ fn parse_partition_flag(text : String) -> Int {
 /// `moonflux cluster compact --topic T [--partition N] --remote <leader>`
 /// — one keyed-compaction pass (P14): every record below the committed
 /// floor whose key occurs again below it is dropped, and the survivors
-/// keep their offsets. Asked of the **leader**, because this deletes
-/// data and a follower has no business deciding what the log forgets.
+/// keep their offsets. Asked of a node that hosts the partition: every
+/// replica compacts its own copy — the copies must agree about what a
+/// keyed log contains, or a failover would resurrect deleted keys.
 /// Prints one line per rewritten segment (base, frames before/after,
 /// records dropped, bytes before/after) and a summary line; the floor
 /// itself is the node's to compute, from its committed prefix lowered
-/// by the groups' floors — the same number retention uses.
+/// by the groups' floors — the same number retention uses. Every
+/// replica of the partition is compacted with its own copy in mind (the
+/// copies must agree about a keyed log), so point this at each node
+/// that hosts it, not only the leader.
 fn cluster_compact(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let remote = flags.require("remote")

@@ -637,9 +637,10 @@ pub const CMD_APPLY_PIPELINE = 19
 ///|
 /// Keyed compaction (P14): drop the records below the committed floor
 /// whose key occurs again below it, keeping every survivor's offset.
-/// Asked of the node that **leads** the partition — this command
-/// deletes data, so unlike `CMD_SEGMENTS` a follower may not answer it,
-/// and the permission table lists it as a write.
+/// Asked of a node that **hosts** the partition: every replica compacts
+/// its own copy, or a failover would resurrect deleted keys. The
+/// permission table lists it as a write — it deletes records, so a
+/// read-only identity must not be able to shrink a log.
 pub const CMD_COMPACT = 36
 
 // Stable error codes (client-visible contract).

@@ -2490,10 +2490,12 @@ fn dispatch_data_frame(
         Ok(host) => host
         Err(reply) => return reply
       }
-      match require_leader(host, ref.topic, ref.partition) {
-        Ok(_) => ()
-        Err(reply) => return reply
-      }
+      // any host of the partition compacts its **own** copy: a pass that
+      // ran only on the leader would resurrect deleted keys on failover,
+      // and the copies must agree about what a keyed log contains. The
+      // safety is in the floor, not in the role: a follower's floor is
+      // the watermark the leader last reported, so it can only ever
+      // delete a subset of what the leader deleted (P14)
       match
         compact_partition(
           data_dir,
