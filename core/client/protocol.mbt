@@ -550,12 +550,97 @@ pub fn decode_wire_segments(
 }
 
 ///|
+/// One rewritten segment, as the wire carries it: the numbers an
+/// operator reads to decide whether the pass was worth its IO.
+pub(all) struct WireCompaction {
+  base : Int64
+  frames_before : Int
+  frames_after : Int
+  dropped_records : Int
+  bytes_before : Int
+  bytes_after : Int
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_wire_compactions(entries : Array[WireCompaction]) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_leb128(entries.length())
+  for entry in entries {
+    buf.write_leb128(entry.base)
+    buf.write_leb128(entry.frames_before)
+    buf.write_leb128(entry.frames_after)
+    buf.write_leb128(entry.dropped_records)
+    buf.write_leb128(entry.bytes_before)
+    buf.write_leb128(entry.bytes_after)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_wire_compactions(
+  payload : Bytes,
+) -> Result[Array[WireCompaction], String] {
+  let reader = @codec.Reader::new(payload)
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated compaction count")
+  }
+  let out : Array[WireCompaction] = []
+  for _i = 0; _i < count; _i = _i + 1 {
+    let base = match reader.read_uleb128() {
+      Ok(base) => base.reinterpret_as_int64()
+      Err(_) => return Err("truncated compaction base")
+    }
+    let frames_before = match reader.read_uleb128_len() {
+      Ok(value) => value
+      Err(_) => return Err("truncated compaction frame count")
+    }
+    let frames_after = match reader.read_uleb128_len() {
+      Ok(value) => value
+      Err(_) => return Err("truncated compaction frame count")
+    }
+    let dropped_records = match reader.read_uleb128_len() {
+      Ok(value) => value
+      Err(_) => return Err("truncated compaction drop count")
+    }
+    let bytes_before = match reader.read_uleb128_len() {
+      Ok(value) => value
+      Err(_) => return Err("truncated compaction byte count")
+    }
+    let bytes_after = match reader.read_uleb128_len() {
+      Ok(value) => value
+      Err(_) => return Err("truncated compaction byte count")
+    }
+    out.push(WireCompaction::{
+      base,
+      frames_before,
+      frames_after,
+      dropped_records,
+      bytes_before,
+      bytes_after,
+    })
+  }
+  if reader.remaining() > 0 {
+    return Err("trailing bytes after compactions")
+  }
+  Ok(out)
+}
+
+///|
 /// Deploys a pipeline document to the broker: the same work
 /// `pipeline apply` does locally (validate, compile, persist), so the
 /// editor can close its loop - drag a pipeline, deploy it, produce,
 /// consume - without shelling out. Validation and compilation stay in
 /// the kernel; this command only carries the document.
 pub const CMD_APPLY_PIPELINE = 19
+
+///|
+/// Keyed compaction (P14): drop the records below the committed floor
+/// whose key occurs again below it, keeping every survivor's offset.
+/// Asked of the node that **leads** the partition — this command
+/// deletes data, so unlike `CMD_SEGMENTS` a follower may not answer it,
+/// and the permission table lists it as a write.
+pub const CMD_COMPACT = 36
 
 // Stable error codes (client-visible contract).
 

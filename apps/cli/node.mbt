@@ -1472,7 +1472,23 @@ fn PartitionHost::replicate_once(
       }
     }
   } else if window.record_count > 0 {
-    if window.base_offset != my_leo {
+    if window.base_offset > my_leo {
+      // the leader's log was compacted below this replica's end: the
+      // frames in between were deleted and exist nowhere any more, so
+      // the replica adopts the hole rather than stalling — and says so,
+      // because a silent gap in a replicated log is exactly the kind of
+      // thing that should never be discovered later
+      match log.skip_to(window.base_offset) {
+        Ok(skipped) =>
+          note(
+            "replication \{self.label()}: adopted a compacted hole of \{skipped} offset(s) (\{my_leo} -> \{window.base_offset})",
+          )
+        Err(e) => {
+          note("warning: cannot adopt a compacted hole: \{e}")
+          return
+        }
+      }
+    } else if window.base_offset != my_leo {
       note(
         "warning: leader offered \{self.label()} from \{window.base_offset} but this node ends at \{my_leo}; refusing to guess",
       )
@@ -2010,30 +2026,12 @@ fn HostTable::tick_one(
   if host.is_leader() {
     host.sync_leader_leo()
     if host.topic.length() > 0 {
-      // The floor is the committed prefix, lowered by whatever
-      // consumers still need (README 决策 31/32): the replicas bound it
-      // from one side, the slowest group from the other, and deleting
-      // data a consumer has not read yet is the one retention mistake
-      // that cannot be undone.
-      let committed = match host.ledger {
-        Some(ledger) => ledger.offset_info().high_watermark
-        None => 0L
-      }
-      let floor = match host.group_floor {
-        Some(consumer_floor) =>
-          if consumer_floor < committed {
-            consumer_floor
-          } else {
-            committed
-          }
-        None => committed
-      }
       match
         retain_partition(
           self.data_dir,
           host.topic,
           host.partition,
-          floor,
+          partition_floor(host),
           now_ms(),
         ) {
         Ok(_) => ()
@@ -2124,6 +2122,28 @@ fn host_or_error(
           ),
         ),
       )
+  }
+}
+
+///|
+/// The floor a storage decision on this partition may use: the committed
+/// prefix, lowered by whatever consumers still need (README 决策
+/// 31/32). Replicas bound it from one side, the slowest group from the
+/// other — deleting data a consumer has not read is the one storage
+/// mistake that cannot be undone. Retention and compaction share it.
+fn partition_floor(host : PartitionHost) -> Int64 {
+  let committed = match host.ledger {
+    Some(ledger) => ledger.offset_info().high_watermark
+    None => 0L
+  }
+  match host.group_floor {
+    Some(consumer_floor) =>
+      if consumer_floor < committed {
+        consumer_floor
+      } else {
+        committed
+      }
+    None => committed
   }
 }
 
@@ -2430,6 +2450,52 @@ fn dispatch_data_frame(
         Ok(payload) => (@client.CMD_OK, payload)
         Err((code, message)) =>
           (@client.CMD_ERR, @client.encode_error(code, message))
+      }
+    }
+    @client.CMD_COMPACT => {
+      // compaction deletes records, so it is the leader's call and
+      // nobody else's: a follower holding a copy has no business
+      // deciding what the log forgets
+      let ref = match @client.decode_partition_ref(frame.payload) {
+        Ok(ref) => ref
+        Err(e) =>
+          return (
+            @client.CMD_ERR,
+            @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
+          )
+      }
+      let host = match host_or_error(hosts, sc_addr, ref.topic, ref.partition) {
+        Ok(host) => host
+        Err(reply) => return reply
+      }
+      match require_leader(host, ref.topic, ref.partition) {
+        Ok(_) => ()
+        Err(reply) => return reply
+      }
+      match
+        compact_partition(
+          data_dir,
+          ref.topic,
+          ref.partition,
+          partition_floor(host),
+          now_ms(),
+        ) {
+        Ok(report) => {
+          let wire : Array[@client.WireCompaction] = []
+          for seg in report.rewritten {
+            wire.push(@client.WireCompaction::{
+              base: seg.base,
+              frames_before: seg.frames_before,
+              frames_after: seg.frames_after,
+              dropped_records: seg.dropped_records,
+              bytes_before: seg.bytes_before,
+              bytes_after: seg.bytes_after,
+            })
+          }
+          (@client.CMD_OK, @client.encode_wire_compactions(wire))
+        }
+        Err(message) =>
+          (@client.CMD_ERR, @client.encode_error(@client.ERR_STORAGE, message))
       }
     }
     @client.CMD_OFFSET_INFO => {

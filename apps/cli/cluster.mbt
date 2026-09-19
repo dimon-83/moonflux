@@ -23,9 +23,10 @@ fn cmd_cluster(argv : Array[String]) -> Unit {
     "leader" => cluster_leader(rest)
     "offsets" => cluster_offsets(rest)
     "segments" => cluster_segments(rest)
+    "compact" => cluster_compact(rest)
     _ =>
       fail(
-        "cluster: unknown verb '\{verb}' (known: nodes, status, leader, offsets, segments)",
+        "cluster: unknown verb '\{verb}' (known: nodes, status, leader, offsets, segments, compact)",
       )
   }
 }
@@ -136,6 +137,54 @@ fn parse_partition_flag(text : String) -> Int {
     Ok(n) if n >= 0 => n
     _ => fail("--partition expects a non-negative integer, got \{text}")
   }
+}
+
+///|
+/// `moonflux cluster compact --topic T [--partition N] --remote <leader>`
+/// — one keyed-compaction pass (P14): every record below the committed
+/// floor whose key occurs again below it is dropped, and the survivors
+/// keep their offsets. Asked of the **leader**, because this deletes
+/// data and a follower has no business deciding what the log forgets.
+/// Prints one line per rewritten segment (base, frames before/after,
+/// records dropped, bytes before/after) and a summary line; the floor
+/// itself is the node's to compute, from its committed prefix lowered
+/// by the groups' floors — the same number retention uses.
+fn cluster_compact(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let remote = flags.require("remote")
+  let topic = flags.require("topic")
+  let partition = match flags.get("partition") {
+    Some(text) => parse_partition_flag(text)
+    None => 0
+  }
+  let ref = @client.PartitionRef::{ topic, partition }
+  let payload = match
+    control_call_secure(
+      remote,
+      @client.CMD_COMPACT,
+      @client.encode_partition_ref(ref),
+      peer_link(flags),
+    ) {
+    Ok(payload) => payload
+    Err(e) => fail("cluster compact: \{e}")
+  }
+  let rewritten = match @client.decode_wire_compactions(payload) {
+    Ok(entries) => entries
+    Err(e) => fail("cluster compact: \{e}")
+  }
+  let mut dropped = 0
+  let mut freed = 0
+  for seg in rewritten {
+    dropped += seg.dropped_records
+    freed += seg.bytes_before - seg.bytes_after
+    println(
+      "\{seg.base}\t\{seg.frames_before}\t\{seg.frames_after}\t\{seg.dropped_records}\t\{seg.bytes_before}\t\{seg.bytes_after}",
+    )
+  }
+  println(
+    "compacted \{rewritten.length()} segment(s) of \{topic}[\{partition}]: \{dropped} records dropped, \{freed} bytes freed",
+  )
+  cli_exit(0)
 }
 
 ///|

@@ -200,6 +200,46 @@ fn dispatch_session_frame(
         Err((code, message)) => err_frame(frame.rid, code, message)
       }
     }
+    @client.CMD_COMPACT => {
+      // compaction of a partition this broker owns alone: the floor is
+      // its own log end, exactly as retention's is here (P14)
+      let ref = match @client.decode_partition_ref(frame.payload) {
+        Ok(ref) => ref
+        Err(e) => return err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+      let floor = match open_partition_log(data_dir, ref.topic, ref.partition) {
+        Ok(log) => log.high_watermark()
+        Err(e) => return err_frame(frame.rid, @client.ERR_STORAGE, e)
+      }
+      match
+        compact_partition(
+          data_dir,
+          ref.topic,
+          ref.partition,
+          floor,
+          @env.now().reinterpret_as_int64(),
+        ) {
+        Ok(report) => {
+          let wire : Array[@client.WireCompaction] = []
+          for seg in report.rewritten {
+            wire.push(@client.WireCompaction::{
+              base: seg.base,
+              frames_before: seg.frames_before,
+              frames_after: seg.frames_after,
+              dropped_records: seg.dropped_records,
+              bytes_before: seg.bytes_before,
+              bytes_after: seg.bytes_after,
+            })
+          }
+          reply_frame(
+            frame.rid,
+            @client.CMD_OK,
+            @client.encode_wire_compactions(wire),
+          )
+        }
+        Err(message) => err_frame(frame.rid, @client.ERR_STORAGE, message)
+      }
+    }
     // rule assets: a standalone broker owns its own function sets,
     // because it compiles its own applies (P6)
     cmd if is_function_set_command(cmd) =>

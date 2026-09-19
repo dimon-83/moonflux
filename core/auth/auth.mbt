@@ -75,10 +75,13 @@ pub fn permit(role : Role, cmd : Int) -> Bool {
     Root => true // unreachable: handled above, kept for exhaustiveness
     ReadWrite =>
       // the data plane, plus group membership and commits (a consumer
-      // writes its own progress) and the read-only questions
+      // writes its own progress), the read-only questions, and
+      // compaction — which deletes records, so it is deliberately not a
+      // read: a read-only identity must not be able to shrink a log
       is_data_read(cmd) ||
       cmd == @client.CMD_PRODUCE ||
       cmd == @client.CMD_PRODUCE_PARTITION ||
+      cmd == @client.CMD_COMPACT ||
       is_group_member_command(cmd)
     ReadOnly => is_data_read(cmd)
     Node => is_node_command(cmd)

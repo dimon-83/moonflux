@@ -555,3 +555,44 @@ test "assignments round trip and an empty reply means none" {
     decode_assignments(bytes[0:bytes.length() - 2].to_owned()) is Err(_),
   )
 }
+
+///|
+test "compaction reports survive the wire, and a truncated one does not" {
+  let entries = [
+    WireCompaction::{
+      base: 0L,
+      frames_before: 4,
+      frames_after: 2,
+      dropped_records: 7,
+      bytes_before: 512,
+      bytes_after: 233,
+    },
+    WireCompaction::{
+      base: 40L,
+      frames_before: 1,
+      frames_after: 0,
+      dropped_records: 3,
+      bytes_before: 90,
+      bytes_after: 0,
+    },
+  ]
+  match decode_wire_compactions(encode_wire_compactions(entries)) {
+    Ok(decoded) => assert_eq(decoded, entries)
+    Err(e) => abort("decode compactions: \{e}")
+  }
+  // an empty report is a valid answer: "nothing was superseded"
+  match decode_wire_compactions(encode_wire_compactions([])) {
+    Ok(decoded) => assert_eq(decoded.length(), 0)
+    Err(e) => abort("empty compactions: \{e}")
+  }
+  let bytes = encode_wire_compactions(entries)
+  assert_true(
+    decode_wire_compactions(bytes[0:bytes.length() - 2].to_owned()) is Err(_),
+  )
+  // trailing bytes are not a longer report: the decoder has one shape
+  let padded = encode_wire_compactions(entries)
+  let with_trailer = @buffer.Buffer()
+  with_trailer.write_bytes(padded)
+  with_trailer.write_byte(b'\x00')
+  assert_true(decode_wire_compactions(with_trailer.to_bytes()) is Err(_))
+}

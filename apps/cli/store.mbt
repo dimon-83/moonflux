@@ -135,6 +135,47 @@ fn retain_partition(
 }
 
 ///|
+/// One compaction pass over a partition's log (P14): records below
+/// `floor` whose key occurs again below `floor` are dropped, survivors
+/// keep their offsets. `floor` is the caller's judgement in the same
+/// sense retention uses it — the committed prefix, lowered by whatever
+/// consumers still need — because the decision has to be a function of
+/// data every replica holds, or two replicas would compact differently.
+///
+/// Deletion is never silent: every rewritten segment is reported, and
+/// the total follows.
+fn compact_partition(
+  data_dir : String,
+  topic : String,
+  partition : Int,
+  floor : Int64,
+  now_ms : Int64,
+) -> Result[@log.CompactionReport, String] {
+  let log = match open_partition_log(data_dir, topic, partition) {
+    Ok(log) => log
+    Err(e) => return Err(e)
+  }
+  let report = match
+    log.apply_compaction(floor, now_ms, @log.CompactionPolicy::{
+      min_dirty_bytes: 0,
+    }) {
+    Ok(report) => report
+    Err(e) => return Err("compaction \{topic}[\{partition}]: \{e}")
+  }
+  for seg in report.rewritten {
+    note(
+      "compacted \{topic}[\{partition}] segment at \{seg.base}: \{seg.frames_before} -> \{seg.frames_after} frames, \{seg.dropped_records} records dropped, \{seg.bytes_before} -> \{seg.bytes_after} bytes",
+    )
+  }
+  if report.rewritten.length() > 0 {
+    note(
+      "compaction \{topic}[\{partition}] (floor \{floor}): \{report.rewritten.length()} segment(s) rewritten, \{report.dropped_records()} records dropped, \{report.freed_bytes()} bytes freed",
+    )
+  }
+  Ok(report)
+}
+
+///|
 /// How many records may pass between index anchors (P8/T45). Same
 /// reasoning as the roll threshold: policy, so it is configurable, and
 /// the storage gate sets it small to exercise the index.

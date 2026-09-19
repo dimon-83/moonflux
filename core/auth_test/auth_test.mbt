@@ -44,7 +44,13 @@ test "the permission table is closed: unlisted commands fail closed" {
     assert_true(@auth.permit(ReadOnly, cmd))
   }
   // writes: root and read-write, never read-only
-  let writes = [@client.CMD_PRODUCE, @client.CMD_PRODUCE_PARTITION]
+  let writes = [
+    @client.CMD_PRODUCE,
+    @client.CMD_PRODUCE_PARTITION,
+    // compaction deletes records: it is a write, not a read, and a
+    // read-only identity must not be able to shrink a log
+    @client.CMD_COMPACT,
+  ]
   for cmd in writes {
     assert_true(@auth.permit(Root, cmd))
     assert_true(@auth.permit(ReadWrite, cmd))

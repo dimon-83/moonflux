@@ -77,6 +77,7 @@ fn usage() -> Unit {
   println("  cluster  status  --remote host:port")
   println("  cluster  leader  --topic T --remote host:port")
   println("  cluster  offsets --topic T --remote <leader>")
+  println("  cluster  compact --topic T [--partition N] --remote <leader>")
   cli_exit(1)
 }
 

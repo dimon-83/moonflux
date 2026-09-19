@@ -16,6 +16,8 @@ pub const CMD_CLUSTER_PIPELINE_APPLY : Int = 32
 
 pub const CMD_CLUSTER_PIPELINE_FETCH : Int = 33
 
+pub const CMD_COMPACT : Int = 36
+
 pub const CMD_CONFIRM : Int = 14
 
 pub const CMD_ERR : Int = 6
@@ -150,6 +152,8 @@ pub fn decode_sync_request(Bytes) -> Result[SyncRequest, String]
 
 pub fn decode_sync_response(Bytes) -> Result[SyncResponse, String]
 
+pub fn decode_wire_compactions(Bytes) -> Result[Array[WireCompaction], String]
+
 pub fn decode_wire_segments(Bytes) -> Result[Array[WireSegment], String]
 
 pub fn decode_wire_topic(Bytes) -> Result[WireTopic, String]
@@ -203,6 +207,8 @@ pub fn encode_sync_ack(SyncAck) -> Bytes
 pub fn encode_sync_request(SyncRequest) -> Bytes
 
 pub fn encode_sync_response(SyncResponse) -> Bytes
+
+pub fn encode_wire_compactions(Array[WireCompaction]) -> Bytes
 
 pub fn encode_wire_segments(Array[WireSegment]) -> Bytes
 
@@ -379,6 +385,15 @@ pub(all) struct SyncResponse {
   high_watermark : Int64
   log_end_offset : Int64
   frames : Bytes
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct WireCompaction {
+  base : Int64
+  frames_before : Int
+  frames_after : Int
+  dropped_records : Int
+  bytes_before : Int
+  bytes_after : Int
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct WireGroupMember {
