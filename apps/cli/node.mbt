@@ -1199,6 +1199,12 @@ struct PartitionHost {
   /// group is consuming this partition — which is *not* the same as a
   /// group sitting at zero, and retention must not conflate them.
   mut group_floor : Int64?
+  /// the committed prefix as the **leader last reported it** (P14). A
+  /// leader's floor is its ledger's high watermark; a follower's is
+  /// this, so both replicas compact the same prefix and their segments
+  /// stay byte-identical. It can lag, and then a follower deletes less —
+  /// never more, which is the direction that matters.
+  mut committed_from_leader : Int64
   /// the follower's persistent connection to this partition's leader
   /// (P10). Dropped on any error, redialled on the next round; `None`
   /// means "not connected", which is the normal state for a leader.
@@ -1234,6 +1240,7 @@ fn PartitionHost::new(
     reported_failure: false,
     nominated: "",
     group_floor: None,
+    committed_from_leader: 0L,
     sync: None,
     link_auth,
   }
@@ -1451,6 +1458,12 @@ fn PartitionHost::replicate_once(
       }
       return
     }
+  }
+  // the leader's answer also carries the committed prefix (P14): a
+  // compaction on this replica must delete no more than the leader
+  // did, and the way to guarantee that is to use the leader's number
+  if window.high_watermark > self.committed_from_leader {
+    self.committed_from_leader = window.high_watermark
   }
   if window.log_end_offset < my_leo {
     // the leader's end is the authority: a local tail past it was never
@@ -2132,9 +2145,18 @@ fn host_or_error(
 /// other — deleting data a consumer has not read is the one storage
 /// mistake that cannot be undone. Retention and compaction share it.
 fn partition_floor(host : PartitionHost) -> Int64 {
-  let committed = match host.ledger {
-    Some(ledger) => ledger.offset_info().high_watermark
-    None => 0L
+  let committed = if host.is_leader() {
+    match host.ledger {
+      Some(ledger) => ledger.offset_info().high_watermark
+      None => 0L
+    }
+  } else {
+    // a follower compacts the same prefix the leader would: the last
+    // watermark the leader reported. It may lag, and then the follower
+    // deletes less than the leader did — a later pass with a fresher
+    // watermark catches up. The reverse (deleting more) cannot happen,
+    // which is the only direction that would lose data
+    host.committed_from_leader
   }
   match host.group_floor {
     Some(consumer_floor) =>
