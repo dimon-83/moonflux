@@ -11,7 +11,7 @@ cd ~/workspace/moonflux
 moon build --target native          # 产物：_build/native/debug/build/apps/cli/cli.exe
 moon test --target native           # 203 项
 moon test --target wasm-gc          # 148 项（内核全后端）
-scripts/gates.sh                    # 全量门禁（31 步）；scripts/gates.sh fast 跳过 E2E
+scripts/gates.sh                    # 全量门禁（32 步）；scripts/gates.sh fast 跳过 E2E
 ```
 
 - CLI 是**单二进制多子命令**：`serve`（单机 all-in-one）、`spu`（数据节点）、`sc`（控制面）加上各运维子命令，都从同一个 `cli.exe` 出。
@@ -172,6 +172,8 @@ cli.exe topic list --remote 127.0.0.1:19420 --token root-token-123456 \
 
 ```bash
 cli.exe cluster segments --topic events --remote 127.0.0.1:19452   # 段视图
+cli.exe cluster compact  --topic events --remote 127.0.0.1:19452   # 一次键控压实（每个副本各做一次）
+cli.exe produce --topic events --file events.txt --key-separator ':' --remote 127.0.0.1:19452
 ```
 
 | 环境变量 | 作用 | 缺省 |
@@ -183,6 +185,9 @@ cli.exe cluster segments --topic events --remote 127.0.0.1:19452   # 段视图
 - 段边界永远是帧边界；只有最后一段可能带撕裂尾（崩溃恢复截断并报告）。
 - **retention 只删整段、只删 floor 以下**：floor = `min(leader 已提交前缀, 最慢消费组的提交偏移)`；删完后更老的读得到 `OffsetOutOfRange`（"没了"≠"空"）。每次删除打印段 base/记录数/字节数与新可读起点。
 - `.idx` 损坏不用修：任何疑点自动回退全扫，结果与有索引逐字节一致。
+- **压实（compaction，P14）删被取代的键、不搬存活记录**：`cluster compact` 只删除「同一键有更新版本」的记录，存活记录**保留原偏移**（读取与消费偏移因此不受影响），空洞可以正常读；只动已提交前缀（floor = `min(leader 水位, 消费组地板)`）之下的封存段，每次删除打印逐段与总计，重复执行为空报告。
+- **每个副本都要压实**：命令是节点本地的存储动作，请对**持有该分区的每个节点**各执行一次（只压 leader 会让故障切换时复活已删的键）；复制的空洞由副本自行跨过并在日志里说明。
+- 键由 `produce --key K`（全部同键）或 `--key-separator S`（每行首个分隔符拆 key/value；无分隔符的行**跳过并在 stderr 汇总**）产生；`consume` 第三列即键。
 
 ## 8. Web 编辑器
 
@@ -454,11 +459,12 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
-| 一切（31 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| 一切（32 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
 | 多分区复制与隔离 | `scripts/e2e-p7-partitions.sh` |
 | 存储分段/索引/retention | `scripts/e2e-p8-storage.sh` |
+| 键语义与键控压实 | `scripts/e2e-p14-compaction.sh` |
 | 消费组 | `scripts/e2e-p9-groups.sh` |
 | 安全面 | `scripts/e2e-p12-security.sh` |
 | 控制面并发与停摆 | `scripts/e2e-p13-control-plane.sh` |

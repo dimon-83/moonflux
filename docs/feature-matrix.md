@@ -14,7 +14,7 @@
 | 段滚动（字节/时长阈值，段边界=帧边界） | ✅ | `MOONFLUX_ROLL_BYTES/_MS`；`scripts/e2e-p8-storage.sh` |
 | 稀疏段索引（CRC 校验，疑点回退全扫，逐字节一致） | ✅ | 同上（删 `.idx` 腿） |
 | retention（只删整段、floor 以下；结构化拒绝更老读） | ✅ | `MOONFLUX_RETAIN_BYTES/_MS`；`e2e-p8-storage.sh` |
-| 重复记录去重 / 键控 compaction | ⏳ | 记录键当前恒为空（键语义启用后立项）；retention 是唯一的数据删除 |
+| 键控 compaction（删旧留新，偏移不变） | ✅ | `cluster compact`；键由 `produce --key/--key-separator` 产生；幂等、floor = 提交前缀 ∩ 消费组地板、空键永不淘汰；`scripts/e2e-p14-compaction.sh`（8 腿）+ `core/log_test`（7 条压实测试） |
 | 压缩编解码（gzip/snappy 等批压缩） | ⏳ | 未立项；帧载荷现为未压缩批 |
 
 ## 2. 复制与集群
@@ -79,7 +79,7 @@
 
 | 能力 | 状态 | 说明与证据 |
 | :--- | :--- | :--- |
-| CLI（单二进制多子命令；数据/集群/运维/管道四族） | ✅ | `apps/cli`；命令面盘点 [`cli-roadmap.md`](cli-roadmap.md) |
+| CLI（单二进制多子命令；数据/集群/运维/管道四族） | ✅ | `apps/cli`；`produce --key/--key-separator`（无分隔符行跳过并告警）、`cluster compact`；命令面盘点 [`cli-roadmap.md`](cli-roadmap.md) |
 | PipelineSpec v1alpha1（JSON；plan 差异预览 / apply 发布期检查） | ✅ | `core/spec`；`scripts/e2e-p0p.sh` |
 | Web 拖拽编辑器（spec-first；同端口 WS；浏览器闭环） | ✅ | `apps/editor-kernel` + `web/editor/`；`scripts/e2e-p4-editor.sh`（浏览器阶段人/agent 驱动） |
 | 客户端内核（native + wasm-gc 双后端同一份逻辑） | ✅ | `core/client`；`moon test --target wasm-gc` |
@@ -94,7 +94,7 @@
 | :--- | :--- | :--- |
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
-| 门禁体系（31 步，含故障注入与对拍） | ✅ | `scripts/gates.sh` |
+| 门禁体系（32 步，含故障注入与对拍） | ✅ | `scripts/gates.sh` |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

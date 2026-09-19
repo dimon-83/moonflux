@@ -57,7 +57,7 @@ flowchart LR
 core/        内核（不声明 supported_targets ⇒ 全后端）
 ├── codec        LEB128 / 字节序 / Reader-Writer 原语
 ├── protocol     线协议批帧 + CRC（P0 对拍基线）
-├── log          分区日志：偏移分配、恢复、分段、索引、retention
+├── log          分区日志：偏移分配、恢复、分段、索引、retention、压实（P14）
 ├── spec         PipelineSpec v1alpha1 解析与校验（主题名白名单的唯一真相）
 ├── pipeline     拓扑编译（spec → 纯函数链）
 ├── operator     算子 ABI v1 语义 + 预算 tier（记录数上限）
@@ -141,9 +141,11 @@ sequenceDiagram
 - 只有最后一段可能带撕裂尾；恢复把尾部截到最后一个完整帧并**报告**（`RecoveryReport`，绝不静默）；
 - **索引是加速器不是真相**：缺失/截断/CRC 不过/锚点异常一律回退全扫，两条路径逐字节一致；
 - retention 只删整段、只删 `floor` 以下（`floor` 由应用给：leader 用 HW，独立 broker 用自己的 LEO，消费组地板取 `min`），删完的更老读得到结构化 `OffsetOutOfRange`——"没了"≠"空"；
-- 时钟永远是调用方注入的（`roll_due(now, …)` / `apply_retention(floor, now, …)`）。
+- **压实（P14）删记录但不搬记录**：v2 帧内偏移是位置语义（基址 + 序号），所以压实以「连续偏移段」为最小重帧单位——被取代的记录直接消失，存活记录保留原偏移；`read` / `read_raw` / 索引 / 段汇总 / 截断一律信任 `batch.base_offset` 并容忍帧间空洞（`read_raw` 经 `base_offset` 报告落点，复制据此 `skip_to` 跨洞，只许向前）；
+- 压实只动「段末 ≤ floor」的封存段（floor 同 retention：leader 用 ledger 水位，follower 用 **leader 最近报告的水位**），整段被淘汰时**删除该段**（空段是存储拒绝的洞），日志末端永远是最后一个实际保留帧的末端；每次删除逐段报告，第二遍是空报告（幂等是构造性质）；
+- 时钟永远是调用方注入的（`roll_due(now, …)` / `apply_retention(floor, now, …)` / `apply_compaction(floor, now, …)`）。
 
-**复制即字节搬运**：follower 拉取的是 leader 日志的**原始帧**（不是重编码），所以 follower 的段文件与 leader 逐字节一致（`scripts/e2e-p8-storage.sh` 的逐段 cmp 腿）。
+**复制即字节搬运**：follower 拉取的是 leader 日志的**原始帧**（不是重编码），所以 follower 的段文件与 leader 逐字节一致（`scripts/e2e-p8-storage.sh` 的逐段 cmp 腿）；**压实之后这条要求每个副本各自压实**（floor 相同 ⇒ 字节相同，`scripts/e2e-p14-compaction.sh` 腿 6），只有 leader 压实会让副本保留已删记录、故障切换后复活旧键。
 
 ## 6. 复制与控制面
 

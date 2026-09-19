@@ -103,6 +103,16 @@
   完整字段（磁盘/主题数等）、`benchmark`、`consumer` 托管偏移（矩阵 #11 另一半）、
   `profile`（配置档案）、SmartModule/算子管理命令族。
 
+#### 3.3.2 落地回填（2026-09-18，P14 达成）
+
+- `produce --key K` / `--key-separator S`：键进入记录（互斥；无分隔符行跳过并在 stderr 汇总）；
+  对标报告 §2.3.4；门禁 `scripts/e2e-p14-compaction.sh` 腿 1。
+- `cluster compact --topic T [--partition N] --remote <node>`：一次键控压实，逐段报告
+  （帧数前/后、删除记录数、字节前/后）+ 总计；对**持有该分区的每个节点**各执行一次
+  （副本必须一致），floor 由节点自己算（提交前缀 ∩ 消费组地板）；门禁同上（腿 2–8）。
+- 更早的 P5/P6/P8 命令面（`operator` / `function-set` 覆写、`cluster segments`）见各自阶段的
+  ticket 与 `scripts/e2e-p5-operator.sh`、`e2e-p6-functions.sh`、`e2e-p8-storage.sh`。
+
 ### 3.4 P4（全平台体验）
 
 - CLI 契约稳定化：与 native + wasm 客户端 SDK 对齐（README 能力对标表"客户端 SDK"行）；
