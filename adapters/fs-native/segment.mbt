@@ -194,6 +194,33 @@ pub fn open_segment_store(dir : String) -> Result[@log.SegmentStore, FsError] {
         Err(e) => Err(map_err(e))
       }
     },
+    replace: fn(base, bytes) {
+      // compaction's rewrite: write beside the segment and rename over
+      // it, so a crash leaves either the old bytes or the new ones and
+      // never a half-written log (this format recovers a torn *last*
+      // segment, not a torn sealed one)
+      let path = "\{dir}/\{segment_file_name(base)}"
+      let tmp = "\{path}.compact"
+      match write_file(tmp, bytes) {
+        Ok(_) => ()
+        Err(e) => return Err(map_err(e))
+      }
+      match rename(tmp, path) {
+        Ok(_) => ()
+        Err(e) => return Err(map_err(e))
+      }
+      // the stored index anchors described byte positions of the old
+      // bytes: a stale index is a lie, and the kernel rebuilds from the
+      // log
+      match remove_file("\{dir}/\{segment_index_name(base)}") {
+        Ok(_) => ()
+        Err(_) => () // absent is fine
+      }
+      match open_segment_file(path) {
+        Ok(file) => Ok(file)
+        Err(e) => Err(map_err(e))
+      }
+    },
   }
   Ok(store)
 }

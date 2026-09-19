@@ -71,6 +71,15 @@ pub fn MemorySegment::contents(self : MemorySegment) -> Bytes {
 }
 
 ///|
+/// Swaps the buffer's contents for `bytes` (compaction's rewrite path:
+/// the host replaces the whole file where the real adapter renames a
+/// temporary one into place).
+pub fn MemorySegment::replace(self : MemorySegment, bytes : Bytes) -> Unit {
+  self.data.reset()
+  self.data.write_bytes(bytes[0:bytes.length()])
+}
+
+///|
 /// A `SegmentFile` handle backed by this memory buffer.
 pub fn MemorySegment::handle(self : MemorySegment) -> SegmentFile {
   SegmentFile::{
@@ -129,6 +138,12 @@ pub(all) struct SegmentStore {
   /// truncation call this, and only for segments the kernel has
   /// decided to drop.
   remove : (Int64) -> Result[Unit, LogError]
+  /// Replaces a segment's bytes wholesale and hands back a fresh
+  /// handle to them. Only compaction calls this: it rewrites a sealed
+  /// segment in place-of-record, and a crash in the middle must not
+  /// leave a half-written log — so the host writes a temporary file
+  /// and renames it over the old one where the platform allows.
+  replace : (Int64, Bytes) -> Result[SegmentFile, LogError]
 } derive(Debug)
 
 ///|
@@ -194,6 +209,19 @@ pub fn MemorySegmentStore::store(self : MemorySegmentStore) -> SegmentStore {
           let _ = self.indexes.remove(i)
           let _ = self.created.remove(i)
           Ok(())
+        }
+        None => Err(Storage("no such segment \{base}"))
+      }
+    },
+    replace: fn(base, bytes) {
+      match self.index_of(base) {
+        Some(i) => {
+          self.segments[i].replace(bytes)
+          // a rewritten segment invalidates its index: the anchors
+          // point at byte positions that no longer exist
+          self.indexes[i].replace(b"")
+          self.created[i] = 0L
+          Ok(self.segments[i].handle())
         }
         None => Err(Storage("no such segment \{base}"))
       }
@@ -428,9 +456,15 @@ fn read_i64_be(bytes : Bytes, at : Int) -> Int64 {
 ///
 /// The invariants that make segmentation invisible to every reader:
 /// a segment boundary is always a *frame* boundary, bases are strictly
-/// increasing with no holes (appends only ever go to the active
-/// segment, so a hole cannot arise — one that exists is reported, not
-/// repaired), and only the last segment can carry a torn tail.
+/// increasing with no holes in the chain (appends only ever go to the
+/// active segment, so a hole cannot arise there; retention and
+/// truncation only remove whole segments), and only the last segment
+/// can carry a torn tail. One thing compaction does change: a sealed
+/// segment it rewrites may hold **holes in its offset space** — frames
+/// whose records were superseded and deleted. Offsets inside a
+/// segment are therefore not contiguous after compaction, which is
+/// why every reader trusts each frame's own `base_offset` instead of
+/// counting frames.
 pub struct SegmentedLog {
   store : SegmentStore
   /// ascending by base; the last one is active
@@ -449,7 +483,9 @@ pub struct SegmentedLog {
 /// (the store's stamp, for age-based policy).
 struct LogSegment {
   base : Int64
-  file : SegmentFile
+  /// the handle to the segment's bytes; compaction swaps it when it
+  /// replaces the file
+  mut file : SegmentFile
   mut size : Int
   mut created_ms : Int64
   /// sparse anchors, ascending; [0] is always (base, 0)
@@ -478,6 +514,9 @@ pub fn SegmentedLog::open(file : SegmentFile) -> Result[SegmentedLog, LogError] 
     list: fn() { Ok([SegmentInfo::{ base: 0L, size, created_ms: 0L }]) },
     open_index: fn(_base) { Err(Storage("this store holds a single segment")) },
     remove: fn(_base) { Err(Storage("this store holds a single segment")) },
+    replace: fn(_base, _bytes) {
+      Err(Storage("this store holds a single segment"))
+    },
   }
   SegmentedLog::open_store(store, 0)
 }
@@ -657,12 +696,15 @@ pub fn SegmentedLog::open_store_configured(
   }
   let reader = @codec.Reader::new(bytes)
   let mut consumed = 0
-  let mut records : Int64 = 0L
+  // the log's end is the last frame's own end, not the sum of the
+  // counts: a compacted segment holds holes, and counting frames
+  // would place the end before offsets that still exist (P14)
+  let mut next_offset = last.base
   let mut reason = Clean
   while reader.remaining() > 0 {
     match @protocol.decode_frame(reader) {
       Ok(batch) => {
-        records += batch.records.length().to_int64()
+        next_offset = batch.base_offset + batch.records.length().to_int64()
         consumed = size - reader.remaining()
       }
       Err(Incomplete) => {
@@ -696,7 +738,7 @@ pub fn SegmentedLog::open_store_configured(
   Ok(SegmentedLog::{
     store,
     segments,
-    next_offset: last.base + records,
+    next_offset,
     recovery,
     roll_bytes,
     index_every_records: DEFAULT_INDEX_EVERY_RECORDS,
@@ -838,7 +880,6 @@ fn rebuild_index_static(
       Err(e) => return Err(e)
     }
     let reader = @codec.Reader::new(bytes)
-    let mut next = seg.base
     let mut take = 0
     while reader.remaining() > 0 {
       let before = reader.position()
@@ -846,10 +887,15 @@ fn rebuild_index_static(
         Ok(batch) => {
           let count = batch.records.length()
           if take >= index_every_records && before > 0 {
-            anchors.push(IndexAnchor::{ offset: next, position: before })
+            // the frame's own base: after compaction a segment's
+            // offsets are not contiguous, and a counted value would
+            // name an offset no frame starts at
+            anchors.push(IndexAnchor::{
+              offset: batch.base_offset,
+              position: before,
+            })
             take = 0
           }
-          next += count.to_int64()
           take += count
         }
         Err(_) => return Err(CorruptFrame)
@@ -930,7 +976,6 @@ fn SegmentedLog::rebuild_index(
     Err(e) => return Err(e)
   }
   let reader = @codec.Reader::new(bytes)
-  let mut next = seg.base
   let mut take = 0
   while reader.remaining() > 0 {
     let before = reader.position()
@@ -938,10 +983,12 @@ fn SegmentedLog::rebuild_index(
       Ok(batch) => {
         let count = batch.records.length()
         if take >= self.index_every_records && before > 0 {
-          anchors.push(IndexAnchor::{ offset: next, position: before })
+          anchors.push(IndexAnchor::{
+            offset: batch.base_offset,
+            position: before,
+          })
           take = 0
         }
-        next += count.to_int64()
         take += count
       }
       Err(_) => return Err(CorruptFrame)
@@ -1063,25 +1110,34 @@ pub fn SegmentedLog::read(
       Err(e) => return Err(e)
     }
     let reader = @codec.Reader::new(bytes)
-    let mut next = anchor.offset
+    // offsets come from each frame's own base: after compaction a
+    // segment holds holes, and counting frames would renumber every
+    // record after the first one that was deleted
+    let mut expected = anchor.offset
     while reader.remaining() > 0 && out.length() < max_records {
       match @protocol.decode_frame(reader) {
         Ok(batch) => {
           let count = batch.records.length()
-          let batch_end = next + count.to_int64()
+          let base = batch.base_offset
+          if base < expected {
+            // frames are read in order and their bases never go
+            // backwards; a frame that does is corruption, not a hole
+            return Err(CorruptFrame)
+          }
+          let batch_end = base + count.to_int64()
           if batch_end > from {
-            let raw_skip = (from - next).to_int()
+            let raw_skip = (from - base).to_int()
             let skip = if raw_skip < 0 { 0 } else { raw_skip }
             let mut j = skip
             while j < count && out.length() < max_records {
               out.push(LogEntry::{
-                offset: next + j.to_int64(),
+                offset: base + j.to_int64(),
                 record: batch.records[j],
               })
               j += 1
             }
           }
-          next = batch_end
+          expected = batch_end
         }
         Err(_) => return Err(CorruptFrame)
       }
@@ -1113,13 +1169,23 @@ pub(all) struct RawWindow {
 } derive(Debug, Eq, Show)
 
 ///|
-/// Reads whole frames starting at `from` (which must be a frame
-/// boundary) up to `max_records` records, crossing segments. Returns
-/// the raw bytes so a follower can append them verbatim: replicating
-/// re-encoded records would let two nodes hold the same records in
-/// different *framing*, and then "the follower's file is a byte-prefix
-/// of the leader's" would stop being true — which is the property the
-/// replication gates assert, now per segment.
+/// Reads whole frames starting at or after `from` up to `max_records`
+/// records, crossing segments. Returns the raw bytes so a follower can
+/// append them verbatim: replicating re-encoded records would let two
+/// nodes hold the same records in different *framing*, and then "the
+/// follower's file is a byte-prefix of the leader's" would stop being
+/// true — which is the property the replication gates assert, now per
+/// segment.
+///
+/// Two boundaries this call draws deliberately:
+/// - `from` inside a frame is refused (slicing a batch would invent a
+///   boundary the leader does not have); `from` in a **hole** is not —
+///   compaction deletes frames, and the window then starts at the next
+///   surviving frame and says so through `base_offset`, which is how a
+///   follower learns to adopt the hole.
+/// - at least one frame is always taken whole, budget or not: a frame
+///   is the unit of replication, and refusing a frame larger than the
+///   budget would stall a follower forever.
 pub fn SegmentedLog::read_raw(
   self : SegmentedLog,
   from : Int64,
@@ -1141,6 +1207,7 @@ pub fn SegmentedLog::read_raw(
   }
   let collected = Buffer::Buffer()
   let mut taken = 0
+  let mut window_base = from
   // `started` spans segments: the boundary check below is about *where
   // the caller asked to start*, and that question is answered once —
   // applying it to every segment would refuse a legitimate cross-
@@ -1159,7 +1226,7 @@ pub fn SegmentedLog::read_raw(
       Err(e) => return Err(e)
     }
     let reader = @codec.Reader::new(bytes)
-    let mut next = anchor.offset
+    let mut expected = anchor.offset
     // a later segment contributes from its very first frame: `started`
     // was decided in an earlier one
     let mut start_byte : Int? = if started { Some(0) } else { None }
@@ -1169,25 +1236,33 @@ pub fn SegmentedLog::read_raw(
       match @protocol.decode_frame(reader) {
         Ok(batch) => {
           let count = batch.records.length()
-          let batch_end = next + count.to_int64()
+          let base = batch.base_offset
+          if base < expected {
+            return Err(CorruptFrame)
+          }
+          let batch_end = base + count.to_int64()
           if !started && batch_end > from {
-            if next != from {
-              // `from` falls inside a frame: refuse rather than slice
-              // a batch, which would invent a boundary the leader does
+            if base < from {
+              // strictly inside a frame: refuse rather than slice a
+              // batch, which would invent a boundary the leader does
               // not have
               return Err(OffsetOutOfRange)
             }
+            // base == from starts on a boundary; base > from means
+            // `from` fell in a hole and the window jumps to the next
+            // surviving frame (reported through base_offset below)
             started = true
+            window_base = base
             start_byte = Some(before)
           }
           if started {
-            if taken + count > max_records {
+            if taken > 0 && taken + count > max_records {
               break
             }
             taken += count
             end_byte = reader.position()
           }
-          next = batch_end
+          expected = batch_end
         }
         Err(_) => return Err(CorruptFrame)
       }
@@ -1195,11 +1270,13 @@ pub fn SegmentedLog::read_raw(
     match start_byte {
       None => ()
       Some(start_at) =>
-        collected.write_bytes(bytes[start_at:end_byte].to_owned())
+        if end_byte > start_at {
+          collected.write_bytes(bytes[start_at:end_byte].to_owned())
+        }
     }
   }
   Ok(RawWindow::{
-    base_offset: from,
+    base_offset: window_base,
     record_count: taken,
     bytes: collected.to_bytes(),
   })
@@ -1271,6 +1348,28 @@ pub fn SegmentedLog::append_raw(
     return Err(CorruptFrame)
   }
   Ok(())
+}
+
+///|
+/// Adopts a forward hole: the log's end moves to `offset` without a
+/// byte being written. Only replication calls this, and only after the
+/// leader's window said its first surviving frame starts *past* this
+/// log's end — the frames in between were compacted away on the leader
+/// and exist nowhere any more, so there is nothing left to copy.
+///
+/// Only forward moves: a backward move is not a hole but divergence,
+/// and it must go through truncation (which reports what it drops).
+/// Returns how many offsets were skipped.
+pub fn SegmentedLog::skip_to(
+  self : SegmentedLog,
+  offset : Int64,
+) -> Result[Int64, LogError] {
+  if offset < 0L || offset < self.next_offset {
+    return Err(OffsetOutOfRange)
+  }
+  let skipped = offset - self.next_offset
+  self.next_offset = offset
+  Ok(skipped)
 }
 
 ///|
@@ -1401,6 +1500,315 @@ pub fn SegmentedLog::apply_retention(
 }
 
 ///|
+/// When compaction may rewrite a segment: `min_dirty_bytes` is the
+/// smallest amount of droppable payload that justifies a rewrite
+/// (0 = rewrite as soon as anything is droppable). Rewriting is IO, and
+/// a segment holding nothing superseded must never be touched — that
+/// is also what makes a second pass a no-op.
+pub(all) struct CompactionPolicy {
+  min_dirty_bytes : Int
+} derive(Debug, Eq, Show)
+
+///|
+/// One rewritten segment, before and after.
+pub(all) struct SegmentCompaction {
+  base : Int64
+  frames_before : Int
+  frames_after : Int
+  dropped_records : Int
+  bytes_before : Int
+  bytes_after : Int
+} derive(Debug, Eq, Show)
+
+///|
+/// What one compaction pass rewrote. Empty means "nothing below the
+/// floor was superseded" — which is exactly what a second consecutive
+/// pass reports, because compaction settles.
+pub(all) struct CompactionReport {
+  rewritten : Array[SegmentCompaction]
+} derive(Debug, Eq, Show)
+
+///|
+/// Records dropped across all rewritten segments.
+pub fn CompactionReport::dropped_records(self : CompactionReport) -> Int {
+  let mut total = 0
+  for seg in self.rewritten {
+    total += seg.dropped_records
+  }
+  total
+}
+
+///|
+/// Bytes freed across all rewritten segments.
+pub fn CompactionReport::freed_bytes(self : CompactionReport) -> Int {
+  let mut total = 0
+  for seg in self.rewritten {
+    total += seg.bytes_before - seg.bytes_after
+  }
+  total
+}
+
+///|
+/// Whether `key`'s latest occurrence inside the compacted prefix is
+/// `offset`. A key that is *not* in the table would be one pass 1 never
+/// saw — impossible for a record below the floor — and the answer is
+/// then "keep": never drop a record that cannot be proven superseded.
+fn is_latest(latest : Map[Bytes, Int64], key : Bytes, offset : Int64) -> Bool {
+  match latest.get(key) {
+    Some(latest_offset) => latest_offset == offset
+    None => true
+  }
+}
+
+///|
+/// Compacted the keyed prefix: every record **below `floor`** whose key
+/// occurs again below `floor` is dropped, and every surviving record
+/// keeps its original offset — compaction re-frames survivors in runs
+/// of consecutive offsets, it never renumbers them. Offsets are a
+/// record's identity (committed consumer offsets, watermarks and
+/// truncation all speak them), so "dropped" must mean "gone", not
+/// "moved".
+///
+/// `floor` is the caller's judgement, exactly as in retention: the
+/// compacted prefix is the part of the log every replica has, which is
+/// what makes the decision deterministic — two replicas compacting the
+/// same prefix produce the same bytes.
+///
+/// Boundaries, deliberately:
+/// - only sealed segments whose end is at or below `floor` are
+///   rewritten; the active segment and the frame straddling the floor
+///   are left for a later pass;
+/// - records with an empty key are never dropped (there is no later
+///   occurrence that could supersede them);
+/// - a frame whose records all survive is copied **verbatim**, so an
+///   idempotent pass leaves every byte where it was.
+pub fn SegmentedLog::apply_compaction(
+  self : SegmentedLog,
+  floor : Int64,
+  now_ms : Int64,
+  policy : CompactionPolicy,
+) -> Result[CompactionReport, LogError] {
+  let report = CompactionReport::{ rewritten: [] }
+  if floor <= 0L {
+    return Ok(report)
+  }
+  // segments whose every frame was superseded: they are removed at the
+  // end, not left as empty files (a hole the store refuses)
+  let emptied : Array[Int64] = []
+  // pass 1: the latest occurrence of each key inside the prefix. This
+  // is the whole decision table — everything below the floor that is
+  // not in it was superseded and may go.
+  let latest : Map[Bytes, Int64] = Map::new()
+  for seg in self.segments {
+    if seg.base >= floor {
+      break
+    }
+    let bytes = match (seg.file.read)(0, seg.size) {
+      Ok(bytes) => bytes
+      Err(e) => return Err(e)
+    }
+    let reader = @codec.Reader::new(bytes)
+    let mut expected = seg.base
+    while reader.remaining() > 0 {
+      let batch = match @protocol.decode_frame(reader) {
+        Ok(batch) => batch
+        Err(_) => return Err(CorruptFrame)
+      }
+      let base = batch.base_offset
+      if base < expected {
+        return Err(CorruptFrame)
+      }
+      expected = base + batch.records.length().to_int64()
+      let mut i = 0
+      while i < batch.records.length() {
+        let offset = base + i.to_int64()
+        if offset >= floor {
+          break
+        }
+        let record = batch.records[i]
+        if record.key.length() > 0 {
+          latest.set(record.key, offset)
+        }
+        i += 1
+      }
+    }
+  }
+  // pass 2: rewrite the sealed segments that end at or below the floor
+  for i = 0; i + 1 < self.segments.length(); i = i + 1 {
+    let seg = self.segments[i]
+    let end = self.segments[i + 1].base
+    if end > floor {
+      break
+    }
+    let bytes = match (seg.file.read)(0, seg.size) {
+      Ok(bytes) => bytes
+      Err(e) => return Err(e)
+    }
+    let reader = @codec.Reader::new(bytes)
+    let rebuilt = @buffer.Buffer::Buffer()
+    // anchors stay frame starts; [0] keeps the segment's base even when
+    // the frames that used to sit there were compacted away, because
+    // the base is the chain link (the previous segment's end), not a
+    // promise that a record exists at that offset
+    let anchors : Array[IndexAnchor] = [
+      IndexAnchor::{ offset: seg.base, position: 0 },
+    ]
+    let mut expected = seg.base
+    let mut frames_before = 0
+    let mut frames_after = 0
+    let mut dropped = 0
+    let mut changed = false
+    while reader.remaining() > 0 {
+      let before = reader.position()
+      let batch = match @protocol.decode_frame(reader) {
+        Ok(batch) => batch
+        Err(_) => return Err(CorruptFrame)
+      }
+      let after = reader.position()
+      let base = batch.base_offset
+      if base < expected {
+        return Err(CorruptFrame)
+      }
+      expected = base + batch.records.length().to_int64()
+      frames_before += 1
+      let count = batch.records.length()
+      let survivors : Array[Bool] = []
+      let mut all_survive = true
+      let mut j = 0
+      while j < count {
+        let record = batch.records[j]
+        let offset = base + j.to_int64()
+        let survives = record.key.length() == 0 ||
+          is_latest(latest, record.key, offset)
+        survivors.push(survives)
+        if !survives {
+          all_survive = false
+          changed = true
+        }
+        j += 1
+      }
+      if all_survive {
+        // verbatim: an untouched frame is the same bytes it always was
+        if rebuilt.length() > 0 &&
+          rebuilt.length() - anchors[anchors.length() - 1].position >=
+          INDEX_EVERY_BYTES {
+          anchors.push(IndexAnchor::{ offset: base, position: rebuilt.length() })
+        }
+        rebuilt.write_bytes(bytes[before:after].to_owned())
+        frames_after += 1
+      } else {
+        // runs of consecutive surviving offsets, one frame each: the
+        // records inside a frame are positional (base + index), so a
+        // run is exactly the set of survivors that can share one
+        let runs : Array[(Int64, Array[@protocol.Record])] = []
+        let mut current : Array[@protocol.Record] = []
+        let mut current_base = 0L
+        let mut k = 0
+        while k < count {
+          let offset = base + k.to_int64()
+          if survivors[k] {
+            if current.length() == 0 {
+              current_base = offset
+            }
+            current.push(batch.records[k])
+          } else {
+            dropped += 1
+            if current.length() > 0 {
+              runs.push((current_base, current))
+              current = []
+            }
+          }
+          k += 1
+        }
+        if current.length() > 0 {
+          runs.push((current_base, current))
+        }
+        for run in runs {
+          let (run_base, records) = run
+          if rebuilt.length() > 0 &&
+            rebuilt.length() - anchors[anchors.length() - 1].position >=
+            INDEX_EVERY_BYTES {
+            anchors.push(IndexAnchor::{
+              offset: run_base,
+              position: rebuilt.length(),
+            })
+          }
+          rebuilt.write_bytes(@protocol.encode_frame(run_base, records))
+          frames_after += 1
+        }
+      }
+    }
+    if !changed {
+      continue
+    }
+    let contents = rebuilt.to_bytes()
+    let freed = bytes.length() - contents.length()
+    if freed < policy.min_dirty_bytes {
+      continue
+    }
+    if contents.length() == 0 {
+      // every frame went: an empty segment is not a segment — it is a
+      // hole the store refuses — so it is removed, exactly as
+      // retention removes one. The chain stays intact: the next
+      // segment's base was already the end of this one.
+      match (self.store.remove)(seg.base) {
+        Ok(_) => ()
+        Err(e) => return Err(e)
+      }
+      emptied.push(seg.base)
+      report.rewritten.push(SegmentCompaction::{
+        base: seg.base,
+        frames_before,
+        frames_after: 0,
+        dropped_records: dropped,
+        bytes_before: bytes.length(),
+        bytes_after: 0,
+      })
+      continue
+    }
+    let file = match (self.store.replace)(seg.base, contents) {
+      Ok(file) => file
+      Err(e) => return Err(e)
+    }
+    seg.file = file
+    seg.size = contents.length()
+    seg.anchors = anchors
+    seg.index_saved = false
+    // the rewrite restamped the file: age-based retention must measure
+    // from when the bytes on disk were written
+    seg.created_ms = now_ms
+    self.save_index(seg)
+    report.rewritten.push(SegmentCompaction::{
+      base: seg.base,
+      frames_before,
+      frames_after,
+      dropped_records: dropped,
+      bytes_before: bytes.length(),
+      bytes_after: contents.length(),
+    })
+  }
+  if emptied.length() > 0 {
+    let kept : Array[LogSegment] = []
+    for seg in self.segments {
+      let mut gone = false
+      for base in emptied {
+        if seg.base == base {
+          gone = true
+        }
+      }
+      if !gone {
+        kept.push(seg)
+      }
+    }
+    self.segments.clear()
+    for seg in kept {
+      self.segments.push(seg)
+    }
+  }
+  Ok(report)
+}
+
+///|
 /// Re-reads the creation stamps from the store. Called on the retention
 /// cadence: the store owns the wall clock (file mtime), and a segment
 /// created inline by a roll has no stamp of its own until this runs.
@@ -1523,6 +1931,9 @@ fn SegmentedLog::drop_segments_after_checked(
     Err(e) => return Err(e)
   }
   let reader = @codec.Reader::new(bytes)
+  // like every reader here, offsets come from the frame's own base: a
+  // compacted segment holds holes, and counting would put the cut in
+  // the wrong place
   let mut next = seg.base
   let mut cut : Int? = None
   while reader.remaining() > 0 {
@@ -1530,15 +1941,34 @@ fn SegmentedLog::drop_segments_after_checked(
     match @protocol.decode_frame(reader) {
       Ok(batch) => {
         let count = batch.records.length().to_int64()
-        if next == offset || (to_boundary && next + count > offset) {
+        let base = batch.base_offset
+        let end = base + count
+        if base == offset {
+          // exact cut. `next` is deliberately left where it is: the
+          // log ends at the last frame it kept, never at a hole above
+          // it — a trailing hole is not recoverable (recovery derives
+          // the end from the frames themselves), so it is not a state
+          // this log can be in
           cut = Some(before)
           break
         }
-        if next + count > offset {
-          // offset lands inside a frame and this form refuses to slice
-          return Err(OffsetOutOfRange)
+        if end > offset {
+          // this frame covers `offset` (or, after compaction, starts
+          // past it in a hole): cut at its start. The boundary form
+          // lets replication re-append a tail from here; the exact
+          // form refuses to slice a frame but has nothing to lose in a
+          // hole.
+          if !to_boundary && base < offset {
+            // inside a frame and this form refuses to slice
+            return Err(OffsetOutOfRange)
+          }
+          // base > offset: `offset` lies in a hole, so cutting here
+          // drops nothing that exists — it is still an exact cut in
+          // record terms
+          cut = Some(before)
+          break
         }
-        next += count
+        next = end
       }
       Err(_) => return Err(CorruptFrame)
     }

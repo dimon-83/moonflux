@@ -542,6 +542,7 @@ test "a store that is not one log is refused, not repaired" {
       ])
     },
     remove: fn(_base) { Ok(()) },
+    replace: fn(_base, _bytes) { Ok(@log.MemorySegment::new().handle()) },
   }
   match @log.SegmentedLog::open_store(duplicated, 0) {
     Err(Storage(msg)) => assert_true(msg.contains("strictly"))
@@ -886,4 +887,271 @@ test "age-based retention and rolling use the store's stamps" {
   assert_eq(rolling.segment_summaries()[1].records, 0L)
   // and an empty active segment never rolls
   assert_eq(rolling.roll_due(9000L, 1L), Ok(false))
+}
+
+// ---------------------------------------------------------------------
+// P14: keyed compaction. Offsets are a record's identity, so compaction
+// deletes records and re-frames the survivors in runs of consecutive
+// offsets — it never renumbers anything. These tests pin that, the
+// holes it leaves, and how every reader lives with them. Each append
+// call is one frame, and the roll threshold is small enough that a
+// frame of a few records is its own segment: the tests can then say
+// exactly which segment holds what.
+
+///|
+fn keyed(key : String, value : String) -> @protocol.Record {
+  @protocol.Record::{
+    timestamp: 0L,
+    key: encode_ascii(key),
+    value: encode_ascii(value),
+    headers: [],
+  }
+}
+
+///|
+fn offsets_of(entries : Array[@log.LogEntry]) -> Array[Int64] {
+  let out : Array[Int64] = []
+  for e in entries {
+    out.push(e.offset)
+  }
+  out
+}
+
+///|
+fn compaction_on() -> @log.CompactionPolicy {
+  @log.CompactionPolicy::{ min_dirty_bytes: 0 }
+}
+
+///|
+fn compact_now(
+  log : @log.SegmentedLog,
+  floor : Int64,
+  now_ms : Int64,
+) -> @log.CompactionReport {
+  match log.apply_compaction(floor, now_ms, compaction_on()) {
+    Ok(report) => report
+    Err(e) => abort("compaction: \{e}")
+  }
+}
+
+///|
+fn read_all(log : @log.SegmentedLog, from : Int64) -> Array[@log.LogEntry] {
+  match log.read(from, 100) {
+    Ok(entries) => entries
+    Err(e) => abort("read from \{from}: \{e}")
+  }
+}
+
+///|
+test "compaction drops superseded keyed records and keeps every surviving offset" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  // two frames, one per segment: the first is sealed and holds the two
+  // records that get superseded
+  let _ = log.append([keyed("a", "a1"), keyed("b", "b1"), keyed("a", "a2")]) // 0,1,2
+  let _ = log.append([keyed("c", "c1"), keyed("b", "b2"), keyed("d", "d1")]) // 3,4,5
+  assert_eq(store.bases().length(), 2)
+  let active_base = store.bases()[1]
+  let active_bytes = store.contents(active_base)
+  let report = compact_now(log, log.high_watermark(), 100L)
+  // a1 (0) and b1 (1) were superseded by later occurrences of "a"/"b"
+  assert_eq(report.rewritten.length(), 1)
+  assert_eq(report.dropped_records(), 2)
+  assert_true(report.freed_bytes() > 0)
+  // the active segment is the log's tail: never touched, byte for byte
+  assert_eq(store.contents(active_base), active_bytes)
+  let entries = read_all(log, 0L)
+  // the survivors kept the offsets they were written with
+  assert_eq(offsets_of(entries), [2L, 3L, 4L, 5L])
+  assert_eq(entries[0].record.value, encode_ascii("a2"))
+  assert_eq(entries[1].record.value, encode_ascii("c1"))
+  assert_eq(entries[2].record.value, encode_ascii("b2"))
+  assert_eq(entries[3].record.value, encode_ascii("d1"))
+  // starting a read inside a hole is not an error: the offsets that are
+  // gone are simply absent
+  assert_eq(offsets_of(read_all(log, 1L)), [2L, 3L, 4L, 5L])
+  // a raw window jumps the hole and reports where it landed, because
+  // that is how a follower learns to adopt the hole
+  let raw = match log.read_raw(1L, 100) {
+    Ok(window) => window
+    Err(e) => abort("read_raw from the hole: \{e}")
+  }
+  assert_eq(raw.base_offset, 2L)
+  assert_eq(raw.record_count, 4)
+}
+
+///|
+test "a segment whose every frame was superseded is removed, not emptied" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  let _ = log.append([keyed("a", "a1"), keyed("b", "b1")]) // 0,1
+  let _ = log.append([keyed("a", "a2"), keyed("b", "b2")]) // 2,3
+  assert_eq(store.bases().length(), 2)
+  let report = compact_now(log, log.high_watermark(), 100L)
+  assert_eq(report.rewritten.length(), 1)
+  assert_eq(report.rewritten[0].base, 0L)
+  assert_eq(report.rewritten[0].frames_after, 0)
+  // the segment is gone from the store: an empty segment is a hole the
+  // store refuses, not a state a log can be in
+  assert_eq(store.bases(), [2L])
+  assert_eq(log.first_offset(), 2L)
+  // and offsets below it read as *gone*, exactly like retention
+  assert_true(log.read(0L, 10) is Err(OffsetOutOfRange))
+  assert_eq(offsets_of(read_all(log, 2L)), [2L, 3L])
+}
+
+///|
+test "compaction settles: the second pass rewrites nothing" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  let _ = log.append([keyed("a", "a1"), keyed("b", "b1")]) // 0,1
+  let _ = log.append([keyed("a", "a2"), keyed("c", "c1")]) // 2,3
+  let _ = log.append([keyed("d", "d1")]) // 4 (active)
+  let floor = log.high_watermark()
+  let first = compact_now(log, floor, 100L)
+  assert_true(first.rewritten.length() >= 1)
+  let after_first : Array[Bytes] = []
+  for summary in log.segment_summaries() {
+    after_first.push(store.contents(summary.base))
+  }
+  let second = compact_now(log, floor, 200L)
+  assert_eq(second.rewritten.length(), 0)
+  assert_eq(second.dropped_records(), 0)
+  let after_second : Array[Bytes] = []
+  for summary in log.segment_summaries() {
+    after_second.push(store.contents(summary.base))
+  }
+  assert_eq(after_first, after_second)
+}
+
+///|
+test "a policy that asks for more dirty bytes than exist leaves the log alone" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  let _ = log.append([keyed("a", "a1")])
+  let _ = log.append([keyed("a", "a2")])
+  let _ = log.append([keyed("a", "a3")])
+  let before : Array[Bytes] = []
+  for summary in log.segment_summaries() {
+    before.push(store.contents(summary.base))
+  }
+  let report = match
+    log.apply_compaction(log.high_watermark(), 100L, @log.CompactionPolicy::{
+      min_dirty_bytes: 1000000,
+    }) {
+    Ok(report) => report
+    Err(e) => abort("compaction: \{e}")
+  }
+  assert_eq(report.rewritten.length(), 0)
+  let after : Array[Bytes] = []
+  for summary in log.segment_summaries() {
+    after.push(store.contents(summary.base))
+  }
+  assert_eq(before, after)
+}
+
+///|
+test "compaction never drops a record that has no key" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  // the keyless records share a frame with a keyed one that will be
+  // superseded: they must survive the rewrite of that frame
+  let _ = log.append([rec("plain-1"), keyed("k", "v1")]) // 0,1
+  let _ = log.append([rec("plain-2"), keyed("k", "v2")]) // 2,3 (active? sealed below)
+  let _ = log.append([keyed("k", "v3")]) // 4
+  let report = compact_now(log, log.high_watermark(), 100L)
+  // v1 (1) and v2 (3) were superseded by v3 (4); nothing else moved
+  assert_eq(report.dropped_records(), 2)
+  let entries = read_all(log, 0L)
+  assert_eq(offsets_of(entries), [0L, 2L, 4L])
+  assert_eq(entries[0].record.value, encode_ascii("plain-1"))
+  assert_eq(entries[0].record.key.length(), 0)
+  assert_eq(entries[1].record.value, encode_ascii("plain-2"))
+  assert_eq(entries[2].record.value, encode_ascii("v3"))
+  assert_eq(entries[2].record.key, encode_ascii("k"))
+}
+
+///|
+test "skip_to adopts a forward hole and refuses to move backwards" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 40, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  let _ = log.append([rec("a"), rec("b")])
+  assert_eq(log.skip_to(4L), Ok(2L))
+  assert_eq(log.high_watermark(), 4L)
+  // the next append lands after the hole, and readers walk over it
+  assert_eq(log.append([rec("c")]), Ok(4L))
+  assert_eq(offsets_of(read_all(log, 0L)), [0L, 1L, 4L])
+  // a raw window asked from inside the hole starts at the next frame
+  let raw = match log.read_raw(2L, 100) {
+    Ok(window) => window
+    Err(e) => abort("read_raw: \{e}")
+  }
+  assert_eq(raw.base_offset, 4L)
+  assert_eq(raw.record_count, 1)
+  // backwards is divergence, not a hole: it must go through truncation
+  assert_true(log.skip_to(3L) is Err(OffsetOutOfRange))
+}
+
+///|
+test "a compacted segment survives truncation and reopens with the end it had" {
+  let store = @log.MemorySegmentStore::new()
+  let log = match
+    @log.SegmentedLog::open_store_configured(store.store(), 100, 64) {
+    Ok(l) => l
+    Err(e) => abort("open: \{e}")
+  }
+  // segment 0: two frames; segment 1: the active tail
+  let _ = log.append([keyed("a", "a1"), keyed("z", "z1")]) // 0,1
+  let _ = log.append([keyed("b", "b1"), keyed("y", "y1")]) // 2,3
+  let _ = log.append([keyed("a", "a2"), keyed("b", "b2")]) // 4,5
+  assert_eq(store.bases().length(), 2)
+  // a1 (0) and b1 (2) are superseded by the tail: the sealed segment is
+  // rebuilt as holes at 0 and 2 with the survivors at 1 and 3
+  let _ = compact_now(log, log.high_watermark(), 100L)
+  assert_eq(offsets_of(read_all(log, 0L)), [1L, 3L, 4L, 5L])
+  // cut the log back to offset 3: the compacted segment becomes the
+  // tail, and its kept frame *ends at 2* — a log never ends inside a
+  // hole, because recovery could not find that end again
+  let report = match log.truncate_to(3L) {
+    Ok(report) => report
+    Err(e) => abort("truncate: \{e}")
+  }
+  assert_eq(report.dropped_records, 4)
+  assert_eq(log.high_watermark(), 2L)
+  let before = offsets_of(read_all(log, 0L))
+  assert_eq(before, [1L])
+  // recovery derives the end from the last frame's own base: counting
+  // from the segment's base would say 1
+  let reopened = match @log.SegmentedLog::open_store(store.store(), 100) {
+    Ok(l) => l
+    Err(e) => abort("reopen: \{e}")
+  }
+  assert_eq(reopened.high_watermark(), 2L)
+  let after = read_all(reopened, 0L)
+  assert_eq(offsets_of(after), [1L])
+  assert_eq(after[0].record.value, encode_ascii("z1"))
 }

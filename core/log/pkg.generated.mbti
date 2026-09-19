@@ -19,6 +19,16 @@ pub(all) suberror LogError {
 pub impl Show for LogError
 
 // Types and methods
+pub(all) struct CompactionPolicy {
+  min_dirty_bytes : Int
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct CompactionReport {
+  rewritten : Array[SegmentCompaction]
+} derive(Eq, Show, @debug.Debug)
+pub fn CompactionReport::dropped_records(Self) -> Int
+pub fn CompactionReport::freed_bytes(Self) -> Int
+
 pub(all) struct IndexAnchor {
   offset : Int64
   position : Int
@@ -37,6 +47,7 @@ pub struct MemorySegment {
 pub fn MemorySegment::contents(Self) -> Bytes
 pub fn MemorySegment::handle(Self) -> SegmentFile
 pub fn MemorySegment::new() -> Self
+pub fn MemorySegment::replace(Self, Bytes) -> Unit
 
 pub struct MemorySegmentStore {
   bases : Array[Int64]
@@ -80,6 +91,15 @@ pub(all) struct RetentionPolicy {
   max_age_ms : Int64
 } derive(Eq, Show, @debug.Debug)
 
+pub(all) struct SegmentCompaction {
+  base : Int64
+  frames_before : Int
+  frames_after : Int
+  dropped_records : Int
+  bytes_before : Int
+  bytes_after : Int
+} derive(Eq, Show, @debug.Debug)
+
 pub(all) struct SegmentFile {
   read : (Int, Int) -> Result[Bytes, LogError]
   append : (Bytes) -> Result[Int, LogError]
@@ -99,6 +119,7 @@ pub(all) struct SegmentStore {
   list : () -> Result[Array[SegmentInfo], LogError]
   open_index : (Int64) -> Result[SegmentFile, LogError]
   remove : (Int64) -> Result[Unit, LogError]
+  replace : (Int64, Bytes) -> Result[SegmentFile, LogError]
 } derive(@debug.Debug)
 
 pub(all) struct SegmentSummary {
@@ -117,6 +138,7 @@ pub struct SegmentedLog {
 } derive(@debug.Debug)
 pub fn SegmentedLog::append(Self, Array[@protocol.Record]) -> Result[Int64, LogError]
 pub fn SegmentedLog::append_raw(Self, Bytes, Int) -> Result[Unit, LogError]
+pub fn SegmentedLog::apply_compaction(Self, Int64, Int64, CompactionPolicy) -> Result[CompactionReport, LogError]
 pub fn SegmentedLog::apply_retention(Self, Int64, Int64, RetentionPolicy) -> Result[RetainReport, LogError]
 pub fn SegmentedLog::first_offset(Self) -> Int64
 pub fn SegmentedLog::high_watermark(Self) -> Int64
@@ -127,6 +149,7 @@ pub fn SegmentedLog::read(Self, Int64, Int) -> Result[Array[LogEntry], LogError]
 pub fn SegmentedLog::read_raw(Self, Int64, Int) -> Result[RawWindow, LogError]
 pub fn SegmentedLog::roll_due(Self, Int64, Int64) -> Result[Bool, LogError]
 pub fn SegmentedLog::segment_summaries(Self) -> Array[SegmentSummary]
+pub fn SegmentedLog::skip_to(Self, Int64) -> Result[Int64, LogError]
 pub fn SegmentedLog::truncate_to(Self, Int64) -> Result[TruncateReport, LogError]
 pub fn SegmentedLog::truncate_to_boundary(Self, Int64) -> Result[TruncateReport, LogError]
 
