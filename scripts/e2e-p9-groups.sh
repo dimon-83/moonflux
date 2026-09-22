@@ -163,7 +163,12 @@ done
 # calling a transition a violation.
 SETTLED=""
 for _ in $(seq 1 40); do
-  grep -o 'member [^ ]* holds [^:]*' "$WORK/members.log" | tail -2 > "$WORK/shares.txt"
+  # every line, not the last two: `check_shares` keeps each member's
+  # *latest* share, and "the last two lines overall" is a different
+  # (and racy) question — when m2 joins before m1 has processed the
+  # generation change, m2's line is not among them at all (P15 found
+  # this: 2 of 3 runs red against a product that was behaving)
+  grep -o 'member [^ ]* holds [^:]*' "$WORK/members.log" > "$WORK/shares.txt"
   if python3 "$ROOT/tools/check_shares.py" "$WORK/shares.txt" "$PARTITIONS" "$TOPIC" 2 2>/dev/null; then
     SETTLED=yes
     break

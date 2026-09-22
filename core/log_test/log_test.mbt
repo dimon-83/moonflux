@@ -240,6 +240,84 @@ test "read_raw refuses to start inside a frame" {
 }
 
 ///|
+test "read_bounded stops at the byte budget, and always carries one record" {
+  let (log, _) = seeded_log(6, 3)
+  let unit = @protocol.record_wire_size(rec("v0"))
+  let two_records = 28 + unit * 2
+  // the budget is what one *frame* may cost, header included
+  match log.read_bounded(0L, 100, two_records) {
+    Ok(entries) => assert_eq(entries.length(), 2)
+    Err(e) => abort("read_bounded: \{e}")
+  }
+  match log.read_bounded(0L, 100, two_records - 1) {
+    Ok(entries) => assert_eq(entries.length(), 1)
+    Err(e) => abort("read_bounded: \{e}")
+  }
+  // a budget too small for even one record still returns one: the
+  // window cap is not a record cap, and stalling beats guessing
+  match log.read_bounded(0L, 100, 4) {
+    Ok(entries) => assert_eq(entries.length(), 1)
+    Err(e) => abort("read_bounded: \{e}")
+  }
+  // no budget means the record count is the only bound
+  match log.read_bounded(0L, 4, 0) {
+    Ok(entries) => assert_eq(entries.length(), 4)
+    Err(e) => abort("read_bounded: \{e}")
+  }
+  // consecutive bounded windows cover the log exactly once, in order
+  let mut next = 0L
+  let seen : Array[Int64] = []
+  while next < 6L {
+    let window = match log.read_bounded(next, 100, two_records) {
+      Ok(entries) => entries
+      Err(e) => abort("read_bounded walk: \{e}")
+    }
+    assert_true(window.length() > 0)
+    for entry in window {
+      seen.push(entry.offset)
+    }
+    next += window.length().to_int64()
+  }
+  assert_eq(seen, [0L, 1L, 2L, 3L, 4L, 5L])
+}
+
+///|
+test "read_raw_bounded stops at the byte budget and never splits a frame" {
+  let (log, memory) = seeded_log(6, 3)
+  let whole = match log.read_raw(0L, 10) {
+    Ok(window) => window
+    Err(e) => abort("read_raw: \{e}")
+  }
+  let half = whole.bytes.length() / 2
+  // two frames: a budget that fits one returns one, whole
+  match log.read_raw_bounded(0L, 10, half) {
+    Ok(window) => {
+      assert_eq(window.record_count, 3)
+      assert_true(window.bytes.length() <= half)
+    }
+    Err(e) => abort("read_raw_bounded: \{e}")
+  }
+  // a budget too small for a frame still returns that frame: a frame
+  // is the unit of replication (the alternative is a stalled follower)
+  match log.read_raw_bounded(0L, 10, 4) {
+    Ok(window) => assert_eq(window.record_count, 3)
+    Err(e) => abort("read_raw_bounded: \{e}")
+  }
+  // walking with the budget reconstructs the leader's bytes exactly
+  let collected = Buffer::Buffer()
+  let mut next = 0L
+  while next < 6L {
+    let window = match log.read_raw_bounded(next, 10, half) {
+      Ok(window) => window
+      Err(e) => abort("read_raw_bounded walk: \{e}")
+    }
+    collected.write_bytes(window.bytes[0:window.bytes.length()])
+    next += window.record_count.to_int64()
+  }
+  assert_eq(collected.to_bytes(), memory.contents())
+}
+
+///|
 test "append_raw replicates bytes verbatim and enforces continuity" {
   let (leader, _) = seeded_log(6, 3)
   let window = match leader.read_raw(0L, 10) {

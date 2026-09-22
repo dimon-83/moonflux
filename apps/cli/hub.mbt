@@ -18,16 +18,26 @@
 // what lets a slow client coexist with a fast one.
 
 ///|
-/// How much a single connection may buffer before the hub gives up on
-/// it. A client that does not read must not be able to eat the
-/// process's memory, so the limit is a real one and exceeding it
-/// disconnects that client — loudly.
-const MAX_INBOX_BYTES : Int = 8 * 1024 * 1024
+/// How much one connection may buffer before the hub gives up on it:
+/// one protocol batch — the largest data frame a peer has any business
+/// sending — plus an envelope's worth of slack (frame header, topic
+/// name, a WebSocket header).
+///
+/// It used to be a hand-written 8 MiB, which sat *below* the 16 MiB
+/// batch the decoder accepts. An 8.7 MiB produce was therefore refused
+/// by a cap the sender could not know about, and the refusal looked
+/// like a connection reset with nothing in the log (P15). A transport
+/// may not be stricter than the protocol it carries without saying so;
+/// now the bound is derived from the protocol, and crossing it is
+/// reported rather than silent.
+const MAX_INBOX_BYTES : Int = @protocol.MAX_BATCH_BYTES + 1048576
 
 ///|
-/// The same bound for the write side: a peer that never reads while we
-/// have data queued for it.
-const MAX_OUTBOX_BYTES : Int = 8 * 1024 * 1024
+/// The same bound for the write side. The server's own largest reply is
+/// one batch frame, so a peer that reads at all never reaches it; a
+/// peer that has stopped reading is dropped instead of being allowed to
+/// grow this process's heap. Reported, like the inbox.
+const MAX_OUTBOX_BYTES : Int = @protocol.MAX_BATCH_BYTES + 1048576
 
 ///|
 /// One served connection.
@@ -43,6 +53,14 @@ pub struct HubConnection {
   tls : @tls.TlsSession?
   /// bytes read from the socket, not yet consumed by the parser
   mut inbox : Bytes
+  /// bytes read this round, not yet joined into `inbox`. Kept apart
+  /// because joining on every read made receiving a batch quadratic —
+  /// 8 KiB reads copied a 17 MiB buffer 2,000 times, and a 20 MiB
+  /// produce took ten seconds of pure memcpy (P15). One join per poll
+  /// round costs the same bytes once.
+  mut pending : Array[Bytes]
+  /// how many bytes `pending` holds
+  mut pending_len : Int
   /// for WebSocket connections: payload bytes unwrapped from WS frames,
   /// waiting for the frame parser. A WS frame is *envelope*, the bytes
   /// inside it are the session's frames — conflating the two makes every
@@ -201,6 +219,8 @@ fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
         stream: stream.stream(),
         tls: None,
         inbox: b"",
+        pending: [],
+        pending_len: 0,
         decoded: b"",
         outbox: b"",
         phase: Handshake,
@@ -223,6 +243,8 @@ fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
         stream: @native.tls_stream_over(stream, attached),
         tls: Some(attached),
         inbox: b"",
+        pending: [],
+        pending_len: 0,
         decoded: b"",
         outbox: b"",
         phase: TlsHandshake,
@@ -400,7 +422,7 @@ pub fn ConnectionHub::poll_once(
 /// A zero-byte read is a clean close; WouldBlock means "nothing yet",
 /// which is not an error and must not be logged as one.
 fn read_available(conn : HubConnection) -> Result[Unit, String] {
-  let buf : FixedArray[Byte] = FixedArray::make(8192, b'\x00')
+  let buf : FixedArray[Byte] = FixedArray::make(READ_CHUNK_BYTES, b'\x00')
   while true {
     match (conn.stream.recv_some)(buf, buf.length()) {
       Ok(0) => {
@@ -408,10 +430,20 @@ fn read_available(conn : HubConnection) -> Result[Unit, String] {
         return Ok(())
       }
       Ok(n) => {
-        conn.inbox = append(conn.inbox, Bytes::from_array(buf[0:n]))
-        if conn.inbox.length() > MAX_INBOX_BYTES {
+        // stash the chunk; the join happens once per round, not once
+        // per read (see `pending`)
+        conn.pending.push(Bytes::from_array(buf[0:n]))
+        conn.pending_len += n
+        if conn.inbox.length() + conn.pending_len > MAX_INBOX_BYTES {
+          // loud on purpose: this is the one read outcome that used to
+          // be indistinguishable from a peer that simply went away, and
+          // an operator staring at a client-side "connection reset" has
+          // nothing else to go on (P15)
+          note(
+            "dropping \{conn.kind} connection: \{conn.inbox.length() + conn.pending_len} bytes buffered with no complete request (limit \{MAX_INBOX_BYTES}); the largest frame this server accepts is one \{@protocol.MAX_BATCH_BYTES}-byte batch",
+          )
           return Err(
-            "peer sent \{conn.inbox.length()} bytes without a complete request",
+            "peer sent \{conn.inbox.length() + conn.pending_len} bytes without a complete request",
           )
         }
       }
@@ -423,11 +455,42 @@ fn read_available(conn : HubConnection) -> Result[Unit, String] {
 }
 
 ///|
+/// How much one socket read takes. Large enough that a batch is a few
+/// reads rather than a few thousand (which is what made the join cost
+/// visible in the first place), small enough to stay a buffer and not
+/// an allocation.
+const READ_CHUNK_BYTES : Int = 65536
+
+///|
+/// Joins this round's reads into the contiguous inbox the parser needs.
+/// Called once per connection per round: the copy happens at most once
+/// per poll, whatever the peer's write pattern was.
+fn HubConnection::materialize(self : HubConnection) -> Unit {
+  if self.pending.length() == 0 {
+    return
+  }
+  if self.inbox.length() == 0 && self.pending.length() == 1 {
+    // a frame that arrived in one read: no copy at all
+    self.inbox = self.pending[0]
+  } else {
+    let merged = @buffer.Buffer::Buffer()
+    merged.write_bytes(self.inbox[0:self.inbox.length()])
+    for chunk in self.pending {
+      merged.write_bytes(chunk[0:chunk.length()])
+    }
+    self.inbox = merged.to_bytes()
+  }
+  self.pending = []
+  self.pending_len = 0
+}
+
+///|
 /// Drives the connection's protocol state machine over whatever is
 /// buffered. HTTP upgrades and frame sessions both live here, so a
 /// browser and a CLI are served by the same code path from the same
 /// loop.
 fn service(conn : HubConnection, handler : HubHandler) -> Unit {
+  conn.materialize()
   match conn.phase {
     TlsHandshake =>
       // handled by `step_handshake` in the poll loop, before this runs

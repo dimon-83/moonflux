@@ -17,6 +17,55 @@ pub using @kernel {type Conn, type Producer, type Consumer, type ClientError}
 /// Adapts a native TCP stream to the transport contract. `recv_exact`
 /// loops because a socket read may return short; a clean EOF before
 /// `n` bytes is an error, never a silent short read.
+
+///|
+/// Assembles exactly `n` bytes from a source that may hand them over a
+/// piece at a time, appending each piece **after** what is already
+/// there.
+///
+/// The order is the whole point. A socket returns what it has, so the
+/// only correct loop asks for "the rest" and writes it past the filled
+/// prefix. The first version of this file asked for `n` every round
+/// and always wrote at offset 0, so a reply that arrived in more than
+/// one segment kept only its last piece: the frame header parsed, the
+/// payload was silently made of the wrong bytes, and a 7 MiB fetch
+/// came back as `bad fetch reply` (P15). Bytes are the one thing this
+/// layer must not get wrong, so the assembly lives in one place and is
+/// tested against a source that answers in pieces.
+///
+/// `pull` receives a destination buffer and how many bytes are wanted,
+/// and returns how many it wrote; 0 means a clean end of stream.
+fn fill_exact(
+  n : Int,
+  pull : (FixedArray[Byte], Int) -> Result[Int, String],
+) -> Result[Bytes, String] {
+  if n < 0 {
+    return Err("negative read length")
+  }
+  let out : FixedArray[Byte] = FixedArray::make(n, b'\x00')
+  let mut filled = 0
+  while filled < n {
+    let want = n - filled
+    let chunk : FixedArray[Byte] = FixedArray::make(want, b'\x00')
+    let got = match pull(chunk, want) {
+      Ok(got) => got
+      Err(e) => return Err(e)
+    }
+    if got == 0 {
+      return Err("connection closed after \{filled} of \{n} bytes")
+    }
+    if got < 0 || got > want {
+      return Err("transport returned \{got} bytes for a \{want}-byte read")
+    }
+    for i in 0..<got {
+      out[filled + i] = chunk[i]
+    }
+    filled += got
+  }
+  Ok(Bytes::from_array(out[0:n]))
+}
+
+///|
 fn wrap_stream(stream : @net.TcpStream) -> Conn {
   Conn::{
     send: fn(bytes) {
@@ -26,19 +75,12 @@ fn wrap_stream(stream : @net.TcpStream) -> Conn {
       }
     },
     recv_exact: fn(n) {
-      let buf : FixedArray[Byte] = FixedArray::make(n, b'\x00')
-      let mut filled = 0
-      while filled < n {
-        let got = match stream.recv(buf, n) {
-          Ok(got) => got
-          Err(e) => return Err("\{e}")
+      fill_exact(n, fn(buf, want) {
+        match stream.recv(buf, want) {
+          Ok(got) => Ok(got)
+          Err(e) => Err("\{e}")
         }
-        if got == 0 {
-          return Err("connection closed after \{filled} of \{n} bytes")
-        }
-        filled += got
-      }
-      Ok(Bytes::from_array(buf[0:n]))
+      })
     },
     close: fn() { let _ = stream.close() },
   }
@@ -98,22 +140,34 @@ pub fn conn_over_stream(stream : @net.Stream, timeout_ms : Int) -> Conn {
       } else {
         0L
       }
-      let buf : FixedArray[Byte] = FixedArray::make(n, b'\x00')
-      let mut filled = 0
-      while filled < n {
-        match (stream.recv_some)(buf, n - filled) {
-          Ok(0) => return Err("connection closed after \{filled} of \{n} bytes")
-          Ok(got) => filled = filled + got
-          Err(@net.WouldBlock) => {
-            let _ = @net.poll_fds([(stream.fd)()], 50, false)
-            if timeout_ms > 0 && past_deadline(deadline) {
-              return Err("read timed out after \{timeout_ms}ms")
+      fill_exact(n, fn(buf, want) {
+        // the loop exists to absorb "would block" until a deadline;
+        // an answer variable rather than `return` keeps the closure's
+        // type the only exit (MoonBit wants a loop to yield if it is
+        // the closure's last expression)
+        let mut answer : Result[Int, String] = Err("read loop exited")
+        let mut done = false
+        while !done {
+          match (stream.recv_some)(buf, want) {
+            Ok(got) => {
+              answer = Ok(got)
+              done = true
+            }
+            Err(@net.WouldBlock) => {
+              let _ = @net.poll_fds([(stream.fd)()], 50, false)
+              if timeout_ms > 0 && past_deadline(deadline) {
+                answer = Err("read timed out after \{timeout_ms}ms")
+                done = true
+              }
+            }
+            Err(e) => {
+              answer = Err("\{e}")
+              done = true
             }
           }
-          Err(e) => return Err("\{e}")
         }
-      }
-      Ok(Bytes::from_array(buf[0:n]))
+        answer
+      })
     },
     close: fn() { (stream.close)() },
   }

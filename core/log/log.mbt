@@ -584,7 +584,13 @@ pub fn SegmentedLog::open_store_configured(
           size: 0,
           created_ms: 0L,
           anchors: [IndexAnchor::{ offset: 0L, position: 0 }],
-          index_saved: true,
+          // nothing has been written to disk yet: `index_saved` means
+          // "the stored index matches `anchors`", and a fresh segment
+          // has no stored index at all. Marking it saved was invisible
+          // while every request reopened the log (the recovery scan
+          // reset the flag), and the moment P16 made the handle
+          // long-lived it stopped writing indexes entirely.
+          index_saved: false,
         },
       ],
       next_offset: 0L,
@@ -834,7 +840,10 @@ fn SegmentedLog::roll_if_full(self : SegmentedLog) -> Result[Unit, LogError] {
     size: 0,
     created_ms: 0L,
     anchors: [IndexAnchor::{ offset: self.next_offset, position: 0 }],
-    index_saved: true,
+    // same as above: this segment's index is written when *it* is
+    // sealed, which is exactly the "index is worth writing only once
+    // the segment cannot change" rule the file comments claim
+    index_saved: false,
   })
   Ok(())
 }
@@ -1072,13 +1081,36 @@ pub fn SegmentedLog::append(
 
 ///|
 /// Reads at most `max_records` entries starting at absolute offset
-/// `from`, crossing segment boundaries as needed. Each segment is
-/// scanned from the nearest position the caller can cheaply reach
-/// (the whole segment today; the sparse index narrows that).
+/// `from`, crossing segment boundaries as needed, with **no byte
+/// budget** — the convenience for whole-log tooling and tests. Every
+/// path that answers a remote peer must call `read_bounded`: a window
+/// is materialised and then encoded into one frame, so a window
+/// nobody budgeted is a frame nobody can carry (P15).
 pub fn SegmentedLog::read(
   self : SegmentedLog,
   from : Int64,
   max_records : Int,
+) -> Result[Array[LogEntry], LogError] {
+  self.read_bounded(from, max_records, 0)
+}
+
+///|
+/// Reads at most `max_records` entries starting at absolute offset
+/// `from`, crossing segment boundaries as needed, stopping once one
+/// more record would push the batch frame these entries will be
+/// encoded into past `max_bytes`. Each segment is scanned from the
+/// nearest position the caller can cheaply reach (the whole segment
+/// today; the sparse index narrows that).
+///
+/// `max_bytes <= 0` means no budget. The first record always fits: a
+/// window that cannot carry its own first record would stall instead
+/// of failing, and refusing an oversize *record* is the decoder's job
+/// (`MAX_RECORD_BYTES`), not a reader's.
+pub fn SegmentedLog::read_bounded(
+  self : SegmentedLog,
+  from : Int64,
+  max_records : Int,
+  max_bytes : Int,
 ) -> Result[Array[LogEntry], LogError] {
   if from < 0L || from > self.next_offset || max_records < 0 {
     return Err(OffsetOutOfRange)
@@ -1096,8 +1128,10 @@ pub fn SegmentedLog::read(
     Some(i) => i
     None => return Err(OffsetOutOfRange)
   }
+  let mut used = @protocol.FRAME_OVERHEAD_BYTES
+  let mut full = false
   for i = start; i < self.segments.length(); i = i + 1 {
-    if out.length() >= max_records {
+    if out.length() >= max_records || full {
       break
     }
     let seg = self.segments[i]
@@ -1130,12 +1164,21 @@ pub fn SegmentedLog::read(
             let skip = if raw_skip < 0 { 0 } else { raw_skip }
             let mut j = skip
             while j < count && out.length() < max_records {
+              let size = @protocol.record_wire_size(batch.records[j])
+              if !fits_one_more(out.length(), used, size, max_bytes) {
+                full = true
+                break
+              }
+              used += size
               out.push(LogEntry::{
                 offset: base + j.to_int64(),
                 record: batch.records[j],
               })
               j += 1
             }
+          }
+          if full {
+            break
           }
           expected = batch_end
         }
@@ -1144,6 +1187,17 @@ pub fn SegmentedLog::read(
     }
   }
   Ok(out)
+}
+
+///|
+/// The batch budget as a predicate: does one more record of `size`
+/// bytes fit? The first record always does (see `read_bounded`), and
+/// `max_bytes <= 0` means no budget.
+fn fits_one_more(taken : Int, used : Int, size : Int, max_bytes : Int) -> Bool {
+  if max_bytes <= 0 || taken == 0 {
+    return true
+  }
+  used + size <= max_bytes
 }
 
 ///|
@@ -1191,6 +1245,26 @@ pub fn SegmentedLog::read_raw(
   from : Int64,
   max_records : Int,
 ) -> Result[RawWindow, LogError] {
+  self.read_raw_bounded(from, max_records, 0)
+}
+
+///|
+/// The same window with a byte budget: whole frames are added while
+/// they fit in `max_bytes` (at least one always is, see the note
+/// above — a frame is the unit of replication). `max_bytes <= 0`
+/// means no budget.
+///
+/// The budget matters because a sync reply is one session frame: a
+/// window that overflows the peer's buffer is dropped *after* the
+/// bytes were already counted as replicated in the caller's mind. The
+/// replication path therefore always passes the protocol's batch
+/// budget, and the follower simply asks again for the rest (P15).
+pub fn SegmentedLog::read_raw_bounded(
+  self : SegmentedLog,
+  from : Int64,
+  max_records : Int,
+  max_bytes : Int,
+) -> Result[RawWindow, LogError] {
   if from < 0L || from > self.next_offset || max_records < 0 {
     return Err(OffsetOutOfRange)
   }
@@ -1208,6 +1282,7 @@ pub fn SegmentedLog::read_raw(
   let collected = Buffer::Buffer()
   let mut taken = 0
   let mut window_base = from
+  let mut full = false
   // `started` spans segments: the boundary check below is about *where
   // the caller asked to start*, and that question is answered once —
   // applying it to every segment would refuse a legitimate cross-
@@ -1215,7 +1290,7 @@ pub fn SegmentedLog::read_raw(
   // caught exactly that).
   let mut started = false
   for i = start; i < self.segments.length(); i = i + 1 {
-    if taken >= max_records {
+    if taken >= max_records || full {
       break
     }
     let seg = self.segments[i]
@@ -1257,6 +1332,16 @@ pub fn SegmentedLog::read_raw(
           }
           if started {
             if taken > 0 && taken + count > max_records {
+              break
+            }
+            let from_this_segment = match start_byte {
+              Some(start_at) => collected.length() + end_byte - start_at
+              None => collected.length()
+            }
+            if taken > 0 &&
+              max_bytes > 0 &&
+              from_this_segment + (reader.position() - before) > max_bytes {
+              full = true
               break
             }
             taken += count

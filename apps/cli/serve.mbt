@@ -493,7 +493,7 @@ fn dispatch_produce(payload : Bytes, data_dir : String) -> (Int, Bytes) {
   }
   let records = match @protocol.decode_frame_strict(frame) {
     Ok(batch) => batch.records
-    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad batch: \{e}")
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, batch_refusal(e))
   }
   let log = match open_topic_log(data_dir, topic) {
     Ok(log) => log
@@ -510,6 +510,21 @@ fn dispatch_produce(payload : Bytes, data_dir : String) -> (Int, Bytes) {
 }
 
 ///|
+/// Why a produce batch was refused, in the terms the sender needs.
+///
+/// `ValueTooLarge` is the one failure a producer can actually fix, and
+/// "bad batch: ValueTooLarge" leaves it guessing which limit it hit and
+/// by how much (P15). Everything else is malformed input and keeps the
+/// decoder's own words.
+fn batch_refusal(error : @protocol.ProtocolError) -> String {
+  match error {
+    ValueTooLarge =>
+      "batch exceeds the \{@protocol.MAX_BATCH_BYTES}-byte batch budget (or carries a key/value over the \{@protocol.MAX_RECORD_BYTES}-byte per-field limit); split it into smaller batches"
+    other => "bad batch: \{other}"
+  }
+}
+
+///|
 /// A partitioned produce: the same append, at an explicit partition.
 /// The reply shape is identical to the unpartitioned one (base + count).
 fn dispatch_produce_partition(
@@ -523,7 +538,7 @@ fn dispatch_produce_partition(
   }
   let records = match @protocol.decode_frame_strict(frame) {
     Ok(batch) => batch.records
-    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad batch: \{e}")
+    Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, batch_refusal(e))
   }
   let log = match open_partition_log(data_dir, topic, partition) {
     Ok(log) => log
@@ -555,29 +570,73 @@ fn dispatch_fetch_partition(
     Ok(log) => log
     Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
   }
-  let entries = match log.read(from, max) {
+  // the read is bounded by the reply's byte budget, not just the
+  // client's record count: a window is materialised and then encoded
+  // into one frame, so an unbounded window is an unmovable frame (P15)
+  let entries = match log.read_bounded(from, max, @client.FETCH_WINDOW_BYTES) {
     Ok(entries) => entries
     Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
   }
-  let records : Array[@protocol.Record] = []
-  for entry in entries {
-    match apply_nodes(rules.chain, [entry.record]) {
-      Ok(out_one) =>
-        for r in out_one {
-          records.push(r)
-        }
-      Err(e) => return err_reply(@client.ERR_TRANSFORM, "transform: \{e}")
-    }
+  let (base, records, scan_end) = match frame_window(entries, rules, from) {
+    Ok(parts) => parts
+    Err((code, message)) => return err_reply(code, message)
   }
-  let base : Int64 = if records.length() > 0 { entries[0].offset } else { from }
   let frame = @protocol.encode_frame(base, records)
-  // the reply carries the partition's own watermarks: a partition is an
-  // independent log, so its end is its own, not the topic's aggregate
-  let out = Buffer::Buffer()
-  out.write_uint_be(1U)
-  out.write_uint_be(frame.length().reinterpret_as_uint())
-  out.write_bytes(frame[0:frame.length()])
-  reply(@client.CMD_OK, out.to_bytes())
+  reply(@client.CMD_OK, @client.encode_fetch_reply([frame], scan_end))
+}
+
+///|
+/// Turns one window of log entries into the batch frame a fetch answer
+/// carries: run the topic's rule chain, then stop before the frame
+/// would leave the protocol's batch budget (P15).
+///
+/// The cap is applied **after** the transforms, because a rule can
+/// emit more records than it was handed — a budget checked against the
+/// input would be a budget the output never saw. At least one entry is
+/// always taken: a window that cannot carry its own first record would
+/// leave a consumer unable to make progress, and refusing an oversize
+/// *record* is the decoder's job.
+///
+/// Returns `(base, records, scan_end)`:
+/// - `base` is the offset of the first entry that contributed a
+///   record, so a consumer's offsets stay anchored to the log rather
+///   than to whatever the rule emitted (a filtered window used to
+///   report the first *examined* entry, which misplaced every offset
+///   after it);
+/// - `scan_end` is where the caller should resume. It advances even
+///   when a rule emits nothing, which is what lets a windowed drain
+///   tell "this partition ends here" from "ask again".
+fn frame_window(
+  entries : Array[@log.LogEntry],
+  rules : RuleState,
+  from : Int64,
+) -> Result[(Int64, Array[@protocol.Record], Int64), (Int, String)] {
+  let records : Array[@protocol.Record] = []
+  let mut base = from
+  let mut scan_end = from
+  let mut bytes = @protocol.FRAME_OVERHEAD_BYTES
+  for entry in entries {
+    let out_one = match apply_nodes(rules.chain, [entry.record]) {
+      Ok(out_one) => out_one
+      Err(e) => return Err((@client.ERR_TRANSFORM, "transform: \{e}"))
+    }
+    let mut added = 0
+    for record in out_one {
+      added += @protocol.record_wire_size(record)
+    }
+    if records.length() > 0 && bytes + added > @client.FETCH_WINDOW_BYTES {
+      break
+    }
+    if records.length() == 0 && out_one.length() > 0 {
+      base = entry.offset
+    }
+    for record in out_one {
+      records.push(record)
+    }
+    bytes += added
+    scan_end = entry.offset + 1L
+  }
+  Ok((base, records, scan_end))
 }
 
 ///|
@@ -603,30 +662,19 @@ fn dispatch_fetch(
     Ok(log) => log
     Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
   }
-  let entries = match log.read(from, max) {
+  let entries = match log.read_bounded(from, max, @client.FETCH_WINDOW_BYTES) {
     Ok(entries) => entries
     Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
   }
   // one batch frame carries the whole window; the client derives
   // per-record offsets from its base offset. The dynamic rule chain
   // (mbel transforms) runs here, on the consumption path.
-  let records : Array[@protocol.Record] = []
-  for entry in entries {
-    match apply_nodes(rules.chain, [entry.record]) {
-      Ok(out_one) =>
-        for r in out_one {
-          records.push(r)
-        }
-      Err(e) => return err_reply(@client.ERR_TRANSFORM, "transform: \{e}")
-    }
+  let (base, records, scan_end) = match frame_window(entries, rules, from) {
+    Ok(parts) => parts
+    Err((code, message)) => return err_reply(code, message)
   }
-  let base : Int64 = if records.length() > 0 { entries[0].offset } else { from }
   let frame = @protocol.encode_frame(base, records)
-  let out = Buffer::Buffer()
-  out.write_uint_be(1U)
-  out.write_uint_be(frame.length().reinterpret_as_uint())
-  out.write_bytes(frame[0:frame.length()])
-  reply(@client.CMD_OK, out.to_bytes())
+  reply(@client.CMD_OK, @client.encode_fetch_reply([frame], scan_end))
 }
 
 ///|
@@ -694,21 +742,16 @@ fn dispatch_fetch_committed(
     (window_end - from).to_int()
   }
   let take = if max < available { max } else { available }
-  let entries = match log.read(from, take) {
+  // same byte budget as the uncommitted path: the reply is one frame,
+  // so the window has to be one frame's worth (P15)
+  let entries = match log.read_bounded(from, take, @client.FETCH_WINDOW_BYTES) {
     Ok(entries) => entries
     Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
   }
-  let records : Array[@protocol.Record] = []
-  for entry in entries {
-    match apply_nodes(rules.chain, [entry.record]) {
-      Ok(out_one) =>
-        for r in out_one {
-          records.push(r)
-        }
-      Err(e) => return err_reply(@client.ERR_TRANSFORM, "transform: \{e}")
-    }
+  let (base, records, _scan_end) = match frame_window(entries, rules, from) {
+    Ok(parts) => parts
+    Err((code, message)) => return err_reply(code, message)
   }
-  let base : Int64 = if records.length() > 0 { entries[0].offset } else { from }
   let frame = @protocol.encode_frame(base, records)
   let response = @client.SyncResponse::{
     base_offset: base,

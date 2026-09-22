@@ -1554,6 +1554,20 @@ fn PartitionHost::replicate_once(
 const REPLICATION_BATCH : Int = 512
 
 ///|
+/// How many bytes one replication round may carry. The record bound
+/// above keeps a round small in *work*; this keeps it small in
+/// *bytes*, because a reply is one frame written by a tick-driven
+/// loop: the leader writes what the socket accepts, then waits for the
+/// next poll, so a 16 MiB reply needs dozens of rounds — longer than
+/// the 2s peer deadline, which is how a follower ends up timing out on
+/// every round and never catching up (P15 measured it: hw stuck at 0
+/// with a 12 MiB batch and a batch-sized window).
+///
+/// One MiB is ~0.2s of writing at that cadence: comfortably inside the
+/// deadline, and still 20 MB/s per partition per tick.
+const REPLICATION_WINDOW_BYTES : Int = 1048576
+
+///|
 /// Asks the leader for raw frames from `from`.
 fn sync_fetch(
   pump : () -> Unit,
@@ -2396,7 +2410,15 @@ fn dispatch_data_frame(
       // diverged follower asks. Answering with an empty window at our
       // own end hands it the fact it needs (the leader's LEO is the
       // authority) instead of an error it can only retry (P7).
-      let window = match log.read_raw(request.from, request.max_records) {
+      // the byte budget is what keeps a sync reply inside one
+      // transport frame: whole frames only, at least one, and the
+      // follower asks for the rest on the next round (P15)
+      let window = match
+        log.read_raw_bounded(
+          request.from,
+          request.max_records,
+          REPLICATION_WINDOW_BYTES,
+        ) {
         Ok(window) => window
         Err(_) =>
           if request.from > log.high_watermark() {

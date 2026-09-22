@@ -279,6 +279,31 @@ fn await_frame(
 ) -> Result[@client.Frame, String] {
   let chunk : FixedArray[Byte] = FixedArray::make(8192, b'\x00')
   while true {
+    // Take every byte the peer has already sent *before* serving
+    // anything. A reply is one frame that arrives in many chunks, and
+    // pumping between chunks costs a poll tick each: with an 8 KiB
+    // read and a 50ms pump, a 4 MiB sync reply could never land inside
+    // the 2s peer deadline — the follower timed out on every round and
+    // never caught up (P15 measured exactly that, with hw stuck at 0).
+    let mut closed = false
+    while true {
+      match (stream.recv_some)(chunk, chunk.length()) {
+        Ok(0) => {
+          closed = true
+          break
+        }
+        Ok(n) => {
+          for i = 0; i < n; i = i + 1 {
+            inbox.push(chunk[i])
+          }
+          if inbox.length() > @client.MAX_FRAME_PAYLOAD + 13 {
+            return Err("peer sent an oversized frame")
+          }
+        }
+        Err(WouldBlock) => break
+        Err(e) => return Err("\{e}")
+      }
+    }
     if inbox.length() >= 13 {
       let head = Bytes::from_array(inbox[0:13])
       let (cmd, rid, payload_len) = match @client.decode_header(head) {
@@ -303,6 +328,12 @@ fn await_frame(
         return Ok(@client.Frame::{ cmd, rid, payload })
       }
     }
+    if closed {
+      // a closed peer with a partial frame in hand is a failed call
+      // either way: the caller must not treat a truncated reply as a
+      // short one
+      return Err("peer closed")
+    }
     // not there yet: serve our own connections, then look again
     pump()
     if now_ms() > deadline {
@@ -320,19 +351,6 @@ fn await_frame(
       if ready.length() == 0 {
         continue
       }
-    }
-    match (stream.recv_some)(chunk, chunk.length()) {
-      Ok(0) => return Err("peer closed")
-      Ok(n) => {
-        for i = 0; i < n; i = i + 1 {
-          inbox.push(chunk[i])
-        }
-        if inbox.length() > @client.MAX_FRAME_PAYLOAD + 13 {
-          return Err("peer sent an oversized frame")
-        }
-      }
-      Err(WouldBlock) => ()
-      Err(e) => return Err("\{e}")
     }
   } nobreak {
     Err(

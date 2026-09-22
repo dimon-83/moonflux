@@ -26,6 +26,7 @@ typedef struct ssl_st SSL;
 #define MF_TLS_ERROR_WANT_READ 2
 #define MF_TLS_ERROR_WANT_WRITE 3
 #define MF_TLS_ERROR_SYSCALL 5
+#define MF_TLS_ERROR_ZERO_RETURN 6
 
 // SSL_VERIFY_* flags (stable ABI).
 #define MF_TLS_VERIFY_NONE 0x00
@@ -56,6 +57,7 @@ static int (*p_SSL_pending)(const SSL *);
 static int (*p_SSL_shutdown)(SSL *);
 static unsigned long (*p_ERR_get_error)(void);
 static void (*p_ERR_error_string_n)(unsigned long, char *, size_t);
+static void (*p_ERR_clear_error)(void);
 static int (*p_OPENSSL_init_ssl)(uint64_t, const void *);
 static int (*p_SSL_set1_host)(SSL *, const char *);
 static long (*p_SSL_get_verify_result)(const SSL *);
@@ -113,6 +115,24 @@ static void set_ssl_error(const char *prefix) {
   }
   snprintf(last_error, sizeof(last_error), "%s: %s", prefix, detail);
   last_error[sizeof(last_error) - 1] = '\0';
+}
+
+// OpenSSL's error queue is thread-local *and* sticky: anything left
+// behind by an earlier call makes `SSL_get_error` report that stale
+// error instead of what this call is actually saying. The classic
+// symptom is a healthy session turning into "TLS read failed" right
+// after somebody else's handshake failed — `SSL_get_error` returns
+// SSL_ERROR_SSL for a plain WANT_READ because the queue is non-empty.
+//
+// P15 hit exactly that: the security gate deliberately tries a rogue CA
+// and a credential-less client first, and the next legitimate produce
+// then died on its first read (a 13-byte frame header). Clearing before
+// every operation is the documented discipline, and it is what makes
+// the message we build afterwards describe *this* call.
+static void clear_error(void) {
+  if (p_ERR_clear_error != NULL) {
+    p_ERR_clear_error();
+  }
 }
 
 /// Loads the library and resolves every symbol. Returns 1 on success,
@@ -178,6 +198,7 @@ int32_t mf_tls_init(void) {
   RESOLVE(p_SSL_shutdown, ssl_handle, "SSL_shutdown");
   RESOLVE(p_ERR_get_error, crypto_handle, "ERR_get_error");
   RESOLVE(p_ERR_error_string_n, crypto_handle, "ERR_error_string_n");
+  RESOLVE(p_ERR_clear_error, crypto_handle, "ERR_clear_error");
   // optional: older builds may not export it, and it is only a nicety
   *(void **)(&p_OPENSSL_init_ssl) = dlsym(ssl_handle, "OPENSSL_init_ssl");
   *(void **)(&p_SSL_set1_host) = dlsym(ssl_handle, "SSL_set1_host");
@@ -330,6 +351,7 @@ long mf_tls_verify_result(intptr_t ssl) {
 #define MF_TLS_WANT_WRITE_CODE 2
 
 int32_t mf_tls_handshake(intptr_t ssl, int32_t server) {
+  clear_error();
   int rc = server ? p_SSL_accept((SSL *)ssl) : p_SSL_connect((SSL *)ssl);
   if (rc == 1) {
     return 1;
@@ -358,6 +380,7 @@ int32_t mf_tls_read(intptr_t ssl, uint8_t *buf, int32_t len) {
   if (len <= 0) {
     return 0;
   }
+  clear_error();
   int rc = p_SSL_read((SSL *)ssl, buf, (int)len);
   if (rc > 0) {
     return rc;
@@ -369,7 +392,9 @@ int32_t mf_tls_read(intptr_t ssl, uint8_t *buf, int32_t len) {
   if (err == MF_TLS_ERROR_WANT_WRITE) {
     return -3;
   }
-  if (err == MF_TLS_ERROR_NONE || (err == MF_TLS_ERROR_SYSCALL && rc == 0)) {
+  if (err == MF_TLS_ERROR_NONE ||
+      err == MF_TLS_ERROR_ZERO_RETURN ||
+      (err == MF_TLS_ERROR_SYSCALL && rc == 0)) {
     return 0;
   }
   set_ssl_error("TLS read failed");
@@ -381,6 +406,7 @@ int32_t mf_tls_write(intptr_t ssl, const uint8_t *buf, int32_t len) {
   if (len <= 0) {
     return 0;
   }
+  clear_error();
   int rc = p_SSL_write((SSL *)ssl, buf, (int)len);
   if (rc > 0) {
     return rc;

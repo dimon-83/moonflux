@@ -98,12 +98,27 @@ fn produce_local(
     Ok(log) => log
     Err(e) => fail(e)
   }
-  let base = match log.append(records) {
-    Ok(base) => base
-    Err(e) => fail("append: \{e}")
+  // the same chunking the wire path does, for the same reason: the
+  // kernel refuses a batch over `MAX_BATCH_BYTES` (`BatchTooLarge`), and
+  // a 20 MiB file used to hit that wall on the local path while the
+  // remote path had already learned to split it (P15). One rule for
+  // both directions: a file is as big as the operator wants, a frame
+  // is not.
+  let batches = @protocol.split_batches(records, @client.PRODUCE_CHUNK_BYTES)
+  let mut first : Int64 = 0L
+  let mut total = 0
+  for index, batch in batches {
+    let base = match log.append(batch) {
+      Ok(base) => base
+      Err(e) => fail("append: \{e}")
+    }
+    if index == 0 {
+      first = base
+    }
+    total += batch.length()
   }
   println(
-    "produced \{records.length()} records to topic \{topic} at offsets \{base}..\{base + records.length().to_int64()} (log end \{log.high_watermark()})",
+    "produced \{total} records to topic \{topic} at offsets \{first}..\{first + total.to_int64()} (log end \{log.high_watermark()})",
   )
   cli_exit(0)
 }

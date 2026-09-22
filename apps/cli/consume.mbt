@@ -124,33 +124,64 @@ fn consume_remote(
     Ok(consumer) => consumer
     Err(e) => fail("connect \{host}:\{port}: \{e}")
   }
-  if committed {
-    // the committed read reports the watermarks it used on stderr, so
-    // a caller can see *why* a record was withheld while stdout stays
-    // a clean record stream
-    // committed reads keep their own command; partitioning for them
-    // arrives with the per-partition watermark plumbing (P5 tail)
-    match consumer.fetch_committed(topic, from, 1000000) {
-      Ok((entries, hw, leo)) => {
-        warn(
-          "committed read: hw=\{hw} leo=\{leo} (records beyond the watermark are withheld)",
-        )
-        for entry in entries {
-          print_entry(entry)
+  // Drain in windows until the server says it has nothing more
+  // (P15). One request returning "everything" was a promise no
+  // transport could keep: past the reply budget the answer either
+  // arrived truncated or the connection was dropped, and the caller
+  // could not tell the difference between "that was all" and "that
+  // was as much as fit".
+  let mut next = from
+  let mut first_window = true
+  while true {
+    if committed {
+      // the committed read reports the watermarks it used on stderr,
+      // so a caller can see *why* a record was withheld while stdout
+      // stays a clean record stream
+      match consumer.fetch_committed(topic, next, CONSUME_WINDOW) {
+        Ok((entries, hw, leo)) => {
+          if first_window {
+            warn(
+              "committed read: hw=\{hw} leo=\{leo} (records beyond the watermark are withheld)",
+            )
+          }
+          first_window = false
+          if entries.length() == 0 {
+            break
+          }
+          for entry in entries {
+            print_entry(entry)
+          }
+          next = entries[entries.length() - 1].offset + 1L
         }
+        Err(e) => fail("committed fetch: \{e}")
       }
-      Err(e) => fail("committed fetch: \{e}")
-    }
-  } else {
-    let entries = match
-      consumer.fetch_partition(topic, partition, from, 1000000) {
-      Ok(entries) => entries
-      Err(e) => fail("fetch: \{e}")
-    }
-    for entry in entries {
-      print_entry(entry)
+    } else {
+      match
+        consumer.fetch_partition_window(topic, partition, next, CONSUME_WINDOW) {
+        Ok(window) => {
+          for entry in window.entries {
+            print_entry(entry)
+          }
+          if window.scan_end <= next {
+            // no progress: either the partition ends here or a rule
+            // filtered this whole window away. Either way the server
+            // has told us where it stopped, so asking again would
+            // repeat the same answer forever.
+            break
+          }
+          next = window.scan_end
+        }
+        Err(e) => fail("fetch: \{e}")
+      }
     }
   }
   consumer.close()
   cli_exit(0)
 }
+
+///|
+/// How many records one fetch asks for. Not the bound that matters —
+/// the server caps the reply by bytes, and it is the server's answer
+/// that decides when a drain is finished (P15) — but a number large
+/// enough that a fast path is one round trip rather than thousands.
+const CONSUME_WINDOW : Int = 65536

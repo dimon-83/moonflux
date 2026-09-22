@@ -140,6 +140,138 @@ pub fn encode_frame(base_offset : Int64, records : Array[Record]) -> Bytes {
 }
 
 ///|
+/// The bytes one frame costs regardless of its records: magic +
+/// version (4) + batch_length (4) + the fixed body before the blob
+/// (base offset 8 + crc 4 + count 4 + blob length 4). Public because
+/// a caller that budgets a *frame* (a reader capping a window, a
+/// producer sizing a chunk) has to include it, and a second copy of
+/// "28" is a second answer waiting to disagree.
+pub const FRAME_OVERHEAD_BYTES : Int = 28
+
+///|
+/// How many bytes `value` needs as a LEB128 varint (the length prefix
+/// `encode_record_into` writes in front of each record body).
+fn uleb128_size(value : Int) -> Int {
+  let mut remaining = value
+  let mut size = 1
+  while remaining >= 128 {
+    remaining = remaining >> 7
+    size += 1
+  }
+  size
+}
+
+///|
+/// The encoded size of one record inside a batch blob — its length
+/// prefix included. This is the accounting a producer needs to keep a
+/// frame inside a budget *before* it encodes it: the limits in this
+/// file are checked by the decoder, and a producer that only learns
+/// them from a rejection has already put an unshippable frame on the
+/// wire (P15).
+pub fn record_wire_size(record : Record) -> Int {
+  let body = @buffer.Buffer::Buffer()
+  body.write_int64_be(record.timestamp)
+  write_len_bytes(body, record.key)
+  write_len_bytes(body, record.value)
+  body.write_leb128(record.headers.length())
+  for h in record.headers {
+    write_len_bytes(body, h.0)
+    write_len_bytes(body, h.1)
+  }
+  let body_len = body.length()
+  uleb128_size(body_len) + body_len
+}
+
+///|
+/// The frame `encode_frame` would produce for `records`, in bytes —
+/// the *whole* frame, so a caller can compare it against
+/// `MAX_BATCH_BYTES` (which bounds `batch_length`, i.e. everything
+/// after the length field) without doing the arithmetic twice.
+pub fn batch_wire_size(records : Array[Record]) -> Int {
+  let mut total = FRAME_OVERHEAD_BYTES
+  for record in records {
+    total += record_wire_size(record)
+  }
+  total
+}
+
+///|
+/// How many leading records fit in one frame of at most `max_bytes`.
+///
+/// Two rules, both deliberate:
+/// - at least one record is returned for a non-empty input, however
+///   large it is: refusing to *carry* the first record would turn a
+///   producer's oversize payload into a stall that never reports why,
+///   and the decoder's own `ValueTooLarge` is the honest refusal;
+/// - `max_bytes <= 0` means "no budget": every record fits, which is
+///   what callers that are not sizing a wire frame (tests, whole-log
+///   tooling) mean.
+pub fn batch_fit(records : Array[Record], max_bytes : Int) -> Int {
+  if records.length() == 0 {
+    return 0
+  }
+  let mut bytes = FRAME_OVERHEAD_BYTES
+  let mut taken = 0
+  for record in records {
+    let size = record_wire_size(record)
+    if taken > 0 && max_bytes > 0 && bytes + size > max_bytes {
+      break
+    }
+    bytes += size
+    taken += 1
+  }
+  taken
+}
+
+///|
+/// Splits records into consecutive batches, each within `max_bytes`
+/// of encoded frame. Order is preserved, so batch k's offsets are
+/// contiguous with batch k+1's and a producer can report one range
+/// for the whole send.
+///
+/// An empty input yields one empty batch, not zero: `produce` of
+/// nothing still has to answer with the log's end, and a caller that
+/// was handed a consequence-free request should not have to special
+/// case it.
+pub fn split_batches(
+  records : Array[Record],
+  max_bytes : Int,
+) -> Array[Array[Record]] {
+  if records.length() == 0 {
+    return [records]
+  }
+  let out : Array[Array[Record]] = []
+  let mut start = 0
+  while start < records.length() {
+    let take = batch_fit(records[start:records.length()].to_owned(), max_bytes)
+    out.push(records[start:start + take].to_owned())
+    start += take
+  }
+  out
+}
+
+///|
+/// Why one record cannot travel on the wire, or `None` when it can.
+/// The per-field bound is the decoder's (`read_len_bytes` refuses a
+/// key or value over `MAX_RECORD_BYTES`); checking it here means a
+/// producer says "this record is too big, and here is which part" in
+/// the caller's own process instead of a round trip that ends in
+/// `ValueTooLarge`.
+pub fn record_size_violation(record : Record) -> String? {
+  if record.key.length() > MAX_RECORD_BYTES {
+    return Some(
+      "key of \{record.key.length()} bytes exceeds the \{MAX_RECORD_BYTES}-byte per-field limit",
+    )
+  }
+  if record.value.length() > MAX_RECORD_BYTES {
+    return Some(
+      "value of \{record.value.length()} bytes exceeds the \{MAX_RECORD_BYTES}-byte per-field limit",
+    )
+  }
+  None
+}
+
+///|
 fn read_len_bytes(reader : @codec.Reader) -> Result[Bytes, ProtocolError] {
   let len = match reader.read_uleb128_len() {
     Ok(len) => len

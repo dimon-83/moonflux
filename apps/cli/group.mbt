@@ -289,23 +289,34 @@ fn consume_group(
         Ok(consumer) => consumer
         Err(_) => continue
       }
-      let entries = match
-        consumer.fetch_partition(
+      // the window reports where the server's scan reached, so the
+      // cursor advances by the log's progress rather than by what a
+      // rule happened to emit — and a byte-capped reply (P15) is not
+      // mistaken for the end of the partition
+      let window = match
+        consumer.fetch_partition_window(
           cursor.topic,
           cursor.partition,
           cursor.next,
           1000,
         ) {
-        Ok(entries) => entries
+        Ok(window) => window
         Err(_) => {
           consumer.close()
           continue
         }
       }
       consumer.close()
-      for entry in entries {
+      for entry in window.entries {
         print_entry(entry)
         cursor.next = entry.offset + 1L
+        read_any = true
+      }
+      if window.scan_end > cursor.next {
+        // nothing survived the rule chain in this window, but the
+        // partition moved on: follow it, or the member would re-read
+        // the same window for as long as it runs
+        cursor.next = window.scan_end
         read_any = true
       }
       cursors[i] = cursor

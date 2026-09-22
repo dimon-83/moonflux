@@ -672,6 +672,26 @@ pub const ERR_WRONG_ROLE = 7
 pub const MAX_FRAME_PAYLOAD = 33554432
 
 ///|
+/// How many bytes of records one produce request carries (P15).
+///
+/// Below every limit a transport or decoder enforces, on purpose: a
+/// request is a *unit of progress*. A producer that puts a whole file
+/// in one frame learns nothing until something refuses it — which is
+/// what happened to the first 8.7 MiB produce this project ran
+/// (silent connection reset, no server log). Chunking means bounded
+/// memory on both sides, an answer per chunk, and failure that names
+/// the chunk. The broker assigns offsets in arrival order, so the
+/// chunks stay contiguous and a caller can report one range.
+pub const PRODUCE_CHUNK_BYTES : Int = 4194304
+
+///|
+/// How much a fetch reply may carry: the protocol's own batch budget,
+/// which is the largest frame a peer's decoder accepts. A reply built
+/// to this is one the transport can always move; a reply that ignores
+/// it is data loss with a successful-looking status (P15).
+pub const FETCH_WINDOW_BYTES : Int = @protocol.MAX_BATCH_BYTES
+
+///|
 pub(all) struct Frame {
   cmd : Int
   rid : Int
@@ -688,6 +708,29 @@ pub fn encode_frame(frame : Frame) -> Bytes {
   out.write_uint_be(frame.rid.reinterpret_as_uint())
   out.write_uint_be(frame.payload.length().reinterpret_as_uint())
   out.write_bytes(frame.payload[0:frame.payload.length()])
+  out.to_bytes()
+}
+
+///|
+/// Encodes one fetch reply: the batches, then **how far the server's
+/// scan advanced** (`scan_end` — the offset to ask from next).
+///
+/// The tail goes last and is read only when present, which is what
+/// keeps the addition compatible in both directions (README 决策 29):
+/// a client that predates it decodes the batches and ignores the rest,
+/// and a current client talking to an older server falls back to "one
+/// past the last record returned". It matters because a window is
+/// byte-capped: without `scan_end` a consumer cannot tell "the log
+/// ends here" from "this window was full, ask again", so it would
+/// either stop early (losing data) or spin (P15).
+pub fn encode_fetch_reply(batches : Array[Bytes], scan_end : Int64) -> Bytes {
+  let out = @buffer.Buffer::Buffer()
+  out.write_uint_be(batches.length().reinterpret_as_uint())
+  for batch in batches {
+    out.write_uint_be(batch.length().reinterpret_as_uint())
+    out.write_bytes(batch[0:batch.length()])
+  }
+  out.write_int64_be(scan_end)
   out.to_bytes()
 }
 
