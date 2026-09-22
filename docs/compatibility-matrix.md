@@ -32,6 +32,8 @@
 
 | 21 | **载荷预算（远超对标的自建不变量）**：一条记录、一个批次、一帧、一轮复制各自有明确的字节上限，且**所有上限同源**；超限是结构化拒绝，不是静默的传输失败 | 参考系统的 RecordBatch 有自己的上限，但"agent 缓冲"与"协议上限"是两个独立常量（本项目踩过：解码器收 16 MiB、hub 缓冲 8 MiB ⇒ 8.7 MiB 生产被静默重置、10 MiB 读取被中途丢弃） | 上限单一真相 `@protocol.MAX_BATCH_BYTES`=16 MiB；生产分批 4 MiB（偏移连续、批间不保证原子）；读取窗口按字节封顶且"至少一条/一帧"；fetch 应答 `scan_end` 加法尾段（服务端说"扫描到哪里"，客户端据此在窗口间推进，不用"条数变少"猜读完）；复制窗口 1 MiB（tick 循环 + 2s 对端期限的推论）；单条 key/value 上限 4 MiB 由**生产者**按名拒绝；hub 缓冲从协议派生，超限**记日志**后断开 | ✅ 对拍通过 | `scripts/e2e-p15-bulk.sh`（5 腿：20 MiB 端到端逐字节一致 / 跨分块偏移精确 / 超限记录按名拒绝且服务端存活 / 超限帧被报告且服务端存活 / 12 MiB 批次复制逐字节一致）+ `core/protocol/protocol_wbtest.mbt`（计量与分批）+ `core/log_test`（两条有界读测试）+ `apps/client/transport_wbtest.mbt`（分片拼接） |
 
+| 22 | **基准工具**：吞吐与延迟直方图，负载下的完整性校验 | `fluvio benchmark`：producer 吞吐 + 延迟直方图（min/avg/max、p50/p95/p99），全参数矩阵（batch/linger/压缩/生产者数/分区/副本），自动建删 topic；**consumer 基准隐藏未发布**（报告 §2.12） | `benchmark produce/consume/latency`（本地+远端）：produce 报吞吐 + 逐批 ack 直方图（一批一帧；偏移不连续=硬失败）；consume 抽干至 `scan_end`，`--verify` 校验值头序号=偏移；latency 报 produce-ack 与 e2e 可见性两组直方图（单调 µs 时钟）；**数字只报告、门禁只断言结构**（决策 41，决策 33 的推论）；执行中抓掉 accept 先于 poll 的「每请求一 tick」税（~200 ms 恒定、与载荷无关；修后本地铁环回 ~0.1 ms，ticket 75） | ✅ 对拍通过 | `scripts/e2e-p17-bench.sh`（6 腿：计数与区间精确 / 序号校验 / 百分位单调 / e2e ⊇ ack / 每主题恰好一次 `opened` / 超限按名拒绝且服务端存活）+ `apps/cli/benchmark_wbtest.mbt`（nearest-rank 与值头编解码） |
+
 **图例**：✅ 对拍通过（有可复现脚本/测试）｜⚠️ 部分验证（注明缺口）｜⏳ 未验证（属后续里程碑门禁）。
 
 **维护规则**：新增对标语义先入表（状态 ⏳），落地并取得可证伪证据后更新为 ✅ 并附证据入口；状态变更需在 PR 说明中注明依据（AGENTS.md §7）。

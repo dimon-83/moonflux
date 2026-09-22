@@ -95,24 +95,26 @@ sequenceDiagram
     participant Loop as 单线程循环
     participant Hub as ConnectionHub
     participant H as 逐帧分发器
-    loop 每一轮（tick = 50ms）
+    loop 每一轮（tick 是空闲上限，不是睡眠）
         Loop->>Hub: poll_once(handler)
-        Hub->>Hub: accept 全部待接入（TLS 只 attach 不等待）
+        Hub->>Hub: poll（listener + 全部连接）一次等所有事
+        Hub->>Hub: accept 就绪的待接入（TLS 只 attach 不等待）
         Hub->>Hub: 步进 TLSHandshake 连接（每轮一步，期限到了才丢）
-        Hub->>Hub: poll 全部 fd → 读就绪者 → 完整帧交给 H
+        Hub->>Hub: 读就绪者 → 完整帧交给 H
         H->>H: 认证检查（P12）→ permit(role, cmd) → 分发
         Hub->>Hub: 写回应答，丢掉死连接
         Loop->>Loop: housekeeping（心跳/清扫/调和）
     end
 ```
 
-这个形状是三条纪律的产物，每条都有实测事故背书（详见各纪律块的"为什么"）：
+这个形状是四条纪律的产物，每条都有实测事故背书（详见各纪律块的"为什么"）：
 
 - **谁都别等**：等待必须"步进"而不是"阻塞 + 期限"。P13 用三次运行证明"每轮至多 N 次阻塞握手"仍然错——限制等几次改不了等本身，沉默连接占着 backlog 位置照样饿死真实客户端（README 决策 36）。
-- **泵贯穿所有等待**：任何"等对端"的循环都要在等待中服务自己的连接——**包括复制握手的第一次 WELCOME**。漏掉它，三节点环上同时拨号就互相等死（`sample` 采样显示节点 100% 卡在 `SyncLink::connect`，ticket 64）。
+- **等待要等在 poll 上，一次等完所有事**：listener 与连接同在一个 poll 集。曾经 accept 先于连接 poll、且 accept 自带整 tick 期限——一个恰好在 flush 后发出下一请求的对端（一切请求-应答客户端）每请求坐穿整个 accept 窗口：**每请求一 tick 的恒定税**，P17 基准实测 ~200 ms（与载荷无关；ticket 75）。修后本地铁环回从 ~202 ms 降到 ~0.1 ms。
+- **泵贯穿所有等待**：任何"等对端"的循环都要在等待中服务自己的连接——**包括复制握手的第一次 WELCOME**。漏掉它，三节点环上同时拨号就互相等死（`sample` 采样显示节点 100% 时间卡在 `SyncLink::connect`，ticket 64）。
 - **写不能杀进程**：net 垫片进程级忽略 SIGPIPE，写向消失的对端得到 `EPIPE`——调用点按"这条连接死了"处理。
 
-代码入口：`apps/cli/hub.mbt` 的 `ConnectionHub::poll_once`（接受/步进/读/服务/写五段）、`apps/cli/node.mbt` 的 `dispatch_data_frame` 与 `dispatch_control_frame`、`apps/cli/serve.mbt` 的会话分发。
+代码入口：`apps/cli/hub.mbt` 的 `ConnectionHub::poll_once`（一次 poll / accept 就绪者 / 步进 / 读 / 服务 / 写）、`apps/cli/node.mbt` 的 `dispatch_data_frame` 与 `dispatch_control_frame`、`apps/cli/serve.mbt` 的会话分发。
 
 ## 4. 线协议与会话
 
@@ -221,7 +223,7 @@ flowchart TB
 
 ## 10. 验证体系（架构的执行者）
 
-架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**34 步**）：
+架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**35 步**）：
 
 | 层 | 机制 |
 | :--- | :--- |

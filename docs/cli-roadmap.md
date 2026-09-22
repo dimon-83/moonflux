@@ -100,8 +100,19 @@
 
 仍未交付（属 P4 或后续）：
 - `partition list`（多分区存储未落地，见 compatibility-matrix #10）、`cluster spu list` 的
-  完整字段（磁盘/主题数等）、`benchmark`、`consumer` 托管偏移（矩阵 #11 另一半）、
+  完整字段（磁盘/主题数等）、`consumer` 托管偏移（矩阵 #11 另一半）、
   `profile`（配置档案）、SmartModule/算子管理命令族。
+
+#### 3.3.3 落地回填（2026-09-22，P17 达成）
+
+- `benchmark produce|consume|latency --topic T [--data-dir D | --remote host:port]`：
+  吞吐/延迟基线工具，对标 `fluvio benchmark`（报告 §2.12：producer 吞吞吐 + 延迟直方图；
+  参考系统 consumer 基准隐藏未发布，本工具补了 consume 与 produce→consume 可见性两模式）。
+  produce 报吞吐 + 逐批 ack 直方图（`--records/--record-size/--batch-records`，一批一帧），
+  consume 抽干至 `scan_end` 且 `--verify` 校验值头序号（= 偏移，负载下完整性检查），latency
+  报 produce-ack 与 e2e 两组直方图（`--samples`）。**数字只报告、门禁只断言结构**（README
+  决策 41）；门禁 `scripts/e2e-p17-bench.sh`（6 腿）。执行中抓掉 accept 先于 poll 的
+  「每请求一 tick」税（ticket 75，`apps/cli/hub.mbt`）。
 
 #### 3.3.2 落地回填（2026-09-18，P14 达成）
 

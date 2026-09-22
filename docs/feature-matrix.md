@@ -2,7 +2,7 @@
 
 > **定位**：面向使用者与集成者——**平台现在能做什么**：按能力域列出的功能清单、每项的状态与可复现的证据入口。**规约依据**：AGENTS.md §10（证据与状态规范）；**边界声明**：本文是**能力清单**的单一真相；「与 Fluvio 对标语义的验证状态」不在本文——见 [`compatibility-matrix.md`](compatibility-matrix.md)（图例的单一真相）；架构原理见 [`architecture.md`](architecture.md)，操作方法见 [`user-guide.md`](user-guide.md)。
 >
-> **日期**：2026-09-19 · 覆盖 P0–P16 · 图例：✅ 已交付且有门禁证据 · ⚠️ 部分（注明缺口）· ⏳ 未实现（注明触发条件）
+> **日期**：2026-09-22 · 覆盖 P0–P17 · 图例：✅ 已交付且有门禁证据 · ⚠️ 部分（注明缺口）· ⏳ 未实现（注明触发条件）
 
 ## 1. 数据面
 
@@ -88,7 +88,7 @@
 | 编辑器函数集 UI | ⏳ | spec 可携带引用；UI 待需求 |
 | 多语言客户端 SDK（Rust/Python/…） | ⏳ | 线协议与第二实现（Python 探针）已证明可复制；SDK 未立项 |
 | K8s 部署（CRD 元数据后端 + operator/Helm） | ⏳ | **明确排到最后**（用户裁定，[`project-roadmap.md`](project-roadmap.md) §3）：元数据接口可插拔，本地存储是第一个实现 |
-| Benchmark 工具（吞吐/延迟直方图） | ⏳ | 对标 `fluvio benchmark`；未立项 |
+| Benchmark 工具（吞吐/延迟直方图） | ✅ | `benchmark produce/consume/latency`（本地 `--data-dir` + 远端 `--remote`；值头序号做负载下完整性校验；单调 µs 时钟 + nearest-rank 直方图 min/avg/p50/p90/p99/max）；对标 `fluvio benchmark`（其 consumer 基准未发布，本工具补了 consume 与 e2e 可见性）；**数字只报告，门禁只断言结构**（决策 41）；`scripts/e2e-p17-bench.sh`（6 腿） |
 
 ## 7. 工程质量面（能力的地基）
 
@@ -97,7 +97,7 @@
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
 | 日志句柄复用（进程级有界缓存，淘汰安全） | ✅ | `apps/cli/logcache.mbt`：`open_partition_log` 命中即复用；变更经同一句柄故无需失效；`MOONFLUX_LOG_CACHE` 控制上限与 LRU 淘汰；每次真实打开在 stderr 记一行；`scripts/e2e-p16-logcache.sh`（6 腿） |
-| 门禁体系（34 步，含故障注入与对拍） | ✅ | `scripts/gates.sh` |
+| 门禁体系（35 步，含故障注入与对拍） | ✅ | `scripts/gates.sh` |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

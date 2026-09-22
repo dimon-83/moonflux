@@ -53,6 +53,8 @@ cli.exe consume --topic events --remote 127.0.0.1:19420
 
 **大文件与大记录（P15）**：`produce` 对文件大小没有人为上限——记录按 4 MiB 一批发送（本地与远端同一套逻辑），偏移在到达序上连续，所以一次发送仍然只报一个区间；消费端按服务端给出的窗口推进，`consume` 会把一个分区**读干**再退出（不再有"一次最多读一百万条"的静默截断）。两条硬边界要知道：单条记录的 key/value 上限 4 MiB（生产者在自己进程里**按名字**拒绝，不会丢给服务端报 `ValueTooLarge`），一个批帧上限 16 MiB（服务端超限时给结构化拒绝并在日志里写明）。批之间**不保证原子**：第 3 批失败时前 2 批已经落盘——这是至少一次口径的推论。
 
+**基准（P17）**：`benchmark produce|consume|latency --topic T [--data-dir D | --remote host:port]` 给数据面立吞吐/延迟基线——produce 报吞吐与逐批延迟直方图（`--records/--record-size/--batch-records`），consume 抽干并可用 `--verify` 校验每条值的序号头（负载下的完整性检查），latency 报 produce-ack 与 produce→consume 可见性两组直方图（`--samples`）。输出是可 grep 的 `key=value` 行；计时用单调微秒时钟。**数字是报告不是门禁**（决策 41）——同一批数据不能在空闲笔记本上过、在满载 CI 上红。改了服务端循环之后跑一次 `benchmark latency` 是最便宜的回归检查：P17 就是用它抓到「每请求 ~200 ms」的 accept 税的。
+
 **spec 形态**（`core/spec::parse_spec` 是唯一权威）：
 
 | 字段 | 取值 |
@@ -465,7 +467,7 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
-| 一切（34 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| 一切（35 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
 | 多分区复制与隔离 | `scripts/e2e-p7-partitions.sh` |
@@ -473,6 +475,7 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 | 键语义与键控压实 | `scripts/e2e-p14-compaction.sh` |
 | 大载荷（分批生产 / 有界窗口 / 有界复制 / 超限拒绝） | `scripts/e2e-p15-bulk.sh` |
 | 日志句柄复用（一次打开 / 淘汰安全 / 变更一致 / 复制不误判） | `scripts/e2e-p16-logcache.sh` |
+| 基准（吞吐/延迟报告；门禁只断言结构） | `scripts/e2e-p17-bench.sh`；日常跑 `cli.exe benchmark produce\|consume\|latency` |
 | 消费组 | `scripts/e2e-p9-groups.sh` |
 | 安全面 | `scripts/e2e-p12-security.sh` |
 | 控制面并发与停摆 | `scripts/e2e-p13-control-plane.sh` |
