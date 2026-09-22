@@ -73,6 +73,9 @@ fn usage() -> Unit {
   println("  group    list|describe ...")
   println("  function-set create|get|list|delete ...")
   println("  operator verify|describe|list ...")
+  println(
+    "  benchmark produce|consume|latency --topic T [--data-dir D | --remote host:port] ...",
+  )
   println("  cluster  nodes   --remote host:port")
   println("  cluster  status  --remote host:port")
   println("  cluster  leader  --topic T --remote host:port")
@@ -164,7 +167,8 @@ fn main {
     text == "topic" ||
     text == "function-set" ||
     text == "group" ||
-    text == "operator"
+    text == "operator" ||
+    text == "benchmark"
   }
 
   let start = if args.length() > 0 && is_command(args[0]) {
@@ -191,6 +195,7 @@ fn main {
     "function-set" => cmd_function_set(rest)
     "group" => cmd_group(rest)
     "operator" => cmd_operator(rest)
+    "benchmark" => cmd_benchmark(rest)
     _ => usage()
   }
 }

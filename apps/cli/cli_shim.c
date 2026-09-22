@@ -55,3 +55,17 @@ void mf_cli_sleep_ms(int32_t ms) {
     nanosleep(&ts, NULL);
   }
 }
+
+/*
+ * A monotonic microsecond clock, for the benchmark's latency
+ * histograms. The environment's clock is millisecond-resolution, and a
+ * local round trip is not: a histogram whose p50 rounds to 0 is not a
+ * baseline. Monotonic rather than wall time on purpose — a benchmark
+ * measures intervals, and intervals must not jump when NTP corrects
+ * the wall clock.
+ */
+int64_t mf_cli_now_us(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
