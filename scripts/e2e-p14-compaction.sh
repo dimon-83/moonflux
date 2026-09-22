@@ -48,6 +48,17 @@ cleanup() {
   for pid in "$BROKER_PID" "$SC_PID" "$A_PID" "$B_PID"; do
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
   done
+  # …and by port, because a node restarted through a command
+  # substitution is re-parented to init: a pid this script forgot (or
+  # overwrote at a restart) is a process it can no longer address, while
+  # the *port* still identifies it. This gate leaked an `spu` across two
+  # consecutive runs before this line existed. The fixed-port check at
+  # the top is what keeps the sweep specific rather than a broad pkill.
+  for port in "$BROKER_PORT" "$SC_PORT" "$A_PORT" "$B_PORT"; do
+    for pid in $(lsof -ti ":$port" -sTCP:LISTEN 2>/dev/null); do
+      kill "$pid" 2>/dev/null || true
+    done
+  done
   wait 2>/dev/null || true
 }
 trap 'cleanup; rm -rf "$WORK"' EXIT
@@ -344,6 +355,18 @@ pass "leg 6: both replicas compacted to byte-identical segments"
 
 # a fresh replica joins a log whose head is a hole: it adopts the hole
 # instead of stalling, and reports it
+# A fresh replica means a fresh *process*. Wiping the directory under a
+# running node was how this leg used to express it, and that is not a
+# thing an operator can do: the running node holds its log open (P16's
+# cache, and before that a handle per request), so the wipe left a node
+# whose in-memory log end was five while the disk held nothing — it had
+# nothing to fetch, adopted nothing, and the gate failed for a reason
+# that had nothing to do with hole adoption.
+if [ "$FOLLOWER" = "127.0.0.1:$B_PORT" ]; then
+  kill "$B_PID" 2>/dev/null || true; wait "$B_PID" 2>/dev/null || true; B_PID=""
+else
+  kill "$A_PID" 2>/dev/null || true; wait "$A_PID" 2>/dev/null || true; A_PID=""
+fi
 rm -rf "$FOLLOWER_DIR"
 if [ "$FOLLOWER" = "127.0.0.1:$B_PORT" ]; then
   B_PID="$(start_spu spu-b "$B_PORT")"

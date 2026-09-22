@@ -87,6 +87,8 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p12-security.sh" scripts/e2e-p12-security.sh
   step "e2e-p13-control-plane.sh" scripts/e2e-p13-control-plane.sh
   step "e2e-p14-compaction.sh" scripts/e2e-p14-compaction.sh
+  step "e2e-p15-bulk.sh" scripts/e2e-p15-bulk.sh
+  step "e2e-p16-logcache.sh" scripts/e2e-p16-logcache.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

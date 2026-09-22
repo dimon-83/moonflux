@@ -41,6 +41,15 @@ cleanup() {
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
     [ -n "$pid" ] && wait "$pid" 2>/dev/null || true
   done
+  # a node restarted through a command substitution is re-parented to
+  # init, so an overwritten pid is a process this script can no longer
+  # address — the port still can (P14 leaked an spu this way; the
+  # fixed-port check above is what keeps the sweep specific)
+  for port in "$A_PORT" "$B_PORT" "$C_PORT" "$SC_PORT"; do
+    for pid in $(lsof -ti ":$port" -sTCP:LISTEN 2>/dev/null); do
+      kill "$pid" 2>/dev/null || true
+    done
+  done
 }
 trap 'cleanup; rm -rf "$WORK"' EXIT
 

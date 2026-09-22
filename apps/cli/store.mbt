@@ -191,7 +191,45 @@ fn index_every_records() -> Int {
 }
 
 ///|
-/// Opens (or recovers) one partition's log. Recovery semantics are
+/// Opens (or recovers) one partition's log — **once per process** (P16).
+///
+/// Callers keep asking by name, which is what makes the cache cheap to
+/// use and safe to evict: nothing holds a handle across calls, so the
+/// cache can always be the only owner (see `logcache.mbt` for why that
+/// invariant is the whole design). The recovery scan below is the
+/// expensive part, and paying it per *request* is what made a node miss
+/// its heartbeat window under load.
+fn open_partition_log(
+  data_dir : String,
+  topic : String,
+  partition : Int,
+) -> Result[@log.SegmentedLog, String] {
+  match log_cache.get(data_dir, topic, partition) {
+    Some(log) => return Ok(log)
+    None => ()
+  }
+  let log = match open_partition_log_uncached(data_dir, topic, partition) {
+    Ok(log) => log
+    Err(e) => return Err(e)
+  }
+  log_cache.put(data_dir, topic, partition, log)
+  // One line per open, and an open is now a rare event: this is the
+  // counter that says whether the cache is doing its job (a regression
+  // to per-request opens shows up here as a line per request).
+  //
+  // On *stderr*, like every other diagnostic: a CLI data command's
+  // stdout is its record stream, and a log line mixed into it is
+  // indistinguishable from a record (`consume | cut -f4` is a thing
+  // people do).
+  warn(
+    "opened \{topic}[\{partition}] (log end \{log.high_watermark()}, \{log.segment_summaries().length()} segment(s))\n",
+  )
+  Ok(log)
+}
+
+///|
+/// The actual open: migrate a pre-P8 single file, recover the tail,
+/// rebuild the active segment's anchors. Recovery semantics are
 /// identical across partitions: a torn or corrupt tail truncates to the
 /// confirmed prefix, never silently.
 ///
@@ -199,7 +237,7 @@ fn index_every_records() -> Int {
 /// segment, named by the offset of its first record. A pre-P8 install
 /// has a single `partition-<N>.log`; it is migrated once by rename
 /// (atomic) and becomes segment 0 — the same log, now with boundaries.
-fn open_partition_log(
+fn open_partition_log_uncached(
   data_dir : String,
   topic : String,
   partition : Int,

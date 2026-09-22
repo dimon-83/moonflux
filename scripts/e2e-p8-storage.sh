@@ -175,7 +175,12 @@ pass "a rolling log reads exactly like a single-segment one ($SEG_ROLLED segment
 
 # ---- 3. the index is an accelerator ------------------------------------
 kill "$BROKER_PID" 2>/dev/null || true; wait "$BROKER_PID" 2>/dev/null || true
-IDX_COUNT=$(ls "$WORK/rolled/topics/$TOPIC/partition-0"/*.idx 2>/dev/null | wc -l | tr -d ' ')
+# `find` rather than `ls`: with `set -o pipefail`, a glob that matches
+# nothing makes `ls` fail, which killed this script *before* the check
+# below could say why — a red gate with no message is the worst kind of
+# red (P16 hit it: the assertion that would have named the problem never
+# ran).
+IDX_COUNT=$(find "$WORK/rolled/topics/$TOPIC/partition-0" -name '*.idx' 2>/dev/null | wc -l | tr -d ' ')
 [ "$IDX_COUNT" -ge 2 ] || fail "no index files were written (found $IDX_COUNT)"
 rm -f "$WORK/rolled/topics/$TOPIC/partition-0"/*.idx
 BROKER_PID="$(start_broker "$WORK/rolled" "$BROKER_PORT" "$WORK/rolled.log")"
