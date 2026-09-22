@@ -2,7 +2,7 @@
 
 > **定位**：面向使用者与集成者——**平台现在能做什么**：按能力域列出的功能清单、每项的状态与可复现的证据入口。**规约依据**：AGENTS.md §10（证据与状态规范）；**边界声明**：本文是**能力清单**的单一真相；「与 Fluvio 对标语义的验证状态」不在本文——见 [`compatibility-matrix.md`](compatibility-matrix.md)（图例的单一真相）；架构原理见 [`architecture.md`](architecture.md)，操作方法见 [`user-guide.md`](user-guide.md)。
 >
-> **日期**：2026-09-17 · 覆盖 P0–P13 · 图例：✅ 已交付且有门禁证据 · ⚠️ 部分（注明缺口）· ⏳ 未实现（注明触发条件）
+> **日期**：2026-09-19 · 覆盖 P0–P16 · 图例：✅ 已交付且有门禁证据 · ⚠️ 部分（注明缺口）· ⏳ 未实现（注明触发条件）
 
 ## 1. 数据面
 
@@ -15,6 +15,8 @@
 | 稀疏段索引（CRC 校验，疑点回退全扫，逐字节一致） | ✅ | 同上（删 `.idx` 腿） |
 | retention（只删整段、floor 以下；结构化拒绝更老读） | ✅ | `MOONFLUX_RETAIN_BYTES/_MS`；`e2e-p8-storage.sh` |
 | 键控 compaction（删旧留新，偏移不变） | ✅ | `cluster compact`；键由 `produce --key/--key-separator` 产生；幂等、floor = 提交前缀 ∩ 消费组地板、空键永不淘汰；`scripts/e2e-p14-compaction.sh`（8 腿）+ `core/log_test`（7 条压实测试） |
+| **载荷预算**（大记录/大文件全链路） | ✅ | 单一真相 `@protocol.MAX_BATCH_BYTES`（16 MiB）派生所有预算：生产分批 4 MiB（`Producer::send` 与本地 `produce` 同一套，偏移连续）、读取窗口按字节封顶（至少一条/一帧）、fetch 应答带 `scan_end` 加法段、复制窗口 1 MiB、hub 缓冲从协议派生且超限**记日志再关**；单条 key/value 超 4 MiB 由生产者按名拒绝；`scripts/e2e-p15-bulk.sh`（5 腿：20 MiB 逐字节一致 / 偏移精确 / 两处超限的结构化拒绝 / 12 MiB 复制字节一致）+ `core/protocol`/`core/log_test`/`apps/client` 单测 |
+| 客户端分片拼接（多段到达的应答） | ✅ | `apps/client` 的 `fill_exact`：每次读只会**追加**到已收前缀之后（此前每次 recv 都写回缓冲区起点，多段到达的应答被静默损坏）；脚本化分片来源的单测 `apps/client/transport_wbtest.mbt` |
 | 压缩编解码（gzip/snappy 等批压缩） | ⏳ | 未立项；帧载荷现为未压缩批 |
 
 ## 2. 复制与集群
@@ -64,7 +66,7 @@
 | :--- | :--- | :--- |
 | 版本化帧协议 v2（HELLO/WELCOME/错误码/rid 回显） | ✅ | `core/client`；`crosscheck-protocol.sh` + 独立 Python 客户端 |
 | 单机 TCP 服务（`serve`）与远程读写 | ✅ | `scripts/e2e-p0.sh` |
-| 连接多路复用（单线程 poll hub，入站上限 8MiB 缓冲） | ✅ | `apps/cli/hub.mbt`；`scripts/e2e-p5-concurrency.sh` |
+| 连接多路复用（单线程 poll hub，缓冲上限由协议批预算派生） | ✅ | `apps/cli/hub.mbt`（收包按轮 join，超限**报告后**断开）；`scripts/e2e-p5-concurrency.sh`、`scripts/e2e-p15-bulk.sh` 腿 4 |
 | 控制面并发服务（`sc` 同 hub；沉默对端不伤害他人） | ✅ | `scripts/e2e-p13-control-plane.sh` |
 | WebSocket 网关（同端口，浏览器与 CLI 同协议） | ✅ | `serve --ws`；`scripts/e2e-p4-ws.sh` |
 | 连接器：file / stdin / http(source+sink) | ✅ | `apps/connectors`；`scripts/e2e-p1-connectors.sh` |
@@ -94,7 +96,8 @@
 | :--- | :--- | :--- |
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
-| 门禁体系（32 步，含故障注入与对拍） | ✅ | `scripts/gates.sh` |
+| 日志句柄复用（进程级有界缓存，淘汰安全） | ✅ | `apps/cli/logcache.mbt`：`open_partition_log` 命中即复用；变更经同一句柄故无需失效；`MOONFLUX_LOG_CACHE` 控制上限与 LRU 淘汰；每次真实打开在 stderr 记一行；`scripts/e2e-p16-logcache.sh`（6 腿） |
+| 门禁体系（34 步，含故障注入与对拍） | ✅ | `scripts/gates.sh` |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

@@ -51,6 +51,8 @@ cli.exe consume --topic events --remote 127.0.0.1:19420
 
 规则热重载：改完 spec 再 `apply` 即可，`serve` 按 `topology.json` 的纳秒 mtime 自动换入，**无需重启**；带表达式的变换作用于消费/回放路径，所以**历史数据按当前规则重现**。
 
+**大文件与大记录（P15）**：`produce` 对文件大小没有人为上限——记录按 4 MiB 一批发送（本地与远端同一套逻辑），偏移在到达序上连续，所以一次发送仍然只报一个区间；消费端按服务端给出的窗口推进，`consume` 会把一个分区**读干**再退出（不再有"一次最多读一百万条"的静默截断）。两条硬边界要知道：单条记录的 key/value 上限 4 MiB（生产者在自己进程里**按名字**拒绝，不会丢给服务端报 `ValueTooLarge`），一个批帧上限 16 MiB（服务端超限时给结构化拒绝并在日志里写明）。批之间**不保证原子**：第 3 批失败时前 2 批已经落盘——这是至少一次口径的推论。
+
 **spec 形态**（`core/spec::parse_spec` 是唯一权威）：
 
 | 字段 | 取值 |
@@ -451,6 +453,10 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 | 节点反复 `is offline` | 心跳（500ms）到不了控制面：控制端口通不通？认证？节点 `--sc` 指对了吗？ |
 | `writes … must go to its leader` | 打错了节点：用 `cluster leader --topic T --partition N` 拿 leader |
 | `apply` 报未知函数/类型错误 | 表达式引用的函数集没部署到该节点，或集合更新后未 re-apply |
+| `key/value of N bytes exceeds the … per-field limit` | 单条记录超 4 MiB。切分记录是应用语义，平台不代劳；请拆成多条（或改用算子链） |
+| `batch exceeds the … batch budget` | 一个批帧超 16 MiB。用 `produce` 时不该出现（它自己按 4 MiB 分批）；出现即有人绕过了客户端内核直接构建帧 |
+| `opened topic[N] (log end …, M segment(s))` 反复出现 | 这是 P16 的日志句柄诊断（stderr）。每个分区每个进程**只应出现一次**；反复出现说明该进程的缓存没命中（`MOONFLUX_LOG_CACHE` 被设成 0 或很小，或有人绕过了 `open_partition_log`） |
+| 大批量生产/复制变慢 | 先看段大小与索引密度：读取按锚点定位，索引很稀会退化成整段扫描（`MOONFLUX_INDEX_EVERY`）。日志句柄默认已进程级复用（P16）；若 `opened` 行在刷屏，说明缓存没生效 |
 | 门禁/脚本行为怪异 | 检查 `MOONFLUX_EXE` 指向的二进制是不是刚构建的；以及 shell 是否把含空格的 flags 变量当**一个**参数（zsh 不做词切分） |
 
 **日志纪律**：服务端日志每行都有意义——认证模式与 TLS 在启动时明示；失败只报**状态迁移**（首次失败/恢复），不刷屏；凭据永不入日志。
@@ -459,12 +465,14 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
-| 一切（32 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| 一切（34 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
 | 多分区复制与隔离 | `scripts/e2e-p7-partitions.sh` |
 | 存储分段/索引/retention | `scripts/e2e-p8-storage.sh` |
 | 键语义与键控压实 | `scripts/e2e-p14-compaction.sh` |
+| 大载荷（分批生产 / 有界窗口 / 有界复制 / 超限拒绝） | `scripts/e2e-p15-bulk.sh` |
+| 日志句柄复用（一次打开 / 淘汰安全 / 变更一致 / 复制不误判） | `scripts/e2e-p16-logcache.sh` |
 | 消费组 | `scripts/e2e-p9-groups.sh` |
 | 安全面 | `scripts/e2e-p12-security.sh` |
 | 控制面并发与停摆 | `scripts/e2e-p13-control-plane.sh` |

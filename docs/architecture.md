@@ -128,7 +128,11 @@ sequenceDiagram
 - **加法扩展**是兼容策略：节点记录的逐分区 LEO、心跳应答的 assignments/floors/revision 都走**可选尾段**，新旧两侧互读不炸（README 决策 29）——不为加字段 bump 帧版本。
 - **第二实现即对拍**：`scripts/mfs_probe.py`（Python）独立实现同一帧格式；`apps/vectortool` + golden vectors 把编码钉死（`scripts/crosscheck-protocol.sh`）。
 
+**载荷预算（P15）**：一条记录、一个批次、一帧、一轮复制各有明确的字节上限，且**所有上限同源**——`@protocol.MAX_BATCH_BYTES`（16 MiB）是唯一真相，hub 的收发缓冲、消费窗口（`FETCH_WINDOW_BYTES`）、复制窗口（`REPLICATION_WINDOW_BYTES` = 1 MiB，按 tick 循环 + 2s 对端期限反推）都是它的派生。**生产分批**：`Producer::send` 与本地 `produce` 用同一套 `split_batches`（4 MiB/批），偏移在到达序上连续，故一次发送仍报一个区间；单条 key/value 超 4 MiB 由**生产者**按名拒绝。**读取按字节封顶且"至少一条/一帧"**（`read_bounded` / `read_raw_bounded`）——让读者无法前进比让解码器拒绝更糟。**fetch 应答尾段带 `scan_end`**：窗口会被字节截断、规则还会过滤，只有服务端知道"分区到头了"与"这一窗满了"的区别，所以消费者按服务端给的落点推进，而不是用"返回条数 < 请求条数"猜。传输侧的另一半同样重要：**接收缓冲按轮 join**（逐读复制会让收 17 MiB 变成 19 GB memcpy），**超限记日志再关连接**（此前 8 MiB 的写死上限让 8.7 MiB 的 produce 变成一行日志都没有的 `connection reset`）。
+
 传输栈：`@net.Stream`（接口：`fd/recv_some/send_some/pending/set_nonblocking/close`）之下是明文 TCP 或 TLS 会话（`adapters/tls-native`，OpenSSL dlopen，机器无 libssl 只失去 TLS 不失去服务端）；之上客户端内核只认 `Conn{send, recv_exact, close}`。出站调用一律带读写期限（TLS 会话没有 `SO_RCVTIMEO`，"节点不得挂住节点"由期限保证，README 决策 35）。
+
+客户端 `Conn::recv_exact` 的实现纪律值得单列：一次读必须**追加到已收前缀之后**（`apps/client::fill_exact`）。此前每次 recv 都写回缓冲区起点，任何多段到达的应答都只剩最后一段——7 MiB 的 fetch 因此报 `bad fetch reply`，而错误消息指向解码器，不指向真正的破坏者（P15 修，脚本化分片来源的单测钉住）。
 
 ## 5. 存储层
 
@@ -146,6 +150,8 @@ sequenceDiagram
 - 时钟永远是调用方注入的（`roll_due(now, …)` / `apply_retention(floor, now, …)` / `apply_compaction(floor, now, …)`）。
 
 **复制即字节搬运**：follower 拉取的是 leader 日志的**原始帧**（不是重编码），所以 follower 的段文件与 leader 逐字节一致（`scripts/e2e-p8-storage.sh` 的逐段 cmp 腿）；**压实之后这条要求每个副本各自压实**（floor 相同 ⇒ 字节相同，`scripts/e2e-p14-compaction.sh` 腿 6），只有 leader 压实会让副本保留已删记录、故障切换后复活旧键。
+
+**打开日志是进程级的缓存，不是每请求的动作**（P16，`apps/cli/logcache.mbt`）：`open_partition_log` 命中即复用，因为"打开"实际要做的是恢复尾部（扫最后一段）并重建活动段的锚点——每请求做一次就是 O(段长)/次，12 MiB 段 + 512 记录/轮的复制会因此把节点拖到错过心跳窗（控制面判离线，P15 实测）。两条不变量让它安全：**缓存是唯一持有者**（没有任何调用点跨调用持有句柄，所以淘汰只是策略），**一个进程一个写入者**（append / roll / truncate / skip_to / 压实 / 保留都经同一句柄，句柄自己维护 `segments`/`next_offset`，故无需失效）。上限由 `MOONFLUX_LOG_CACHE`（默认 128，LRU）控制——客户端可以任意命名主题，没有上限就是 fd 耗尽；每次真实打开往 stderr 记一行 `opened topic[p] (log end N, M segment(s))`，这既是运维可见性也是门禁的结构计数器。
 
 ## 6. 复制与控制面
 
@@ -189,6 +195,8 @@ flowchart TB
 
 **TLS**：服务端 `--tls-cert/--tls-key`（配 `--tls-ca` + `--tls-require-client` 即双向）；客户端 `--tls-ca` 出现即启用并**强制校验**（`VERIFY_PEER` + `SSL_set1_host`）——"装了 CA 却不校验"比不做 TLS 更糟，因为它看起来是成功的。节点进程同一套 flags 既服务又出站（`PeerLink{token, tls}`）。
 
+**一个 OpenSSL 细节值得单列**（P15 修）：错误队列是**线程局部且粘滞**的，所以每次 SSL 操作前必须 `ERR_clear_error()`（垫片里的 `clear_error()`）。否则一次失败握手留下的错误会让下一次 `SSL_get_error` 把健康的 WANT_READ 报成 `SSL_ERROR_SSL`——表现为"坏客户端试过之后，好客户端的第一次读就失败"，而错误消息还指向读取本身。`SSL_ERROR_ZERO_RETURN` 同样不是错误，它是干净的关闭。
+
 **已知边界**（有意不藏）：无细粒度 ACL（按主题/分区的逐用户授权）、无 SASL/证书轮转/审计日志（列入后续候选）。
 
 ## 8. 可编程层
@@ -213,7 +221,7 @@ flowchart TB
 
 ## 10. 验证体系（架构的执行者）
 
-架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**31 步**）：
+架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**34 步**）：
 
 | 层 | 机制 |
 | :--- | :--- |
