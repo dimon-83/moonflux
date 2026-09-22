@@ -100,7 +100,11 @@ pub const ERR_UNSUPPORTED_VERSION : Int = 1
 
 pub const ERR_WRONG_ROLE : Int = 7
 
+pub const FETCH_WINDOW_BYTES : Int = 16777216
+
 pub const MAX_FRAME_PAYLOAD : Int = 33554432
+
+pub const PRODUCE_CHUNK_BYTES : Int = 4194304
 
 pub const PROTOCOL_VERSION : Int = 2
 
@@ -169,6 +173,8 @@ pub fn encode_cluster_pipeline(ClusterPipeline) -> Bytes
 pub fn encode_confirmation(Confirmation) -> Bytes
 
 pub fn encode_error(Int, String) -> Bytes
+
+pub fn encode_fetch_reply(Array[Bytes], Int64) -> Bytes
 
 pub fn encode_frame(Frame) -> Bytes
 
@@ -268,9 +274,16 @@ pub fn Consumer::close(Self) -> Unit
 pub fn Consumer::fetch(Self, String, Int64, Int) -> Result[Array[@log.LogEntry], ClientError]
 pub fn Consumer::fetch_committed(Self, String, Int64, Int) -> Result[(Array[@log.LogEntry], Int64, Int64), ClientError]
 pub fn Consumer::fetch_partition(Self, String, Int, Int64, Int) -> Result[Array[@log.LogEntry], ClientError]
+pub fn Consumer::fetch_partition_window(Self, String, Int, Int64, Int) -> Result[FetchWindow, ClientError]
+pub fn Consumer::fetch_window(Self, String, Int64, Int) -> Result[FetchWindow, ClientError]
 pub fn Consumer::from_conn(Conn) -> Result[Self, ClientError]
 pub fn Consumer::from_conn_with(Conn, String?) -> Result[Self, ClientError]
 pub fn Consumer::session_version(Self) -> (Int, Int)
+
+pub(all) struct FetchWindow {
+  entries : Array[@log.LogEntry]
+  scan_end : Int64
+}
 
 pub(all) enum FirstRead {
   Got(Frame)

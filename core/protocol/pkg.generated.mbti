@@ -7,6 +7,8 @@ import {
 }
 
 // Values
+pub const FRAME_OVERHEAD_BYTES : Int = 28
+
 pub const MAX_BATCH_BYTES : Int = 16777216
 
 pub const MAX_HEADERS_PER_RECORD : Int = 1024
@@ -15,13 +17,23 @@ pub const MAX_RECORDS_PER_BATCH : Int = 100000
 
 pub const MAX_RECORD_BYTES : Int = 4194304
 
+pub fn batch_fit(Array[Record], Int) -> Int
+
+pub fn batch_wire_size(Array[Record]) -> Int
+
 pub fn decode_frame(@codec.Reader) -> Result[DecodedBatch, ProtocolError]
 
 pub fn decode_frame_strict(Bytes) -> Result[DecodedBatch, ProtocolError]
 
 pub fn encode_frame(Int64, Array[Record]) -> Bytes
 
+pub fn record_size_violation(Record) -> String?
+
+pub fn record_wire_size(Record) -> Int
+
 pub fn records_from_json(String) -> Result[Array[Record], String]
+
+pub fn split_batches(Array[Record], Int) -> Array[Array[Record]]
 
 // Errors
 pub(all) suberror ProtocolError {
