@@ -220,23 +220,28 @@ fi
 [ -s "$WORK/old.out" ] && fail "the refused read still returned records"
 grep -qi "range" "$WORK/old.err" || { cat "$WORK/old.err"; fail "the refusal does not explain itself"; }
 pass "reading below the retained start is refused with a reason ($(head -c 60 "$WORK/old.err"))"
-# at and above it: served, with the records that survived. The start
-# moves as retention keeps running, so the offset is taken fresh and
-# the read retried — the property under test is "the current start is
-# readable", not "the start frozen at some earlier instant is".
+# at and above it: served, with the records that survived. Retention
+# keeps running, and the log line this leg waits for may come from a
+# sweep that has only deleted the first segment so far — the startup
+# sweep can even run before this leg's produce lands (which is fine:
+# deletion is always legal below the committed prefix; surfaced when
+# the hub stopped sleeping through its accept block, P17/ticket 75).
+# So the wait is for the *settled* window: readable, non-empty, and
+# starting where retention means it to start.
 SERVED=""
-for _ in $(seq 1 8); do
+for _ in $(seq 1 16); do
   FIRST="$(segments_of "$BROKER_PORT" | head -1 | cut -f1)"
   if "$EXE" consume --topic "$TOPIC" --from "$FIRST" --remote "127.0.0.1:$BROKER_PORT" \
-      | cut -f4- > "$WORK/kept.out"; then
-    SERVED=yes
-    break
+      | cut -f4- > "$WORK/kept.out" 2>/dev/null; then
+    if head -1 "$WORK/kept.out" | grep -q '^z'; then
+      SERVED=yes
+      break
+    fi
   fi
   sleep 0.5
 done
-[ -n "$SERVED" ] || fail "the surviving records are not readable from the current start"
+[ -n "$SERVED" ] || { head -3 "$WORK/kept.out" 2>/dev/null; fail "the surviving window did not settle on the retained records"; }
 [ -s "$WORK/kept.out" ] || fail "the surviving window is empty"
-head -1 "$WORK/kept.out" | grep -q '^z' || { head -3 "$WORK/kept.out"; fail "the surviving window starts in the wrong place"; }
 pass "retention dropped segments below the committed prefix (start is now $FIRST) and refuses older reads"
 
 # ---- 5. a torn tail only costs the tail ---------------------------------

@@ -300,21 +300,23 @@ fn step_handshake(conn : HubConnection) -> Unit {
 const HANDSHAKE_DEADLINE_MS : Int = 2000
 
 ///|
-/// One pass: accept whatever is pending, read what is readable, answer
-/// what is complete, write what is queued, and forget what closed.
-///
-/// Returns the number of live connections, so a caller can log churn
-/// without asking again.
-pub fn ConnectionHub::poll_once(
+/// Accepts every queued connection, none more. The listener's own
+/// deadline stays installed for any other caller; this drain simply
+/// never calls accept on a listener the OS has not already marked
+/// ready — accept on a not-ready listener blocks for its whole
+/// deadline, which is exactly the wait the poll loop exists to avoid.
+fn ConnectionHub::drain_accepts(
   self : ConnectionHub,
-  handler : HubHandler,
   on_new_connection : (String) -> Unit,
-) -> Int {
-  // 1. accept everything that is waiting: a backlog must not sit until
-  //    the next tick just because one connection is busy. Accepting is
-  //    cheap now, TLS included — the handshake is attached and then
-  //    *stepped* (see `adopt`), so there is no wait to budget for.
+) -> Unit {
   while true {
+    match @net.poll_fds([self.listener.raw_fd()], 0, false) {
+      Ok(ready) => if ready.length() == 0 { return }
+      Err(e) => {
+        note("poll: \{e}")
+        return
+      }
+    }
     match self.listener.accept() {
       Ok(stream) => {
         self.adopt(stream)
@@ -325,32 +327,39 @@ pub fn ConnectionHub::poll_once(
         }
         on_new_connection(kind)
       }
-      Err(TimedOut) => break
-      Err(WouldBlock) => break
+      Err(TimedOut) => return
+      Err(WouldBlock) => return
       Err(e) => {
         // a listener error is worth reporting, but not worth dying for
         note("accept: \{e}")
-        break
+        return
       }
     }
   }
-  // 1b. advance every TLS session that is still negotiating. This is the
-  //     whole of the handshake as far as a peer can see: a step that is
-  //     not ready returns immediately, so a peer that says nothing costs
-  //     one call per round until its deadline — not a stalled loop.
-  for conn in self.conns {
-    if conn.phase is TlsHandshake {
-      step_handshake(conn)
-    }
-  }
-  if self.conns.length() == 0 {
-    // nothing to serve: sleep out the tick so the caller's housekeeping
-    // (heartbeats, reconcile) still happens on schedule
-    let _ = @net.poll_readable([], self.poll_timeout_ms)
-    return 0
-  }
-  // 2. find out which connections have something
-  let fds : Array[Int] = []
+}
+
+///|
+/// One pass: wait once for everything, accept what is queued, read
+/// what is readable, answer what is complete, write what is queued,
+/// and forget what closed.
+///
+/// Returns the number of live connections, so a caller can log churn
+/// without asking again.
+pub fn ConnectionHub::poll_once(
+  self : ConnectionHub,
+  handler : HubHandler,
+  on_new_connection : (String) -> Unit,
+) -> Int {
+  // 1. one wait for everything: the listener and every live connection
+  //    share one poll set, so a request is read in the round it
+  //    arrives. The listener used to be waited on *first and alone* —
+  //    accept() blocked for up to a whole tick before the connections
+  //    were ever polled, and a request-response peer (whose next
+  //    request lands just after the previous reply) sat out that block
+  //    every round: a constant per-request tax of one hub tick,
+  //    size-independent (the P17 benchmark measured it at ~200 ms on a
+  //    ~1 ms round trip; see ticket 75).
+  let fds : Array[Int] = [self.listener.raw_fd()]
   for conn in self.conns {
     fds.push((conn.stream.fd)())
   }
@@ -361,10 +370,34 @@ pub fn ConnectionHub::poll_once(
       return self.conns.length()
     }
   }
-  // 3. read them, then service whichever connections now hold one or
-  //    more complete frames
+  // 2. accept what the wait found queued. A backlog must not sit until
+  //    the next tick just because one connection is busy; accepting is
+  //    cheap, TLS included — the handshake is attached and then
+  //    *stepped* (see `adopt`), so there is no wait to budget for.
   for index in ready {
-    let conn = self.conns[index]
+    if index == 0 {
+      self.drain_accepts(on_new_connection)
+      break
+    }
+  }
+  // 2b. advance every TLS session that is still negotiating. This is the
+  //     whole of the handshake as far as a peer can see: a step that is
+  //     not ready returns immediately, so a peer that says nothing costs
+  //     one call per round until its deadline — not a stalled loop.
+  for conn in self.conns {
+    if conn.phase is TlsHandshake {
+      step_handshake(conn)
+    }
+  }
+  // 3. read them, then service whichever connections now hold one or
+  // more complete frames. Index 0 is the listener; the connections sit
+  // at index - 1. Connections adopted this round only append, so the
+  // mapping against the poll set still holds.
+  for index in ready {
+    if index == 0 {
+      continue
+    }
+    let conn = self.conns[index - 1]
     if conn.phase is TlsHandshake {
       // its bytes belong to the handshake, not to the protocol above it
       continue

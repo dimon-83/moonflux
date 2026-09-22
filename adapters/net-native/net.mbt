@@ -217,6 +217,15 @@ pub fn TcpListener::set_accept_timeout_ms(
 }
 
 ///|
+/// The raw descriptor, so a poller can wait on the listener alongside
+/// the connections it will produce — one poll set for everything the
+/// loop serves (the hub's shape since P17: waiting on the listener
+/// *before* the connections taxed every request a whole tick).
+pub fn TcpListener::raw_fd(self : TcpListener) -> Int {
+  self.fd
+}
+
+///|
 /// Closes the socket.
 pub fn TcpStream::close(self : TcpStream) -> Result[Unit, NetError] {
   match io_result(net_close(self.fd), "close") {

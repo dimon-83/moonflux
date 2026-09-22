@@ -331,23 +331,40 @@ pass "leg 7: an endpoint that hosts no partition refuses the command"
 "$EXE" cluster compact --topic "$TOPIC" --remote "$LEADER" > "$WORK/leader-compact.out" ||
   fail "compaction on the leader failed"
 wait_for_hw 5 || fail "the replicas drifted apart"
-"$EXE" cluster compact --topic "$TOPIC" --remote "$FOLLOWER" > "$WORK/follower-compact.out" ||
-  fail "compaction on the follower failed"
 
+# A follower's compaction floor is the watermark the leader last
+# reported in a sync response, which can lag the leader's own by a
+# round — it deletes less, never more (P14 discipline, by design).
+# When the hub stopped sleeping through its accept block (P17/ticket
+# 75) the rounds got fast enough that compacting the follower the
+# instant the leader's watermark moved left its floor a round behind:
+# it kept a record the leader had dropped, and — compaction being an
+# explicit command — the replicas never re-converged. There is no
+# command that reads a follower's committed view (asking it for
+# offsets answers a different question: the ledger lives with the
+# leader), so the gate re-issues the compact until the views have
+# certainly caught up — the survivor set, and therefore the re-framed
+# bytes, is floor-determined, and a second pass is idempotent.
 LEADER_DIR="$( [ "$LEADER" = "127.0.0.1:$A_PORT" ] && echo "$WORK/spu-a" || echo "$WORK/spu-b" )"
 PARTS="topics/$TOPIC/partition-0"
 CONVERGED=""
-for _ in $(seq 1 80); do
-  LB="$(ls "$LEADER_DIR/$PARTS"/*.log 2>/dev/null | xargs -n1 basename 2>/dev/null | sort | tr '\n' ' ' || true)"
-  FB="$(ls "$FOLLOWER_DIR/$PARTS"/*.log 2>/dev/null | xargs -n1 basename 2>/dev/null | sort | tr '\n' ' ' || true)"
-  if [ -n "$LB" ] && [ "$LB" = "$FB" ]; then
-    SAME=yes
-    for f in $(ls "$LEADER_DIR/$PARTS"/*.log | xargs -n1 basename); do
-      cmp -s "$LEADER_DIR/$PARTS/$f" "$FOLLOWER_DIR/$PARTS/$f" || SAME=""
-    done
-    [ -n "$SAME" ] && CONVERGED=yes && break
-  fi
-  sleep 0.25
+for attempt in $(seq 1 8); do
+  "$EXE" cluster compact --topic "$TOPIC" --remote "$FOLLOWER" > "$WORK/follower-compact.out" ||
+    fail "compaction on the follower failed"
+  for _ in $(seq 1 8); do
+    LB="$(ls "$LEADER_DIR/$PARTS"/*.log 2>/dev/null | xargs -n1 basename 2>/dev/null | sort | tr '\n' ' ' || true)"
+    FB="$(ls "$FOLLOWER_DIR/$PARTS"/*.log 2>/dev/null | xargs -n1 basename 2>/dev/null | sort | tr '\n' ' ' || true)"
+    if [ -n "$LB" ] && [ "$LB" = "$FB" ]; then
+      SAME=yes
+      for f in $(ls "$LEADER_DIR/$PARTS"/*.log | xargs -n1 basename); do
+        cmp -s "$LEADER_DIR/$PARTS/$f" "$FOLLOWER_DIR/$PARTS/$f" || SAME=""
+      done
+      [ -n "$SAME" ] && CONVERGED=yes && break
+    fi
+    sleep 0.25
+  done
+  [ -n "$CONVERGED" ] && break
+  sleep 0.5
 done
 [ -n "$CONVERGED" ] ||
   fail "the replicas did not converge to identical segments after compacting the same prefix"
