@@ -2,7 +2,7 @@
 
 > **定位**：面向使用者与集成者——**平台现在能做什么**：按能力域列出的功能清单、每项的状态与可复现的证据入口。**规约依据**：AGENTS.md §10（证据与状态规范）；**边界声明**：本文是**能力清单**的单一真相；「与 Fluvio 对标语义的验证状态」不在本文——见 [`compatibility-matrix.md`](compatibility-matrix.md)（图例的单一真相）；架构原理见 [`architecture.md`](architecture.md)，操作方法见 [`user-guide.md`](user-guide.md)。
 >
-> **日期**：2026-09-22 · 覆盖 P0–P17 · 图例：✅ 已交付且有门禁证据 · ⚠️ 部分（注明缺口）· ⏳ 未实现（注明触发条件）
+> **日期**：2026-09-23 · 覆盖 P0–P18 · 图例：✅ 已交付且有门禁证据 · ⚠️ 部分（注明缺口）· ⏳ 未实现（注明触发条件）
 
 ## 1. 数据面
 
@@ -14,7 +14,7 @@
 | 段滚动（字节/时长阈值，段边界=帧边界） | ✅ | `MOONFLUX_ROLL_BYTES/_MS`；`scripts/e2e-p8-storage.sh` |
 | 稀疏段索引（CRC 校验，疑点回退全扫，逐字节一致） | ✅ | 同上（删 `.idx` 腿） |
 | retention（只删整段、floor 以下；结构化拒绝更老读） | ✅ | `MOONFLUX_RETAIN_BYTES/_MS`；`e2e-p8-storage.sh` |
-| 键控 compaction（删旧留新，偏移不变） | ✅ | `cluster compact`；键由 `produce --key/--key-separator` 产生；幂等、floor = 提交前缀 ∩ 消费组地板、空键永不淘汰；`scripts/e2e-p14-compaction.sh`（8 腿）+ `core/log_test`（7 条压实测试） |
+| 键控 compaction（删旧留新，偏移不变） | ✅ | `cluster compact`；键由 `produce --key/--key-separator` 产生；幂等、floor = 提交前缀 ∩ 消费组地板、空键永不淘汰；`scripts/e2e-p14-compaction.sh`（11 腿：8 条语义 + P18 三条**真偏移**——空洞两侧的远端/committed 消费显示幸存者真偏移、本地零重复）+ `core/log_test`（7 条压实测试） |
 | **载荷预算**（大记录/大文件全链路） | ✅ | 单一真相 `@protocol.MAX_BATCH_BYTES`（16 MiB）派生所有预算：生产分批 4 MiB（`Producer::send` 与本地 `produce` 同一套，偏移连续）、读取窗口按字节封顶（至少一条/一帧）、fetch 应答带 `scan_end` 加法段、复制窗口 1 MiB、hub 缓冲从协议派生且超限**记日志再关**；单条 key/value 超 4 MiB 由生产者按名拒绝；`scripts/e2e-p15-bulk.sh`（5 腿：20 MiB 逐字节一致 / 偏移精确 / 两处超限的结构化拒绝 / 12 MiB 复制字节一致）+ `core/protocol`/`core/log_test`/`apps/client` 单测 |
 | 客户端分片拼接（多段到达的应答） | ✅ | `apps/client` 的 `fill_exact`：每次读只会**追加**到已收前缀之后（此前每次 recv 都写回缓冲区起点，多段到达的应答被静默损坏）；脚本化分片来源的单测 `apps/client/transport_wbtest.mbt` |
 | 压缩编解码（gzip/snappy 等批压缩） | ⏳ | 未立项；帧载荷现为未压缩批 |
@@ -66,6 +66,7 @@
 | :--- | :--- | :--- |
 | 版本化帧协议 v2（HELLO/WELCOME/错误码/rid 回显） | ✅ | `core/client`；`crosscheck-protocol.sh` + 独立 Python 客户端 |
 | 单机 TCP 服务（`serve`）与远程读写 | ✅ | `scripts/e2e-p0.sh` |
+| serve 单机命令面（P18）：`topic create/list/delete`（声明入 serve 元数据、list = 声明∪自动创建、delete 即删数据且缓存先失效、rf>1 拒绝）+ group 家族解释性拒绝 | ✅ | `scripts/e2e-p0.sh` 的 topic/group 腿 |
 | 连接多路复用（单线程 poll hub，缓冲上限由协议批预算派生） | ✅ | `apps/cli/hub.mbt`（收包按轮 join，超限**报告后**断开）；`scripts/e2e-p5-concurrency.sh`、`scripts/e2e-p15-bulk.sh` 腿 4 |
 | 控制面并发服务（`sc` 同 hub；沉默对端不伤害他人） | ✅ | `scripts/e2e-p13-control-plane.sh` |
 | WebSocket 网关（同端口，浏览器与 CLI 同协议） | ✅ | `serve --ws`；`scripts/e2e-p4-ws.sh` |

@@ -55,6 +55,8 @@ cli.exe consume --topic events --remote 127.0.0.1:19420
 
 **基准（P17）**：`benchmark produce|consume|latency --topic T [--data-dir D | --remote host:port]` 给数据面立吞吐/延迟基线——produce 报吞吐与逐批延迟直方图（`--records/--record-size/--batch-records`），consume 抽干并可用 `--verify` 校验每条值的序号头（负载下的完整性检查），latency 报 produce-ack 与 produce→consume 可见性两组直方图（`--samples`）。输出是可 grep 的 `key=value` 行；计时用单调微秒时钟。**数字是报告不是门禁**（决策 41）——同一批数据不能在空闲笔记本上过、在满载 CI 上红。改了服务端循环之后跑一次 `benchmark latency` 是最便宜的回归检查：P17 就是用它抓到「每请求 ~200 ms」的 accept 税的。
 
+**主题与消费组，两种形态（P18）**：`topic create/list/delete` 对 `--remote <serve>`（单机）与 `--remote <sc>`（集群）都可用。单机形态：声明写入 broker 自己的元数据（与其函数集同库）；`topic list` 列**声明 ∪ 自动创建**（produce 建的主题不漏报）；`topic delete` **连带删除数据**（日志句柄先失效再删文件，重新生产从 offset 0 开始）；`--replication-factor > 1` 被拒绝——一个节点谈不了副本。**消费组需要控制面**：对 serve 发组命令会得到解释性拒绝（指出跑 sc + spu 集群），不再是 `unknown command`。另外，空洞日志（压实/过滤之后）的消费在三条路径上都显示**幸存记录的真实偏移**（P18 修正：此前空洞之后的偏移会整体错位）。
+
 **spec 形态**（`core/spec::parse_spec` 是唯一权威）：
 
 | 字段 | 取值 |

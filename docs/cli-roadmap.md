@@ -124,6 +124,17 @@
 - 更早的 P5/P6/P8 命令面（`operator` / `function-set` 覆写、`cluster segments`）见各自阶段的
   ticket 与 `scripts/e2e-p5-operator.sh`、`e2e-p6-functions.sh`、`e2e-p8-storage.sh`。
 
+#### 3.3.4 落地回填（2026-09-23，P18 达成）
+
+- `topic create/list/delete --remote <serve>`：单机命令面落地（此前 `unknown command 15`）——
+  声明入 serve 自己的元数据库（与函数集同库同版本），list 为**声明 ∪ 自动创建**的并集，
+  delete 即删数据且日志缓存先失效（P16 预言的第二写入路径第一条实例）；rf>1 结构化拒绝。
+- `group describe/list --remote <serve>`：解释性拒绝（协调者是控制面，先例 = 数据节点拒绝
+  放置命令）；serve 上做完整协调需要放置与 leader 地址发现，未立项（独立小票候选）。
+- 语义修正：fetch 应答按连续偏移段分帧——压实/规则过滤的空洞之后逐记录偏移曾整体错位；
+  布尔 flag（`--committed`/`--follow`/`--verify`/`--ws`/`--tls-require-client`）不再吞掉
+  下一个参数（`--committed --remote X` 曾静默变本地消费）。
+
 ### 3.4 P4（全平台体验）
 
 - CLI 契约稳定化：与 native + wasm 客户端 SDK 对齐（README 能力对标表"客户端 SDK"行）；
