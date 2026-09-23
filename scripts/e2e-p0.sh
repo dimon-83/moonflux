@@ -80,6 +80,48 @@ pass "remote path: serve <- produce --remote <- consume --remote matches"
 diff -u "$WORK/local-expected.txt" "$WORK/remote-local-read.txt" || fail "server data dir readable by local consume"
 pass "interoperability: server-written segment file replays via local consume"
 
+# ---------- path 3: the topic family on a standalone broker (P18) ------
+# A standalone broker owns its own declarations (the same store its
+# function sets use), lists the *union* of declared and auto-created
+# topics (produce auto-creates; a listing that omits those lies by
+# omission), and its delete is the first second write path P16
+# anticipated: the log cache lets go of the handles before the files
+# go, so no cached entry can outlive the data it describes.
+"$EXE" topic create --name declared --partitions 2 --replication-factor 2 \
+  --remote "127.0.0.1:$PORT" > "$WORK/rf2.out" 2>&1 \
+  && fail "a replication factor of 2 was accepted on a one-node serve"
+grep -q "needs a cluster" "$WORK/rf2.out" \
+  || fail "the rf refusal does not say why: $(cat "$WORK/rf2.out")"
+"$EXE" topic create --name declared --partitions 2 --replication-factor 1 \
+  --remote "127.0.0.1:$PORT" > /dev/null || fail "topic create on serve failed"
+TOPICS="$("$EXE" topic list --remote "127.0.0.1:$PORT")"
+echo "$TOPICS" | grep '^declared' | grep -q 'partitions=2' \
+  || fail "the declared topic is not listed: $TOPICS"
+echo "$TOPICS" | grep '^remote' | grep -q 'partitions=1' \
+  || fail "the auto-created topic is missing from the listing: $TOPICS"
+pass "topic family: serve declares, and its listing is declared + auto-created"
+
+"$EXE" topic delete --name remote --remote "127.0.0.1:$PORT" > /dev/null \
+  || fail "topic delete on serve failed"
+[ ! -d "$WORK/remote-data/topics/remote" ] \
+  || fail "the deleted topic's data directory is still there"
+"$EXE" topic list --remote "127.0.0.1:$PORT" | grep -q '^remote' \
+  && fail "the deleted topic is still listed"
+grep -q "cached log handle(s) evicted" "$WORK/serve.log" \
+  || fail "the delete never evicted the cached log handles"
+printf 'after\n' > "$WORK/after.txt"
+"$EXE" produce --topic remote --file "$WORK/after.txt" --remote "127.0.0.1:$PORT" \
+  | grep -q "offsets 0\.\.1" || fail "a re-created topic did not start at offset 0"
+pass "topic family: delete removes the data (cache evicted first), and a re-create starts at 0"
+
+# group coordination is the control plane's (P9); a standalone serve
+# says so instead of "unknown command"
+"$EXE" group describe --name g --remote "127.0.0.1:$PORT" > "$WORK/group.out" 2>&1 \
+  && fail "a group command was accepted by a standalone serve"
+grep -q "group coordination lives with the control plane" "$WORK/group.out" \
+  || fail "the group refusal does not say where the capability lives: $(cat "$WORK/group.out")"
+pass "group family: a standalone serve refuses coordination with a pointer to the control plane"
+
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 

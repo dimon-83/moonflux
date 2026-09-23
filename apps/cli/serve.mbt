@@ -240,6 +240,25 @@ fn dispatch_session_frame(
         Err(message) => err_frame(frame.rid, @client.ERR_STORAGE, message)
       }
     }
+    // the topic family (P18/T77): a standalone broker owns its own
+    // declarations, in the same store its function sets use
+    @client.CMD_TOPIC_CREATE
+    | @client.CMD_TOPIC_LIST
+    | @client.CMD_TOPIC_DELETE =>
+      match dispatch_topic_command(frame.cmd, frame.payload, data_dir) {
+        Ok(payload) => reply_frame(frame.rid, @client.CMD_OK, payload)
+        Err((code, message)) => err_frame(frame.rid, code, message)
+      }
+    // group coordination is the control plane's, and the refusal says
+    // so (P18/T77)
+    @client.CMD_GROUP_JOIN
+    | @client.CMD_GROUP_HEARTBEAT
+    | @client.CMD_GROUP_LEAVE
+    | @client.CMD_GROUP_COMMIT
+    | @client.CMD_GROUP_DESCRIBE => {
+      let (code, message) = group_coordination_refusal()
+      err_frame(frame.rid, code, message)
+    }
     // rule assets: a standalone broker owns its own function sets,
     // because it compiles its own applies (P6)
     cmd if is_function_set_command(cmd) =>
@@ -442,6 +461,21 @@ fn handle_connection(
           Err(e) => err_reply(@client.ERR_BAD_PAYLOAD, e)
         }
       }
+      @client.CMD_TOPIC_CREATE
+      | @client.CMD_TOPIC_LIST
+      | @client.CMD_TOPIC_DELETE =>
+        match dispatch_topic_command(frame.cmd, frame.payload, data_dir) {
+          Ok(payload) => (@client.CMD_OK, payload)
+          Err((code, message)) => (code, @client.encode_error(code, message))
+        }
+      @client.CMD_GROUP_JOIN
+      | @client.CMD_GROUP_HEARTBEAT
+      | @client.CMD_GROUP_LEAVE
+      | @client.CMD_GROUP_COMMIT
+      | @client.CMD_GROUP_DESCRIBE => {
+        let (code, message) = group_coordination_refusal()
+        (code, @client.encode_error(code, message))
+      }
       cmd if is_function_set_command(cmd) =>
         match dispatch_function_set(frame, file_metadata_store(data_dir)) {
           Ok(payload) => (@client.CMD_OK, payload)
@@ -577,18 +611,93 @@ fn dispatch_fetch_partition(
     Ok(entries) => entries
     Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
   }
-  let (base, records, scan_end) = match frame_window(entries, rules, from) {
-    Ok(parts) => parts
+  let framed = match frame_window(entries, rules, from) {
+    Ok(framed) => framed
     Err((code, message)) => return err_reply(code, message)
   }
-  let frame = @protocol.encode_frame(base, records)
-  reply(@client.CMD_OK, @client.encode_fetch_reply([frame], scan_end))
+  reply(
+    @client.CMD_OK,
+    @client.encode_fetch_reply(framed.frames, framed.scan_end),
+  )
 }
 
 ///|
-/// Turns one window of log entries into the batch frame a fetch answer
-/// carries: run the topic's rule chain, then stop before the frame
-/// would leave the protocol's batch budget (P15).
+/// Packs rule outputs into reply frames: **one frame per contiguous
+/// run of origin offsets**. A record extends the current run only when
+/// it names the next offset — a hole (a rule dropped the records in
+/// between, or compaction removed them before the fetch ever ran) or a
+/// fan-out duplicate starts a new frame, and the client's base+index
+/// derivation then names each record's true offset. An unfiltered,
+/// uncompacted window still packs into a single frame, byte-identical
+/// to the one-frame reply this replaced.
+priv struct ReplyPacker {
+  frames : Array[Bytes]
+  mut run : Array[@protocol.Record]
+  mut run_base : Int64
+  mut run_next : Int64
+  /// the first contributing offset (`from` when nothing did)
+  mut first : Int64
+}
+
+///|
+fn ReplyPacker::new(from : Int64) -> ReplyPacker {
+  ReplyPacker::{
+    frames: [],
+    run: [],
+    run_base: from,
+    run_next: from,
+    first: from,
+  }
+}
+
+///|
+/// Adds one output record that originated at `offset`.
+fn ReplyPacker::add(
+  self : ReplyPacker,
+  offset : Int64,
+  record : @protocol.Record,
+) -> Unit {
+  if self.run.length() > 0 && offset != self.run_next {
+    self.frames.push(@protocol.encode_frame(self.run_base, self.run))
+    self.run = []
+  }
+  if self.run.length() == 0 {
+    self.run_base = offset
+  }
+  if self.frames.length() == 0 && self.run.length() == 0 {
+    self.first = offset
+  }
+  self.run.push(record)
+  self.run_next = offset + 1L
+}
+
+///|
+/// Flushes the open run and hands back the window's frames.
+fn ReplyPacker::finish(self : ReplyPacker) -> Array[Bytes] {
+  if self.run.length() > 0 {
+    self.frames.push(@protocol.encode_frame(self.run_base, self.run))
+    self.run = []
+  }
+  self.frames
+}
+
+///|
+/// One windowed fetch answer, framed for truthful offsets.
+priv struct FramedWindow {
+  frames : Array[Bytes]
+  /// where the caller should resume — it advances past filtered-away
+  /// entries too, because only the server knows the scan reached them
+  scan_end : Int64
+  /// the first contributing offset (`from` when nothing did)
+  base : Int64
+  /// output records across the frames
+  records : Int
+}
+
+///|
+/// Turns one window of log entries into the batch frames a fetch
+/// answer carries: run the topic's rule chain, then stop before the
+/// reply would leave the protocol's batch budget (P15).
 ///
 /// The cap is applied **after** the transforms, because a rule can
 /// emit more records than it was handed — a budget checked against the
@@ -597,24 +706,24 @@ fn dispatch_fetch_partition(
 /// leave a consumer unable to make progress, and refusing an oversize
 /// *record* is the decoder's job.
 ///
-/// Returns `(base, records, scan_end)`:
-/// - `base` is the offset of the first entry that contributed a
-///   record, so a consumer's offsets stay anchored to the log rather
-///   than to whatever the rule emitted (a filtered window used to
-///   report the first *examined* entry, which misplaced every offset
-///   after it);
-/// - `scan_end` is where the caller should resume. It advances even
-///   when a rule emits nothing, which is what lets a windowed drain
-///   tell "this partition ends here" from "ask again".
+/// The frames are packed by `ReplyPacker` (one per contiguous run of
+/// origin offsets), so per-record offsets survive holes and fan-out:
+/// the client derives each frame's records as that frame's base +
+/// index, and a window whose survivors are 0, 2, 3 used to arrive as
+/// one frame based at 0 — printed back as 0, 1, 2 (P18/T76, measured
+/// on a compacted topic; the same shape a filter rule produces).
+/// `scan_end` still advances past entries whose records were all
+/// filtered, which is what lets a windowed drain tell "this partition
+/// ends here" from "ask again".
 fn frame_window(
   entries : Array[@log.LogEntry],
   rules : RuleState,
   from : Int64,
-) -> Result[(Int64, Array[@protocol.Record], Int64), (Int, String)] {
-  let records : Array[@protocol.Record] = []
-  let mut base = from
-  let mut scan_end = from
+) -> Result[FramedWindow, (Int, String)] {
+  let packer = ReplyPacker::new(from)
   let mut bytes = @protocol.FRAME_OVERHEAD_BYTES
+  let mut records = 0
+  let mut scan_end = from
   for entry in entries {
     let out_one = match apply_nodes(rules.chain, [entry.record]) {
       Ok(out_one) => out_one
@@ -624,19 +733,22 @@ fn frame_window(
     for record in out_one {
       added += @protocol.record_wire_size(record)
     }
-    if records.length() > 0 && bytes + added > @client.FETCH_WINDOW_BYTES {
+    if records > 0 && bytes + added > @client.FETCH_WINDOW_BYTES {
       break
     }
-    if records.length() == 0 && out_one.length() > 0 {
-      base = entry.offset
-    }
     for record in out_one {
-      records.push(record)
+      packer.add(entry.offset, record)
     }
     bytes += added
+    records += out_one.length()
     scan_end = entry.offset + 1L
   }
-  Ok((base, records, scan_end))
+  Ok(FramedWindow::{
+    frames: packer.finish(),
+    scan_end,
+    base: packer.first,
+    records,
+  })
 }
 
 ///|
@@ -666,15 +778,18 @@ fn dispatch_fetch(
     Ok(entries) => entries
     Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
   }
-  // one batch frame carries the whole window; the client derives
-  // per-record offsets from its base offset. The dynamic rule chain
-  // (mbel transforms) runs here, on the consumption path.
-  let (base, records, scan_end) = match frame_window(entries, rules, from) {
-    Ok(parts) => parts
+  // the frames carry the window (one per contiguous run of offsets);
+  // the client derives per-record offsets from each frame's own base.
+  // The dynamic rule chain (mbel transforms) runs here, on the
+  // consumption path.
+  let framed = match frame_window(entries, rules, from) {
+    Ok(framed) => framed
     Err((code, message)) => return err_reply(code, message)
   }
-  let frame = @protocol.encode_frame(base, records)
-  reply(@client.CMD_OK, @client.encode_fetch_reply([frame], scan_end))
+  reply(
+    @client.CMD_OK,
+    @client.encode_fetch_reply(framed.frames, framed.scan_end),
+  )
 }
 
 ///|
@@ -748,19 +863,149 @@ fn dispatch_fetch_committed(
     Ok(entries) => entries
     Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
   }
-  let (base, records, _scan_end) = match frame_window(entries, rules, from) {
-    Ok(parts) => parts
+  let framed = match frame_window(entries, rules, from) {
+    Ok(framed) => framed
     Err((code, message)) => return err_reply(code, message)
   }
-  let frame = @protocol.encode_frame(base, records)
+  // the committed reply carries the frames verbatim (the client decodes
+  // each with its own base, so holes survive this path too)
+  let frames = Buffer::Buffer()
+  for frame in framed.frames {
+    frames.write_bytes(frame)
+  }
   let response = @client.SyncResponse::{
-    base_offset: base,
-    record_count: records.length(),
+    base_offset: framed.base,
+    record_count: framed.records,
     high_watermark,
     log_end_offset,
-    frames: frame,
+    frames: frames.to_bytes(),
   }
   reply(@client.CMD_OK, @client.encode_sync_response(response))
+}
+
+///|
+/// Consumer-group coordination is the control plane's (P9 discipline):
+/// a standalone serve hosts data, not generations, and the honest
+/// answer is a refusal that says where the capability lives — the same
+/// shape as a data node's refusal of placement commands.
+fn group_coordination_refusal() -> (Int, String) {
+  (
+    @client.ERR_WRONG_ROLE,
+    "group coordination lives with the control plane (sc), not a standalone serve; consumer groups need an sc + spu cluster",
+  )
+}
+
+///|
+/// The topic family on a standalone broker (P18/T77). Declarations
+/// live in the broker's own metadata store — the same one its function
+/// sets use, with the same versioning — because a standalone broker
+/// compiles its own applies and owns its own names. The listing is the
+/// **union** of what is declared and what exists on disk (produce
+/// auto-creates topics, and a listing that omits those lies by
+/// omission). Delete is the first *second write path* P16 anticipated:
+/// the log cache lets go of the topic's handles **before** the files
+/// go, so no cached entry can outlive the data it describes.
+fn dispatch_topic_command(
+  cmd : Int,
+  payload : Bytes,
+  data_dir : String,
+) -> Result[Bytes, (Int, String)] {
+  let store = file_metadata_store(data_dir)
+  if cmd == @client.CMD_TOPIC_LIST {
+    let wire : Array[@client.WireTopic] = []
+    let declared : Map[String, Bool] = {}
+    match list_topics(store) {
+      Ok(topics) =>
+        for topic in topics {
+          declared[topic.name] = true
+          wire.push(@client.WireTopic::{
+            name: topic.name,
+            partitions: topic.partitions,
+            replication_factor: topic.replication_factor,
+          })
+        }
+      Err(e) => return Err((@client.ERR_STORAGE, "\{e}"))
+    }
+    match @fs.list_dir("\{data_dir}/topics") {
+      Ok(names) =>
+        for name in names {
+          if !valid_topic(name) || declared.get(name) is Some(_) {
+            continue
+          }
+          // an auto-created topic: its partitions are whatever is on
+          // disk, and it has never had a replica
+          let mut partitions = 0
+          match @fs.list_dir("\{data_dir}/topics/\{name}") {
+            Ok(entries) =>
+              for entry in entries {
+                if entry.has_prefix("partition-") {
+                  partitions += 1
+                }
+              }
+            Err(_) => ()
+          }
+          if partitions > 0 {
+            wire.push(@client.WireTopic::{
+              name,
+              partitions,
+              replication_factor: 1,
+            })
+          }
+        }
+      Err(_) => () // no topics directory yet: the declared list is the answer
+    }
+    return Ok(@client.encode_wire_topics(wire))
+  }
+  let wire = match @client.decode_wire_topic(payload) {
+    Ok(wire) => wire
+    Err(e) => return Err((@client.ERR_BAD_PAYLOAD, e))
+  }
+  if cmd == @client.CMD_TOPIC_CREATE {
+    if wire.replication_factor > 1 {
+      return Err(
+        (
+          @client.ERR_BAD_PAYLOAD,
+          "a standalone serve is one node: replication needs a cluster (sc + spu); declare it with --replication-factor 1",
+        ),
+      )
+    }
+    match
+      create_topic(store, ClusterMetadataTopic::{
+        name: wire.name,
+        partitions: wire.partitions,
+        replication_factor: wire.replication_factor,
+      }) {
+      Ok(_) => {
+        note(
+          "topic \{wire.name} declared (\{wire.partitions} partition(s)) on this broker",
+        )
+        Ok(@client.encode_wire_topic(wire))
+      }
+      Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
+    }
+  } else {
+    // delete: an absent declaration is fine — produce auto-creates
+    // topics that were never declared, and the operator's intent is
+    // that the data goes
+    if !valid_topic(wire.name) {
+      return Err((@client.ERR_BAD_PAYLOAD, "invalid topic name"))
+    }
+    match delete_topic(store, wire.name) {
+      Ok(_) => ()
+      Err(Rejected(_)) => ()
+      Err(e) => return Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
+    }
+    let evicted = log_cache_evict_topic(data_dir, wire.name)
+    match @fs.remove_dir_all("\{data_dir}/topics/\{wire.name}") {
+      Ok(_) => {
+        note(
+          "topic \{wire.name} deleted: undeclared, \{evicted} cached log handle(s) evicted, data removed",
+        )
+        Ok(b"")
+      }
+      Err(e) => Err((@client.ERR_STORAGE, "remove: \{e}"))
+    }
+  }
 }
 
 ///|

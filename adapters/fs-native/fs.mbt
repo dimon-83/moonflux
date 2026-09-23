@@ -170,6 +170,17 @@ pub fn remove_file(path : String) -> Result[Unit, FsError] {
 }
 
 ///|
+/// Recursively removes a directory tree. A standalone broker's topic
+/// delete is the caller; the adapter's contract is only the bytes.
+pub fn remove_dir_all(path : String) -> Result[Unit, FsError] {
+  let bytes = match path_bytes(path) {
+    Ok(bytes) => bytes
+    Err(e) => return Err(e)
+  }
+  syscall_result(fs_remove_dir_all(bytes, bytes.length()), "remove")
+}
+
+///|
 /// Last modification time of `path` as nanoseconds since the epoch
 /// (used for rule hot-reload change detection; second granularity
 /// aliases rapid apply+reload cycles).

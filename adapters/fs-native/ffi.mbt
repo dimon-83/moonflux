@@ -38,6 +38,10 @@ pub extern "C" fn fs_remove(path : Bytes, len : Int) -> Int = "mf_fs_remove"
 
 ///|
 #borrow(path)
+pub extern "C" fn fs_remove_dir_all(path : Bytes, len : Int) -> Int = "mf_fs_remove_dir_all"
+
+///|
+#borrow(path)
 pub extern "C" fn fs_exists(path : Bytes, len : Int) -> Int = "mf_fs_exists"
 
 ///|

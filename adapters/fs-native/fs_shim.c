@@ -140,6 +140,45 @@ int mf_fs_remove(const uint8_t *buf, int len) {
   return unlink(path);
 }
 
+/* Recursively removes a directory tree — a standalone broker's topic
+ * delete. The caller owns the decision and has already evicted its
+ * cached log handles: this is the fs adapter's only recursive
+ * mutation. Returns 0, or -errno of the first failure. */
+static int remove_tree(const char *path) {
+  DIR *dir = opendir(path);
+  if (dir == NULL) {
+    /* not a directory (or gone): a plain file, or the caller's error */
+    return unlink(path);
+  }
+  struct dirent *entry;
+  int rc = 0;
+  while (rc == 0 && (entry = readdir(dir)) != NULL) {
+    const char *name = entry->d_name;
+    if (name[0] == '.' &&
+        (name[1] == 0 || (name[1] == '.' && name[2] == 0))) {
+      continue;
+    }
+    char child[4096];
+    if (snprintf(child, sizeof(child), "%s/%s", path, name) >=
+        (int)sizeof(child)) {
+      rc = -ENAMETOOLONG;
+      break;
+    }
+    rc = remove_tree(child);
+  }
+  closedir(dir);
+  if (rc == 0) rc = rmdir(path);
+  return rc;
+}
+
+int mf_fs_remove_dir_all(const uint8_t *buf, int len) {
+  char path[4096];
+  if (len < 0 || len >= 4096) return -EINVAL;
+  memcpy(path, buf, len);
+  path[len] = 0;
+  return remove_tree(path);
+}
+
 /* Nanosecond mtime for change detection: second granularity aliases
  * rapid apply+reload cycles. Returns ns since epoch, or -errno. */
 int64_t mf_fs_mtime(const uint8_t *buf, int len) {

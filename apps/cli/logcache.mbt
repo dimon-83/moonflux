@@ -152,3 +152,24 @@ fn LogCache::put(
 /// hope (AGENTS §5: per-core exclusive instances, no sharing across
 /// threads).
 let log_cache : LogCache = LogCache::new()
+
+///|
+/// Forgets every cached handle for one topic — the first *second write
+/// path* P16 anticipated: a topic delete removes the very files those
+/// handles describe, so the cache must let go of them **before** the
+/// files go. A surviving entry would be a zombie — in-memory log end,
+/// empty disk — exactly the state P14's leg 8 used to create by wiping
+/// a directory under a running node. Returns how many handles went.
+fn log_cache_evict_topic(data_dir : String, topic : String) -> Int {
+  let kept : Array[CachedLog] = []
+  let mut evicted = 0
+  for entry in log_cache.entries {
+    if entry.data_dir == data_dir && entry.topic == topic {
+      evicted += 1
+    } else {
+      kept.push(entry)
+    }
+  }
+  log_cache.entries = kept
+  evicted
+}

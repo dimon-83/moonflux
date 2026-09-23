@@ -55,7 +55,7 @@ fn topic_create(argv : Array[String]) -> Unit {
     Err(e) => fail("topic create: \{e}")
   }
   println(
-    "declared topic \{created.name} (\{created.partitions} partition(s), \{created.replication_factor} replica(s)); placement follows on the next reconcile",
+    "declared topic \{created.name} (\{created.partitions} partition(s), \{created.replication_factor} replica(s)); on a cluster, placement follows on the next reconcile",
   )
   cli_exit(0)
 }
@@ -100,7 +100,7 @@ fn topic_delete(argv : Array[String]) -> Unit {
     Err(e) => fail("topic delete: \{e}")
   }
   println(
-    "undeclared topic \{name}; its partitions are removed on the next reconcile",
+    "deleted topic \{name}: undeclared, and on a standalone serve its data is removed with it (a cluster's placement follows on the next reconcile)",
   )
   cli_exit(0)
 }

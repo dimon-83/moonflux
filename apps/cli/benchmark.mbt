@@ -438,7 +438,9 @@ fn bench_consume(flags : Flags) -> Unit {
         for entry in entries {
           account(entry)
         }
-        next += entries.length().to_int64()
+        // by offset, not count: holes (compaction) make count < span,
+        // and a count-advanced cursor re-reads the tail (P18/T76)
+        next = entries[entries.length() - 1].offset + 1L
       }
     }
   }

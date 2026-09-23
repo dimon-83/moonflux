@@ -103,7 +103,11 @@ fn consume_local(topic : String, from : Int64, data_dir : String) -> Unit {
       print_entry(entry)
     }
     total += entries.length()
-    next += entries.length().to_int64()
+    // advance by the last entry's offset, not by count: a compacted log
+    // has holes, and a count smaller than the span would land the
+    // cursor behind the tail and read it twice (P18/T76 — measured as
+    // duplicated records after compaction)
+    next = entries[entries.length() - 1].offset + 1L
   }
   let _ = total
   cli_exit(0)

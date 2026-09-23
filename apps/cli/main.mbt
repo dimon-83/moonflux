@@ -108,6 +108,22 @@ fn Flags::require(self : Flags, name : String) -> String {
 }
 
 ///|
+/// Flags that mean "present", not "present with a value". Consuming
+/// the next argument as their value would silently eat a real flag:
+/// `--committed --remote X` used to become a *local* consume of the
+/// default data dir, because `--remote` became committed's value and
+/// the remote branch never ran — order-dependent behavior no gate ever
+/// saw, because every gate happened to write its booleans last
+/// (P18/T76).
+fn flag_is_boolean(name : String) -> Bool {
+  name == "committed" ||
+  name == "follow" ||
+  name == "verify" ||
+  name == "ws" ||
+  name == "tls-require-client"
+}
+
+///|
 fn parse_flags(argv : Array[String]) -> Flags {
   // single-dash aliases for the flags humans actually type
   fn canonical(body : String) -> String {
@@ -136,6 +152,9 @@ fn parse_flags(argv : Array[String]) -> Flags {
           Some((name, value)) => map[name.to_owned()] = value.to_owned()
           None => ()
         }
+        i += 1
+      } else if flag_is_boolean(body) {
+        map[body] = ""
         i += 1
       } else if i + 1 < argv.length() {
         map[body] = argv[i + 1]

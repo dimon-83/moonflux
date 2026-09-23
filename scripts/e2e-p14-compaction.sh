@@ -416,4 +416,60 @@ done
   fail "the fresh replica never held the same records as the leader"
 pass "leg 8: a fresh replica adopted the hole and caught up"
 
+# ---- legs 9-11: a hole in the middle is the reader's problem --------
+# Every hole so far sat at the *start* of the log — superseded keys
+# cluster there — where a single reply frame based at the first
+# survivor numbers its records correctly by luck. A hole *between*
+# survivors is where the fetch reply used to lie: the window was
+# re-packed into one frame, and the client's base+index numbering
+# invented offsets that belong to the dropped records (P18/T76 —
+# measured: survivors 0, 2, 3 came back printed as 0, 1, 2). The
+# ground truth in these legs is the segment files themselves.
+printf 'ka:a\n' > "$WORK/h1.txt"
+printf 'kb:b\n' > "$WORK/h2.txt"
+printf 'kc:c\n' > "$WORK/h3.txt"
+printf 'kb:d\n' > "$WORK/h4.txt"
+for i in 1 2 3 4; do
+  "$EXE" produce --topic holed --file "$WORK/h$i.txt" --key-separator ':' \
+    --remote "127.0.0.1:$BROKER_PORT" > /dev/null ||
+    fail "produce for the hole legs failed"
+done
+HOLE_COMPACT="$("$EXE" cluster compact --topic holed --remote "127.0.0.1:$BROKER_PORT")" ||
+  fail "compaction of the holed topic failed"
+printf '%s\n' "$HOLE_COMPACT" | grep -q "1 records dropped" ||
+  fail "expected exactly one drop (kb@1, superseded by kb@3): $HOLE_COMPACT"
+# the decoder takes one segment file at a time; the glob's lexical
+# order is the base order, so the concatenation is the log in order
+HOLE_TRUTH="$(for seg in "$WORK/broker/topics/holed/partition-0"/*.log; do
+  python3 "$ROOT/tools/decode_log_frames.py" "$seg" | cut -f2,3,4
+done)"
+[ "$HOLE_TRUTH" = "$(printf '0\tka\ta\n2\tkc\tc\n3\tkb\td')" ] ||
+  fail "the compacted log does not hold the expected survivors: $HOLE_TRUTH"
+
+REMOTE_READ="$("$EXE" consume --topic holed --remote "127.0.0.1:$BROKER_PORT" 2>/dev/null | cut -f1,3,4)"
+[ "$REMOTE_READ" = "$HOLE_TRUTH" ] ||
+  fail "the remote read does not show the survivors' true offsets: $REMOTE_READ"
+pass "leg 9: a remote read across a mid-log hole shows every survivor's true offset"
+
+# the committed path answers through the same framing; the boolean
+# flag goes first on purpose — it used to swallow --remote and quietly
+# read a local, empty log instead (P18/T76)
+COMMITTED_READ="$("$EXE" consume --committed --topic holed --remote "127.0.0.1:$BROKER_PORT" 2>/dev/null | cut -f1,3,4)"
+[ "$COMMITTED_READ" = "$HOLE_TRUTH" ] ||
+  fail "the committed read does not show the survivors' true offsets: $COMMITTED_READ"
+pass "leg 10: the committed read frames the same truth (and a leading boolean flag still reaches the remote)"
+
+# the local drain advances by offset, not count: across a hole, count
+# < span used to land the cursor behind the tail and read it twice.
+# The broker is killed first — its logs belong to its process (P16).
+kill "$BROKER_PID" 2>/dev/null || true
+wait "$BROKER_PID" 2>/dev/null || true
+BROKER_PID=""
+LOCAL_READ="$("$EXE" consume --topic holed --data-dir "$WORK/broker" 2>/dev/null | cut -f1,3,4)"
+[ "$LOCAL_READ" = "$HOLE_TRUTH" ] ||
+  fail "the local read differs from the segment files: $LOCAL_READ"
+DUPES="$(printf '%s\n' "$LOCAL_READ" | cut -f1 | sort | uniq -d)"
+[ -z "$DUPES" ] || fail "the local read repeated offsets: $DUPES"
+pass "leg 11: the local drain reads each survivor exactly once"
+
 echo "E2E-P14-COMPACTION: all green"
