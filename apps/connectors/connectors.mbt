@@ -3,16 +3,45 @@
 // edge of the data path. P1 ships: file, stdin, and HTTP GET sources;
 // stdout and HTTP POST sinks. HTTP is a minimal plain-HTTP/1.1 client
 // on top of net-native (the P1 scope cut: no TLS, no redirects, no
-// chunked bodies beyond what the fixture needs).
+// chunked bodies beyond what the fixture needs). P19 adds a
+// subscription source (MQTT) and gives the framework what a streaming
+// source needs: a pull that can say "nothing right now" without lying
+// "exhausted", or being re-read.
 //
-// Sources are one-shot pulls: the runner decides cadence (P1 runs a
-// single pass per invocation; polling/follow modes are P2+).
+// Sources are pulls; the runner decides cadence (P1 ran a single pass
+// per invocation; P19's runner loops until the source is exhausted,
+// sleeping between quiet pulls).
 
 ///|
-/// A data source: one pull yields the records currently available.
+/// What one pull yielded (P19). A subscription source has no end and a
+/// one-shot source has no "not yet" — without this distinction the
+/// runner would either exit on the first quiet poll or replay a file
+/// forever (`file_source` re-reads its path on every call, so a loop
+/// that treats every pull as fresh data would append the whole file
+/// again and again).
+pub(all) enum SourcePull {
+  /// records are available; ask again for more
+  Records(Array[@protocol.Record])
+  /// a streaming source, quiet right now: ask again later
+  Quiet
+  /// a one-shot source that has delivered everything it will ever have
+  Exhausted
+} derive(Debug)
+
+///|
+/// A data source: one pull yields the records currently available, or
+/// says there are none (yet), or that there will be no more.
 pub(all) struct Source {
   name : String
-  pull : () -> Result[Array[@protocol.Record], String]
+  pull : () -> Result[SourcePull, String]
+}
+
+///|
+/// The state a one-shot source keeps so its second pull can say
+/// `Exhausted` instead of replaying (a struct because a closure cannot
+/// own a mutable field).
+priv struct OnceState {
+  mut delivered : Bool
 }
 
 ///|
@@ -127,61 +156,94 @@ pub fn value_text(r : @protocol.Record) -> String {
 }
 
 ///|
-/// File source: newline-delimited text from a local path.
+/// File source: newline-delimited text from a local path. One-shot:
+/// the first pull reads the whole file, the second says `Exhausted` —
+/// the path is not tailed (a re-read would replay it).
 pub fn file_source(path : String, timestamp : Int64) -> Source {
+  let state = OnceState::{ delivered: false }
   Source::{
     name: "file:\{path}",
     pull: fn() {
+      if state.delivered {
+        return Ok(Exhausted)
+      }
       let bytes = match @fs.read_file(path) {
         Ok(bytes) => bytes
         Err(e) => return Err("read \{path}: \{e}")
       }
+      state.delivered = true
       let text = @utf8.decode_lossy(bytes[0:bytes.length()])
-      Ok(records_from_text(text, timestamp))
+      Ok(Records(records_from_text(text, timestamp)))
     },
   }
 }
 
 ///|
 /// Stdin source: newline-delimited text from standard input to EOF.
+/// One-shot, same contract as the file source.
 pub fn stdin_source(timestamp : Int64) -> Source {
+  let state = OnceState::{ delivered: false }
   Source::{
     name: "stdin",
     pull: fn() {
+      if state.delivered {
+        return Ok(Exhausted)
+      }
       let bytes = match @fs.read_stdin() {
         Ok(bytes) => bytes
         Err(e) => return Err("read stdin: \{e}")
       }
+      state.delivered = true
       let text = @utf8.decode_lossy(bytes[0:bytes.length()])
-      Ok(records_from_text(text, timestamp))
+      Ok(Records(records_from_text(text, timestamp)))
     },
   }
 }
 
 ///|
 /// HTTP GET source: fetch a URL, split the response body into lines.
+/// One-shot: HTTP GET is a question, not a subscription.
 pub fn http_source(url : String, timestamp : Int64) -> Source {
+  let state = OnceState::{ delivered: false }
   Source::{
     name: "http-get:\{url}",
     pull: fn() {
+      if state.delivered {
+        return Ok(Exhausted)
+      }
       let body = match http_get(url) {
         Ok(body) => body
         Err(e) => return Err("GET \{url}: \{e}")
       }
+      state.delivered = true
       let text = @utf8.decode_lossy(body[0:body.length()])
-      Ok(records_from_text(text, timestamp))
+      Ok(Records(records_from_text(text, timestamp)))
     },
   }
 }
 
 ///|
-/// Stdout sink: one line per record value.
+/// Flushes the process's stdout. A redirected stdout is block-buffered
+/// (the P4 lesson: a node's output is read *while* it runs, and a
+/// streaming run never exits on its own) — without this, a subscription
+/// pipeline's lines would sit in the buffer until someone killed it,
+/// and the gate would be asserting on the absence of output rather than
+/// its arrival. The symbol lives in the CLI's native shim; connectors
+/// link into the CLI, which is where every run happens.
+extern "C" fn flush_stdout() -> Unit = "mf_cli_flush"
+
+///|
+/// Stdout sink: one line per record value, flushed per batch so a
+/// streaming run is readable while it runs.
 pub fn stdout_sink() -> Sink {
   Sink::{
     name: "stdout",
     flush: fn(records) {
       for r in records {
         println(value_text(r))
+      }
+      if records.length() > 0 {
+        flush_stdout()
       }
       Ok(())
     },

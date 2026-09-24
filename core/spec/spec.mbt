@@ -32,6 +32,8 @@ pub(all) enum SourceSpec {
   HttpSource(String)
   /// Read newline-delimited text from standard input (P1).
   StdinSource
+  /// Subscribe to an MQTT broker topic (P19); messages become records.
+  MqttSource(String)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -60,7 +62,26 @@ pub(all) enum SinkSpec {
   StdoutSink
   /// HTTP POST the batch (newline-joined values) to a URL (P1).
   HttpSink(String)
+  /// Publish each record's value to an MQTT broker topic (P19).
+  MqttSink(String)
 } derive(Debug, Eq, Show)
+
+///|
+/// The spec-level shape check for an MQTT URL (P19): scheme plus a
+/// non-empty authority and topic. The connector parses the parts; the
+/// spec merely refuses to *store* a URL the connector would refuse to
+/// open — a spec that validates is a spec whose failures happen at
+/// apply time, not at 3 a.m.
+fn mqtt_url_ok(url : String) -> Bool {
+  if !url.has_prefix("mqtt://") || url.length() <= 7 {
+    return false
+  }
+  let rest = url[7:url.length()].to_owned()
+  match rest.split_once("/") {
+    Some((authority, topic)) => authority.length() > 0 && topic.length() > 0
+    None => false
+  }
+}
 
 ///|
 pub(all) struct PipelineSpec {
@@ -258,11 +279,30 @@ fn parse_body(
           None
         }
         (Some(String("stdin")), _, _) => Some(StdinSource)
+        (Some(String("mqtt")), _, Some(String(url))) =>
+          if mqtt_url_ok(url) {
+            Some(MqttSource(url))
+          } else {
+            errors.push(SpecError::{
+              path: "$.spec.source.url",
+              code: "bad-value",
+              message: "mqtt urls look like mqtt://[user:pass@]host[:port]/topic",
+            })
+            None
+          }
+        (Some(String("mqtt")), _, _) => {
+          errors.push(SpecError::{
+            path: "$.spec.source.url",
+            code: "missing-field",
+            message: "mqtt sources require a url",
+          })
+          None
+        }
         (Some(String(other)), _, _) => {
           errors.push(SpecError::{
             path: "$.spec.source.type",
             code: "bad-value",
-            message: "unknown source type \"\{other}\" (supported: file, http, stdin)",
+            message: "unknown source type \"\{other}\" (supported: file, http, stdin, mqtt)",
           })
           None
         }
@@ -470,11 +510,30 @@ fn parse_body(
           })
           None
         }
+        (Some(String("mqtt")), Some(String(url))) =>
+          if mqtt_url_ok(url) {
+            Some(MqttSink(url))
+          } else {
+            errors.push(SpecError::{
+              path: "$.spec.sink.url",
+              code: "bad-value",
+              message: "mqtt urls look like mqtt://[user:pass@]host[:port]/topic",
+            })
+            None
+          }
+        (Some(String("mqtt")), _) => {
+          errors.push(SpecError::{
+            path: "$.spec.sink.url",
+            code: "missing-field",
+            message: "mqtt sinks require a url",
+          })
+          None
+        }
         (Some(String(other)), _) => {
           errors.push(SpecError::{
             path: "$.spec.sink.type",
             code: "bad-value",
-            message: "unknown sink type \"\{other}\" (supported: stdout, http)",
+            message: "unknown sink type \"\{other}\" (supported: stdout, http, mqtt)",
           })
           None
         }

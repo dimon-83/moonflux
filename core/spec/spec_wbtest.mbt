@@ -79,7 +79,7 @@ test "invalid metadata name rejected with rule message" {
 
 ///|
 test "unknown source type and unknown sink type collected together" {
-  let text = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"mqtt\",\"path\":\"p\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"kafka\"}}}"
+  let text = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"amqp\",\"path\":\"p\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"kafka\"}}}"
   match parse_spec(text) {
     Err(errors) => {
       assert_eq(errors.length(), 2)
@@ -87,6 +87,31 @@ test "unknown source type and unknown sink type collected together" {
       assert_eq(errors[1].path, "$.spec.sink.type")
     }
     Ok(_) => abort("expected errors")
+  }
+}
+
+///|
+test "mqtt sources and sinks parse, and their urls are validated at apply time" {
+  // a valid pair round-trips into the spec
+  let good = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"mqtt\",\"url\":\"mqtt://127.0.0.1:1884/sensors\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"mqtt\",\"url\":\"mqtt://127.0.0.1:1884/out\"}}}"
+  match parse_spec(good) {
+    Ok(spec) => {
+      assert_true(spec.source is MqttSource(_))
+      assert_true(spec.sink is MqttSink(_))
+    }
+    Err(errors) => abort("valid mqtt spec rejected: \{errors}")
+  }
+  // a url the connector would refuse to open is refused here, where the
+  // failure is cheap
+  let no_topic = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"mqtt\",\"url\":\"mqtt://127.0.0.1:1884\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(no_topic) {
+    Err(errors) => assert_eq(errors[0].path, "$.spec.source.url")
+    Ok(_) => abort("topicless mqtt url accepted")
+  }
+  let no_url = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"mqtt\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(no_url) {
+    Err(errors) => assert_eq(errors[0].path, "$.spec.source.url")
+    Ok(_) => abort("mqtt source without a url accepted")
   }
 }
 

@@ -68,7 +68,7 @@ let invalid_cases : Array[InvalidCase] = [
   },
   InvalidCase::{
     name: "unknown-source-type",
-    json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"mqtt\",\"path\":\"p\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}",
+    json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"amqp\",\"path\":\"p\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}",
     expect_codes: ["bad-value"],
   },
   InvalidCase::{

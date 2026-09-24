@@ -28,12 +28,14 @@ pub(all) struct PipelineSpec {
 pub(all) enum SinkSpec {
   StdoutSink
   HttpSink(String)
+  MqttSink(String)
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) enum SourceSpec {
   FileSource(String)
   HttpSource(String)
   StdinSource
+  MqttSource(String)
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct SpecError {

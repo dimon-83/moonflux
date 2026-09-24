@@ -281,48 +281,68 @@ fn pipeline_run(argv : Array[String]) -> Unit {
       Err(e) => fail("transform rejected: \{e}")
     }
   }
-  // 1. source: one pull through the connector framework
+  // 1. source: pull until it is exhausted (P19). A one-shot source
+  //    yields its records once and then says so; a subscription source
+  //    says `Quiet` while it waits, and this loop keeps serving it —
+  //    which is what makes `pipeline run` a connector process rather
+  //    than a one-shot pass, without changing what one-shot sources do.
   let now = @env.now().reinterpret_as_int64()
   let source = match applied.spec.source {
     FileSource(path) => @connectors.file_source(path, now)
     HttpSource(url) => @connectors.http_source(url, now)
     StdinSource => @connectors.stdin_source(now)
-  }
-  let records = match (source.pull)() {
-    Ok(records) => records
-    Err(e) => fail("source \{source.name}: \{e}")
+    MqttSource(url) => @connectors.mqtt_source(url)
   }
   // 2. broker: append to the topic log
   let log = match open_topic_log(data_dir, applied.spec.topic.name) {
     Ok(log) => log
     Err(e) => fail(e)
   }
-  let base = match log.append(records) {
-    Ok(base) => base
-    Err(e) => fail("append: \{e}")
-  }
-  // 3. dynamic rules on the consumption path, then the sink
-  let entries = match log.read(base, records.length()) {
-    Ok(entries) => entries
-    Err(e) => fail("read: \{e}")
-  }
-  let out_records : Array[@protocol.Record] = []
-  for entry in entries {
-    match apply_nodes(chain, [entry.record]) {
-      Ok(out_one) =>
-        for r in out_one {
-          out_records.push(r)
-        }
-      Err(e) => fail("transform: \{e}")
-    }
-  }
+  // 3. the sink (constructed once: a streaming run flushes many batches)
   let sink = match applied.spec.sink {
     StdoutSink => @connectors.stdout_sink()
     HttpSink(url) => @connectors.http_sink(url)
+    MqttSink(url) => @connectors.mqtt_sink(url)
   }
-  match (sink.flush)(out_records) {
-    Ok(_) => ()
-    Err(e) => fail("sink \{sink.name}: \{e}")
+  while true {
+    let pull = match (source.pull)() {
+      Ok(pull) => pull
+      Err(e) => fail("source \{source.name}: \{e}")
+    }
+    match pull {
+      Exhausted => break
+      Quiet => cli_sleep_ms(50)
+      Records(records) =>
+        if records.length() == 0 {
+          // a pull with nothing in it is a quiet poll wearing a data
+          // shape: sleep like one, don't spin
+          cli_sleep_ms(50)
+        } else {
+          let base = match log.append(records) {
+            Ok(base) => base
+            Err(e) => fail("append: \{e}")
+          }
+          // dynamic rules on the consumption path, then the sink
+          let entries = match log.read(base, records.length()) {
+            Ok(entries) => entries
+            Err(e) => fail("read: \{e}")
+          }
+          let out_records : Array[@protocol.Record] = []
+          for entry in entries {
+            match apply_nodes(chain, [entry.record]) {
+              Ok(out_one) =>
+                for r in out_one {
+                  out_records.push(r)
+                }
+              Err(e) => fail("transform: \{e}")
+            }
+          }
+          match (sink.flush)(out_records) {
+            Ok(_) => ()
+            Err(e) => fail("sink \{sink.name}: \{e}")
+          }
+        }
+    }
   }
   cli_exit(0)
 }

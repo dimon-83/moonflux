@@ -52,6 +52,7 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
     FileSource(path) => ("source-runner", "file source: \{path}")
     HttpSource(url) => ("source-runner", "http source: \{url}")
     StdinSource => ("source-runner", "stdin source")
+    MqttSource(url) => ("source-runner", "mqtt subscription: \{url}")
   }
   processes.push(Process::{
     name: "source-runner",
@@ -77,11 +78,16 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
       detail,
     })
   }
+  let sink_detail = match spec.sink {
+    StdoutSink => "stdout sink"
+    HttpSink(url) => "http sink: \{url}"
+    MqttSink(url) => "mqtt publish: \{url}"
+  }
   processes.push(Process::{
     name: "sink-runner",
     role: "sink-runner",
     capability: "native",
-    detail: "stdout sink",
+    detail: sink_detail,
   })
   Topology::{ pipeline: spec.metadata_name, topic: spec.topic.name, processes }
 }
