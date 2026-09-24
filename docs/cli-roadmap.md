@@ -135,6 +135,17 @@
   布尔 flag（`--committed`/`--follow`/`--verify`/`--ws`/`--tls-require-client`）不再吞掉
   下一个参数（`--committed --remote X` 曾静默变本地消费）。
 
+#### 3.3.5 落地回填（2026-09-23，P19 达成）
+
+- MQTT 连接器：spec 源/汇支持 `{"type":"mqtt","url":"mqtt://[user:pass@]host[:port]/topic"}`
+  ——源为**订阅**（`pipeline run` 首拉建连订阅，流式运行不自行退出；三态 pull 的
+  `Quiet`/`Exhausted` 语义见 AGENTS §2 P19 块），汇为**发布**；QoS 0 边界与 URL 凭据提示
+  见 README 决策 43。对标：参考系统的生产连接器在外仓（本仓只有框架）——MQTT 客户端是自建
+  （零依赖，手写 3.1.1）。门禁 `scripts/e2e-p19-mqtt.sh`（5 腿，对端 = `scripts/mqtt_test_broker.py`）。
+- `pipeline run` 从「一次 pull 一次性执行」变为支持流式源的循环（一次性源语义不变）——
+  cli-roadmap §1 的 `pipeline run` 行按此口径理解。
+- Kafka 连接器仍未交付（协议面远大于 MQTT，单独立票）。
+
 ### 3.4 P4（全平台体验）
 
 - CLI 契约稳定化：与 native + wasm 客户端 SDK 对齐（README 能力对标表"客户端 SDK"行）；

@@ -2,7 +2,7 @@
 
 > **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–42），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–77 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
 
-**快照日期**：2026-09-23 · 状态：**P0–P18 全部达成** · 门禁全套 **35 步绿**（native 239 / wasm-gc 162 / 算子 6）
+**快照日期**：2026-09-23 · 状态：**P0–P19 全部达成** · 门禁全套 **36 步绿**（native 239 / wasm-gc 162 / 算子 6）
 
 ---
 
@@ -31,13 +31,14 @@
 | P16 | 日志句柄复用：进程级有界缓存，12 MiB 复制由判死到秒级收敛 | 09-19 | `e2e-p16-logcache.sh` |
 | P17 | 基准工具（produce/consume/latency）+ 修 accept 先于 poll 的每请求 200 ms 税 | 09-22 | `e2e-p17-bench.sh` |
 | P18 | 真偏移（fetch 应答按连续段分帧）+ serve 命令面（topic 家族 + group 拒绝） | 09-23 | `e2e-p14` 腿 9–11 · `e2e-p0` 新腿 |
+| P19 | 连接器流式语义（三态 pull）+ MQTT 3.1.1 连接器（零依赖手写、QoS 0 边界） | 09-23 | `e2e-p19-mqtt.sh`（5 腿，对端 = 独立 Python broker） |
 
 ### 📋 待办（按优先级）
 
 | # | 项 | 优先级 | 说明 / 依据 |
 | :--- | :--- | :--- | :--- |
 | 1 | **远端仓库 + CI** | **高（工程风险）** | 全部历史（12+ 笔提交）只在单机；`gh` 未安装、无 remote。**等待外部输入**：仓库地址或装好 gh 后一条命令收口 |
-| 2 | **MQTT / Kafka 连接器** | 高（功能） | P1 尾巴，Source/Sink 框架已留位；对标参考系统连接器面 |
+| 2 | **Kafka 连接器** | 中（功能） | P1 尾巴的剩余一半（MQTT 已于 P19 交付）；协议面远大于 MQTT（ApiVersions/Metadata/Produce/Fetch/RecordBatch v2/压缩编解码）——单独立票，未立项 |
 | 3 | serve 的 group 协调 | 中 | 需放置 + leader 地址发现（单机无放置）；P18 已做解释性拒绝并留痕（决策 42） |
 | 4 | gates.sh 补 `.mbti` 新鲜度检查 | 中（卫生） | P15 漏 `moon info` 的直接教训——「generated artifacts」步只查 Python 生成器 |
 | 5 | cli-roadmap §3.3.1 过时注 | 低（卫生） | `partition list` 的理由注（「多分区存储未落地」）在 P7/P8 后已不成立；缺的只是命令本身 |
@@ -66,6 +67,7 @@
 | 5 | **log_test 重复测试**：上轮追加时复制了一份（225 实为 224） | P17 提交前核对 | 删除并重验 |
 | 6 | **P15 漏 `moon info`**：公开接口与 `.mbti` 滞后一个里程碑 | P18 前盘点发现 | `9d24d34` 补档（diff 逐条核对）；暴露 gates 盲区 → 转待办 #4 |
 | 7 | **roadmap 两处陈旧项**：门禁卫生已落地仍挂待办；benchmark 重复行 | P17 提交前核对 | 随 P17 提交修正 |
+| 8 | **小缺陷两枚**：① `core/pipeline` 的 sink detail 对所有汇都写 "stdout sink"（对 http/mqtt 汇是说谎）；② `spec_wbtest` 用 `"mqtt"` 当「未知类型」的例子，P19 让它变成已知——测试例子随之失效 | P19 实现时发现 | 当场修（sink detail 按 spec 取；测试改用 `amqp` 并补 MQTT 正/反例） |
 
 ---
 
@@ -79,9 +81,9 @@
 
 **可编程**：mbel 表达式变换（消费路径执行、热重载、历史按当前规则重现）；版本化函数集（发布期静态检查 + 编译两道闸）；WASM 算子沙箱（ABI v1、fuel 确定性预算、失败 fail-closed）；PipelineSpec 单一真相（编辑器只是渲染器）。
 
-**客户端与工具**：单二进制多子命令 CLI（produce / consume / serve / spu / sc / topic / group / cluster / operator / benchmark / pipeline / function-set）；WebSocket 网关（同端口同协议）；浏览器编辑器（拖拽 → 部署 → 消费）；**基准工具**（produce 吞吐 + 逐批延迟、consume 抽干与序号完整性校验、latency 端到端可见性——本地铁环回 ack ~4 ms / e2e p50 ~189 µs）。
+**客户端与工具**：单二进制多子命令 CLI（produce / consume / serve / spu / sc / topic / group / cluster / operator / benchmark / pipeline / function-set）；WebSocket 网关（同端口同协议）；浏览器编辑器（拖拽 → 部署 → 消费）；**基准工具**（produce 吞吐 + 逐批延迟、consume 抽干与序号完整性校验、latency 端到端可见性——本地铁环回 ack ~4 ms / e2e p50 ~189 µs）；**MQTT 连接器**（P19：订阅源 + 发布汇，手写 3.1.1、QoS 0、流式 run）。
 
-**工程面**：一内核多后端（core 在 wasm / wasm-gc / js / native 四后端编译矩阵下保持可编译）；35 步门禁（故障注入、对拍、结构断言）；golden vectors + 独立 Python 协议第二实现；42 条关键决策记录全程留痕。
+**工程面**：一内核多后端（core 在 wasm / wasm-gc / js / native 四后端编译矩阵下保持可编译）；36 步门禁（故障注入、对拍、结构断言）；golden vectors + 独立 Python 协议第二实现；43 条关键决策记录全程留痕。
 
 ---
 

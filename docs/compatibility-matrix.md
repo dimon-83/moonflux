@@ -34,6 +34,8 @@
 
 | 22 | **基准工具**：吞吐与延迟直方图，负载下的完整性校验 | `fluvio benchmark`：producer 吞吐 + 延迟直方图（min/avg/max、p50/p95/p99），全参数矩阵（batch/linger/压缩/生产者数/分区/副本），自动建删 topic；**consumer 基准隐藏未发布**（报告 §2.12） | `benchmark produce/consume/latency`（本地+远端）：produce 报吞吐 + 逐批 ack 直方图（一批一帧；偏移不连续=硬失败）；consume 抽干至 `scan_end`，`--verify` 校验值头序号=偏移；latency 报 produce-ack 与 e2e 可见性两组直方图（单调 µs 时钟）；**数字只报告、门禁只断言结构**（决策 41，决策 33 的推论）；执行中抓掉 accept 先于 poll 的「每请求一 tick」税（~200 ms 恒定、与载荷无关；修后本地铁环回 ~0.1 ms，ticket 75） | ✅ 对拍通过 | `scripts/e2e-p17-bench.sh`（6 腿：计数与区间精确 / 序号校验 / 百分位单调 / e2e ⊇ ack / 每主题恰好一次 `opened` / 超限按名拒绝且服务端存活）+ `apps/cli/benchmark_wbtest.mbt`（nearest-rank 与值头编解码） |
 
+| 23 | **连接器：流式源与 MQTT** | 参考系统的**生产连接器在外仓**（`fluvio-connectors`），本仓只有框架；协议客户端无对标面 | 连接器框架 + 自建 MQTT 3.1.1 客户端（零依赖手写）：三态 pull（`Records`/`Quiet`/`Exhausted`——流式源不自行退出，一次性源第二次 pull 报耗尽）；订阅/发布均 QoS 0（显式边界，决策 43）；断线即结构化错误、无静默重连；spec 增 `{"type":"mqtt","url":...}`，坏 url **apply 期**拒绝 | ✅ 对拍通过 | `scripts/e2e-p19-mqtt.sh`（5 腿：订阅流式交付且不退出 / CONNECT·SUBSCRIBE 形状被**独立 Python broker**在线上断言 / 汇发布被解码 / apply 期拒绝 + 死 broker 结构化错误 / 一次性源语义不变）+ `apps/connectors/connectors_wbtest.mbt`（URL / varint / CONNECT / PUBLISH 解码） |
+
 **图例**：✅ 对拍通过（有可复现脚本/测试）｜⚠️ 部分验证（注明缺口）｜⏳ 未验证（属后续里程碑门禁）。
 
 **维护规则**：新增对标语义先入表（状态 ⏳），落地并取得可证伪证据后更新为 ✅ 并附证据入口；状态变更需在 PR 说明中注明依据（AGENTS.md §7）。

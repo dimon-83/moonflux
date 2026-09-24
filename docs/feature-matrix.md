@@ -2,7 +2,7 @@
 
 > **定位**：面向使用者与集成者——**平台现在能做什么**：按能力域列出的功能清单、每项的状态与可复现的证据入口。**规约依据**：AGENTS.md §10（证据与状态规范）；**边界声明**：本文是**能力清单**的单一真相；「与 Fluvio 对标语义的验证状态」不在本文——见 [`compatibility-matrix.md`](compatibility-matrix.md)（图例的单一真相）；架构原理见 [`architecture.md`](architecture.md)，操作方法见 [`user-guide.md`](user-guide.md)。
 >
-> **日期**：2026-09-23 · 覆盖 P0–P18 · 图例：✅ 已交付且有门禁证据 · ⚠️ 部分（注明缺口）· ⏳ 未实现（注明触发条件）
+> **日期**：2026-09-23 · 覆盖 P0–P19 · 图例：✅ 已交付且有门禁证据 · ⚠️ 部分（注明缺口）· ⏳ 未实现（注明触发条件）
 
 ## 1. 数据面
 
@@ -70,7 +70,8 @@
 | 连接多路复用（单线程 poll hub，缓冲上限由协议批预算派生） | ✅ | `apps/cli/hub.mbt`（收包按轮 join，超限**报告后**断开）；`scripts/e2e-p5-concurrency.sh`、`scripts/e2e-p15-bulk.sh` 腿 4 |
 | 控制面并发服务（`sc` 同 hub；沉默对端不伤害他人） | ✅ | `scripts/e2e-p13-control-plane.sh` |
 | WebSocket 网关（同端口，浏览器与 CLI 同协议） | ✅ | `serve --ws`；`scripts/e2e-p4-ws.sh` |
-| 连接器：file / stdin / http(source+sink) | ✅ | `apps/connectors`；`scripts/e2e-p1-connectors.sh` |
+| 连接器：file / stdin / http（source+sink） | ✅ | `apps/connectors`；`scripts/e2e-p1-connectors.sh` |
+| **MQTT 连接器（P19）**：订阅源 + 发布汇（手写 MQTT 3.1.1，零依赖） | ✅ | `mqtt://[user:pass@]host[:port]/topic`；三态 pull（流式源不退出、一次性源语义不变）；QoS 0 边界与 URL 凭据提示见 README 决策 43；`scripts/e2e-p19-mqtt.sh`（5 腿，对端 = 独立 Python broker）；**增量源批量**：`pipeline run` 成为流式循环，消费按批追加 + 变换 + 汇 |
 | 连接器：MQTT / Kafka | ⏳ | 框架已留位（P1 收尾项），未实现 |
 | 认证（握手期 CMD_AUTH + 凭据表 + 常数时间比较） | ✅ | `core/auth`；`scripts/e2e-p12-security.sh` |
 | 授权（闭合权限表，四角色，节点身份独立） | ✅ | 同上（客户端凭据伪造节点命令被拒） |
@@ -98,7 +99,7 @@
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
 | 日志句柄复用（进程级有界缓存，淘汰安全） | ✅ | `apps/cli/logcache.mbt`：`open_partition_log` 命中即复用；变更经同一句柄故无需失效；`MOONFLUX_LOG_CACHE` 控制上限与 LRU 淘汰；每次真实打开在 stderr 记一行；`scripts/e2e-p16-logcache.sh`（6 腿） |
-| 门禁体系（35 步，含故障注入与对拍） | ✅ | `scripts/gates.sh` |
+| 门禁体系（36 步，含故障注入与对拍） | ✅ | `scripts/gates.sh` |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

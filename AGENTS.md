@@ -63,6 +63,7 @@
 | P16 | **日志句柄复用**：进程级有界缓存（`open_partition_log` 命中即复用），变更（append/roll/truncate/skip_to/压实/保留）走同一句柄 | 13 次请求跨 6 段只开一次日志；关掉缓存则按请求次数打开；淘汰后可重开且不丢记录；retention/压实经缓存句柄后读取精确、副本逐字节一致；12 MiB 复制期间控制面零投诉 | ✅ 2026-09-19（`scripts/e2e-p16-logcache.sh`，6 条腿；见决策 40） |
 | P17 | **基准工具**：`benchmark produce/consume/latency`（本地+远端；值头 4 字节序号做负载下完整性校验；单调 µs 时钟与 nearest-rank 直方图）；执行中修掉 accept 阻塞在 poll 之前的「每请求一 tick」税 | 六条结构腿：计数与偏移区间精确、序号头校验通过、百分位单调、e2e ⊇ produce-ack、**每主题恰好一次 `opened`**（P16 回归护栏）、超限按名拒绝且服务端存活；**吞吐/延迟数字只报告不设门禁**（决策 41） | ✅ 2026-09-22（`scripts/e2e-p17-bench.sh`，6 条腿；矩阵 #22；见决策 41） |
 | P18 | **已定位小票收口**：① 真偏移——fetch 应答按**连续偏移段**分帧（空洞/扇出重复各起新帧），本地消费游标按偏移推进（不再按条数）；② serve 命令面——topic 家族（声明入 serve 元数据库、list 为**声明∪磁盘**、delete = 失效缓存后删数据）+ group 家族结构化拒绝；执行中修掉布尔 flag 吞参数的解析 bug | p14 腿 9–11（远端/committed 跨中洞显示真偏移、本地零重复）+ p0 新腿（rf>1 拒绝且说明、声明∪自动创建、删后重产从 0 且 `evicted` 有据、group 解释性拒绝）+ wbtest（分帧 6 条、flag 解析 4 条） | ✅ 2026-09-23（见决策 42） |
+| P19 | **连接器流式语义 + MQTT**：三态 pull（`Records`/`Quiet`/`Exhausted`）+ `pipeline run` 循环（一次性源语义不变）；手写 MQTT 3.1.1 客户端（零依赖、QoS 0 边界、会话复用）；spec 增 mqtt 源/汇 | `e2e-p19-mqtt.sh` 5 腿：订阅源流式交付且**不退出**、线上形状（CONNECT clean / SUBSCRIBE topic）被独立 Python broker 断言、汇发布被 broker 解码、坏 url **apply 期**拒绝 + 死 broker 结构化错误、一次性源一遍退出；wbtest 4 条（URL 解析 / varint 边界 / CONNECT 字节 / PUBLISH 解码含 QoS 1 形状） | ✅ 2026-09-23（见决策 43） |
 
 - 详细路线图、里程碑台账与排期见 [docs/project-roadmap.md](docs/project-roadmap.md)（进度管理单一真相，决策 37）；依据见报告 3.4 / 4.4 / 6.4。
 - 阶段推进以**门禁**为准；门禁必须可证伪、可复现（对拍脚本 / 基准 / 故障注入），不得以"看起来能跑"代替。
@@ -183,6 +184,14 @@
 - **一批一帧**：`--batch-records` × wire 尺寸必须 ≤ `PRODUCE_CHUNK_BYTES`，否则一次 send 是多帧、逐批计时失去意义（命令自己拒绝并说明）。偏移不连续 = 硬失败——基准不打印正确性有问题的报告。
 - **计时用垫片的单调微秒时钟**（`mf_cli_now_us`，CLOCK_MONOTONIC）：`@env.now()` 只有毫秒，本地回环的 p50 会圆成 0；间隔不能随 NTP 跳。宿主层专用，内核照旧零时钟。
 - **改服务端循环后跑一次 `benchmark latency`**：循环形状的延迟代价（如 accept 税）不会被任何既有门禁抓到——P13 门禁断言的是「不阻塞/不误判」，从不量延迟。这就是基准存在的理由，也是它的日常用途。
+
+**P19 连接器纪律（改连接器 / `pipeline run` / 源汇相关代码前先读；决策依据见 README 决策 43）**
+
+- **三态 pull 是契约**：`Records` / `Quiet` / `Exhausted`——流式源用 `Quiet` 表达"此刻没有"，一次性源第二次 pull 必须报 `Exhausted`。不要把"没有"折叠成"耗尽"（订阅源会立刻退出），也不要把"重读"当"新数据"（file 源每 pull 都重读整文件，循环会无限重放）。新增源必须明确自己是哪种，并让 wbtest 钉住第二次 pull 的行为。
+- **连接是会话**：流式源/汇 lazy 连接、跨 pull/flush 复用（每 pull 重连会把每个静默窗变成一次握手）；断线 = **结构化错误**，重试是调用者下一轮的事——不要引入静默重连循环（与集群纪律同源：失败是下一个 tick 的问题，不是藏起来的重试）。
+- **每批 flush stdout**：被重定向的 stdout 是块缓冲的（P4 教训的重述）——流式 run 不会自己退出，不 flush 的门禁是在断言"没有输出"。任何新 sink 走 stdout 都要 flush。
+- **QoS 0 边界写进文档，不写 TODO**：订阅 QoS 0 ⇒ broker 按 min(publish, subscribe) 降级，入站只需处理 QoS 0（防御性 PUBACK 防止 packet id 被读成 payload）；出站 QoS 1（packet id + PUBACK 等待）是明示的后续候选。URL 内嵌凭据会随 spec 落入 `topology.json`——受信网络或 broker 侧 ACL，别把 URL 当保险箱。
+- **门禁的对端是独立实现**：MQTT 门禁用 `scripts/mqtt_test_broker.py`（标准库、按规范说话）断言**线上字节**（CONNECT 形状、SUBSCRIBE topic、PUBLISH 内容）——同 `mfs_probe.py` 的精神：断言属于服务端视角，不属于客户端的意愿。
 ## 3. 目录与包结构（MoonBit 约定）
 
 ```

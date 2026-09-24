@@ -57,6 +57,8 @@ cli.exe consume --topic events --remote 127.0.0.1:19420
 
 **主题与消费组，两种形态（P18）**：`topic create/list/delete` 对 `--remote <serve>`（单机）与 `--remote <sc>`（集群）都可用。单机形态：声明写入 broker 自己的元数据（与其函数集同库）；`topic list` 列**声明 ∪ 自动创建**（produce 建的主题不漏报）；`topic delete` **连带删除数据**（日志句柄先失效再删文件，重新生产从 offset 0 开始）；`--replication-factor > 1` 被拒绝——一个节点谈不了副本。**消费组需要控制面**：对 serve 发组命令会得到解释性拒绝（指出跑 sc + spu 集群），不再是 `unknown command`。另外，空洞日志（压实/过滤之后）的消费在三条路径上都显示**幸存记录的真实偏移**（P18 修正：此前空洞之后的偏移会整体错位）。
 
+**MQTT 连接器（P19）**：spec 的源/汇可以是 MQTT——`{"type":"mqtt","url":"mqtt://[user:pass@]host[:port]/topic"}`。**源是订阅**：`pipeline run` 首拉建连并订阅，之后按批把消息追加进主题再出汇——与一次性源（file/stdin/http）不同，**它不会自己退出**（流式运行，Ctrl-C 停止）；`Quiet` 时安静等待，消息到了就交付。**汇是发布**：每条记录的值发到 URL 的 topic。边界（决策 43）：订阅与发布均 QoS 0（订阅 QoS 0 时 broker 按 min 降级送出）；不做 TLS / 遗嘱 / 保留消息 / 自动重连——断线是结构化错误，重启 run 即重连；URL 内嵌凭据会随 spec 落入 `topology.json`，请用受信网络或 broker 侧 ACL。本地自测可用任意 MQTT broker（如 mosquitto：`mosquitto -p 1884`）；`scripts/e2e-p19-mqtt.sh` 里的 `scripts/mqtt_test_broker.py` 就是最小可用的测试 broker。
+
 **spec 形态**（`core/spec::parse_spec` 是唯一权威）：
 
 | 字段 | 取值 |
@@ -469,7 +471,7 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
-| 一切（35 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| 一切（36 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
 | 多分区复制与隔离 | `scripts/e2e-p7-partitions.sh` |
@@ -478,6 +480,8 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 | 大载荷（分批生产 / 有界窗口 / 有界复制 / 超限拒绝） | `scripts/e2e-p15-bulk.sh` |
 | 日志句柄复用（一次打开 / 淘汰安全 / 变更一致 / 复制不误判） | `scripts/e2e-p16-logcache.sh` |
 | 基准（吞吐/延迟报告；门禁只断言结构） | `scripts/e2e-p17-bench.sh`；日常跑 `cli.exe benchmark produce\|consume\|latency` |
+| 连接器：file/stdin/http | `scripts/e2e-p1-connectors.sh` |
+| MQTT 订阅源 / 发布汇（含最小测试 broker） | `scripts/e2e-p19-mqtt.sh` · `scripts/mqtt_test_broker.py` |
 | 消费组 | `scripts/e2e-p9-groups.sh` |
 | 安全面 | `scripts/e2e-p12-security.sh` |
 | 控制面并发与停摆 | `scripts/e2e-p13-control-plane.sh` |
