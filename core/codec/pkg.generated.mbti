@@ -14,6 +14,14 @@ pub fn crc32_extend_view(UInt, BytesView) -> UInt
 
 pub fn crc32_view(BytesView) -> UInt
 
+pub fn crc32c(Bytes) -> UInt
+
+pub fn crc32c_extend(UInt, Bytes) -> UInt
+
+pub fn crc32c_extend_view(UInt, BytesView) -> UInt
+
+pub fn crc32c_view(BytesView) -> UInt
+
 pub fn hex_decode(String) -> Result[Bytes, DecodeError]
 
 pub fn hex_encode(Bytes) -> String

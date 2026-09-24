@@ -292,6 +292,7 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     HttpSource(url) => @connectors.http_source(url, now)
     StdinSource => @connectors.stdin_source(now)
     MqttSource(url) => @connectors.mqtt_source(url)
+    KafkaSource(url) => @connectors.kafka_source(url)
   }
   // 2. broker: append to the topic log
   let log = match open_topic_log(data_dir, applied.spec.topic.name) {
@@ -303,6 +304,7 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     StdoutSink => @connectors.stdout_sink()
     HttpSink(url) => @connectors.http_sink(url)
     MqttSink(url) => @connectors.mqtt_sink(url)
+    KafkaSink(url) => @connectors.kafka_sink(url)
   }
   while true {
     let pull = match (source.pull)() {

@@ -78,7 +78,7 @@ let invalid_cases : Array[InvalidCase] = [
   },
   InvalidCase::{
     name: "unknown-sink-type",
-    json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"p\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"kafka\"}}}",
+    json: "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"p\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"kinesis\"}}}",
     expect_codes: ["bad-value"],
   },
   InvalidCase::{

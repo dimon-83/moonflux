@@ -34,6 +34,9 @@ pub(all) enum SourceSpec {
   StdinSource
   /// Subscribe to an MQTT broker topic (P19); messages become records.
   MqttSource(String)
+  /// Consume a Kafka topic partition (P20) — an interoperability
+  /// endpoint, not a reference system.
+  KafkaSource(String)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -64,6 +67,8 @@ pub(all) enum SinkSpec {
   HttpSink(String)
   /// Publish each record's value to an MQTT broker topic (P19).
   MqttSink(String)
+  /// Publish each batch to a Kafka topic partition (P20).
+  KafkaSink(String)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -81,6 +86,56 @@ fn mqtt_url_ok(url : String) -> Bool {
     Some((authority, topic)) => authority.length() > 0 && topic.length() > 0
     None => false
   }
+}
+
+///|
+/// The spec-level shape check for a Kafka URL (P20): scheme, authority,
+/// topic, and parameters the connector would accept (`partition` a
+/// non-negative integer, `from` earliest/latest/a non-negative offset,
+/// nothing else).
+fn kafka_url_ok(url : String) -> Bool {
+  if !url.has_prefix("kafka://") || url.length() <= 8 {
+    return false
+  }
+  let rest = url[8:url.length()].to_owned()
+  let (head, query) = match rest.split_once("?") {
+    Some((head, query)) => (head.to_owned(), query.to_owned())
+    None => (rest, "")
+  }
+  let (authority, topic) = match head.split_once("/") {
+    Some((authority, topic)) => (authority.to_owned(), topic.to_owned())
+    None => return false
+  }
+  if authority.length() == 0 || topic.length() == 0 {
+    return false
+  }
+  if query.length() > 0 {
+    for pair in query.split("&") {
+      let pair = pair.to_owned()
+      match pair.split_once("=") {
+        Some((key, value)) =>
+          match key.to_owned() {
+            "partition" =>
+              match (try? @string.parse_int(value.to_owned())) {
+                Ok(n) => if n < 0 { return false }
+                Err(_) => return false
+              }
+            "from" =>
+              match value.to_owned() {
+                "earliest" | "latest" => ()
+                other =>
+                  match (try? @string.parse_int(other)) {
+                    Ok(n) => if n < 0 { return false }
+                    Err(_) => return false
+                  }
+              }
+            _ => return false
+          }
+        None => return false
+      }
+    }
+  }
+  true
 }
 
 ///|
@@ -298,11 +353,30 @@ fn parse_body(
           })
           None
         }
+        (Some(String("kafka")), _, Some(String(url))) =>
+          if kafka_url_ok(url) {
+            Some(KafkaSource(url))
+          } else {
+            errors.push(SpecError::{
+              path: "$.spec.source.url",
+              code: "bad-value",
+              message: "kafka urls look like kafka://host:port/topic[?partition=N&from=earliest|latest|<offset>]",
+            })
+            None
+          }
+        (Some(String("kafka")), _, _) => {
+          errors.push(SpecError::{
+            path: "$.spec.source.url",
+            code: "missing-field",
+            message: "kafka sources require a url",
+          })
+          None
+        }
         (Some(String(other)), _, _) => {
           errors.push(SpecError::{
             path: "$.spec.source.type",
             code: "bad-value",
-            message: "unknown source type \"\{other}\" (supported: file, http, stdin, mqtt)",
+            message: "unknown source type \"\{other}\" (supported: file, http, stdin, mqtt, kafka)",
           })
           None
         }
@@ -529,11 +603,30 @@ fn parse_body(
           })
           None
         }
+        (Some(String("kafka")), Some(String(url))) =>
+          if kafka_url_ok(url) {
+            Some(KafkaSink(url))
+          } else {
+            errors.push(SpecError::{
+              path: "$.spec.sink.url",
+              code: "bad-value",
+              message: "kafka urls look like kafka://host:port/topic[?partition=N&from=earliest|latest|<offset>]",
+            })
+            None
+          }
+        (Some(String("kafka")), _) => {
+          errors.push(SpecError::{
+            path: "$.spec.sink.url",
+            code: "missing-field",
+            message: "kafka sinks require a url",
+          })
+          None
+        }
         (Some(String(other)), _) => {
           errors.push(SpecError::{
             path: "$.spec.sink.type",
             code: "bad-value",
-            message: "unknown sink type \"\{other}\" (supported: stdout, http, mqtt)",
+            message: "unknown sink type \"\{other}\" (supported: stdout, http, mqtt, kafka)",
           })
           None
         }

@@ -79,7 +79,7 @@ test "invalid metadata name rejected with rule message" {
 
 ///|
 test "unknown source type and unknown sink type collected together" {
-  let text = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"amqp\",\"path\":\"p\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"kafka\"}}}"
+  let text = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"amqp\",\"path\":\"p\"},\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"kinesis\"}}}"
   match parse_spec(text) {
     Err(errors) => {
       assert_eq(errors.length(), 2)

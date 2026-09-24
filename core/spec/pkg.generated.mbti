@@ -29,6 +29,7 @@ pub(all) enum SinkSpec {
   StdoutSink
   HttpSink(String)
   MqttSink(String)
+  KafkaSink(String)
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) enum SourceSpec {
@@ -36,6 +37,7 @@ pub(all) enum SourceSpec {
   HttpSource(String)
   StdinSource
   MqttSource(String)
+  KafkaSource(String)
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct SpecError {

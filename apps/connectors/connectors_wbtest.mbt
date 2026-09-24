@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+
 // Whitebox tests for apps/connectors — URL/request/response parsing
 // and the shared text-shaper. Live HTTP round trips are covered by
 // scripts/e2e-p1-connectors.sh against a real fixture server.
@@ -227,4 +228,169 @@ test "stdout sink renders one line per value" {
 ///|
 fn parse_view(bytes : Bytes) -> BytesView {
   bytes[0:bytes.length()]
+}
+
+// ---------------------------------------------------------------------------
+// Kafka (P20): URL parsing, zigzag varints, and the record batch format
+
+///|
+fn krec(key : String, value : String, ts : Int64) -> @protocol.Record {
+  @protocol.Record::{
+    timestamp: ts,
+    key: @utf8.encode(key[0:key.length()]),
+    value: @utf8.encode(value[0:value.length()]),
+    headers: [],
+  }
+}
+
+///|
+/// A byte-wise patch, for tampering with a built batch.
+fn patch_byte(bytes : Bytes, at : Int, value : Int) -> Bytes {
+  let out = Buffer::Buffer()
+  out.write_bytes(bytes[0:at])
+  out.write_byte(value.to_byte())
+  out.write_bytes(bytes[at + 1:bytes.length()])
+  out.to_bytes()
+}
+
+///|
+fn patch_u32(bytes : Bytes, at : Int, value : UInt) -> Bytes {
+  let out = Buffer::Buffer()
+  out.write_bytes(bytes[0:at])
+  out.write_byte((value >> 24).to_byte())
+  out.write_byte(((value >> 16) & 0xFFU).to_int().to_byte())
+  out.write_byte(((value >> 8) & 0xFFU).to_int().to_byte())
+  out.write_byte((value & 0xFFU).to_int().to_byte())
+  out.write_bytes(bytes[at + 4:bytes.length()])
+  out.to_bytes()
+}
+
+///|
+test "kafka urls parse host, port, topic, partition, and from" {
+  match parse_kafka_url("kafka://broker.local:9093/events") {
+    Ok(target) => {
+      assert_eq(target.host, "broker.local")
+      assert_eq(target.port, 9093)
+      assert_eq(target.topic, "events")
+      assert_eq(target.partition, 0)
+      assert_eq(target.from, Earliest)
+    }
+    Err(e) => abort("parse failed: \{e}")
+  }
+  match
+    parse_kafka_url("kafka://127.0.0.1:9092/orders?partition=2&from=latest") {
+    Ok(target) => {
+      assert_eq(target.port, 9092)
+      assert_eq(target.partition, 2)
+      assert_eq(target.from, Latest)
+    }
+    Err(e) => abort("parse failed: \{e}")
+  }
+  // default port, explicit offset
+  match parse_kafka_url("kafka://127.0.0.1/audit?from=42") {
+    Ok(target) => {
+      assert_eq(target.port, 9092)
+      assert_eq(target.from, At(42L))
+    }
+    Err(e) => abort("parse failed: \{e}")
+  }
+  // refusals
+  assert_true(parse_kafka_url("mqtt://x/y") is Err(_))
+  assert_true(parse_kafka_url("kafka://hostonly") is Err(_))
+  assert_true(parse_kafka_url("kafka://h:9092/") is Err(_))
+  assert_true(parse_kafka_url("kafka://h:9092/t?partition=-1") is Err(_))
+  assert_true(parse_kafka_url("kafka://h:9092/t?from=whenever") is Err(_))
+  assert_true(parse_kafka_url("kafka://h:9092/t?bogus=1") is Err(_))
+}
+
+///|
+test "zigzag varints round-trip their boundaries" {
+  for
+    value in [
+      0L, -1L, 1L, -2L, 63L, -64L, 64L, -65L, 8192L, -8192L, 2147483647L, -2147483648L,
+      9223372036854775807L, -9223372036854775808L,
+    ] {
+    let buf = Buffer::Buffer()
+    write_zigzag_varint(buf, value)
+    let reader = @codec.Reader::new(buf.to_bytes())
+    match read_zigzag_varint(reader) {
+      Ok(back) => assert_eq(back, value)
+      Err(e) => abort("round trip failed for \{value}: \{e}")
+    }
+    assert_eq(reader.remaining(), 0)
+  }
+  // the wire shape itself: zigzag maps 0→0x00, -1→0x01, 1→0x02
+  let zero = Buffer::Buffer()
+  write_zigzag_varint(zero, 0L)
+  assert_eq(zero.to_bytes(), b"\x00")
+  let neg_one = Buffer::Buffer()
+  write_zigzag_varint(neg_one, -1L)
+  assert_eq(neg_one.to_bytes(), b"\x01")
+  let one = Buffer::Buffer()
+  write_zigzag_varint(one, 1L)
+  assert_eq(one.to_bytes(), b"\x02")
+}
+
+///|
+test "a built batch parses back with offsets, keys, and timestamps" {
+  let records = [
+    krec("k1", "first", 1000L),
+    krec("", "second", 1010L),
+    krec("k3", "third", 1020L),
+  ]
+  let batch = build_batch(records, 1000L)
+  // header shape: magic 2 at offset 16, CRC at 17, attributes at 21
+  assert_eq(batch[16], 2)
+  let parsed : Array[KafkaRecord] = []
+  match parse_batches(batch, parsed) {
+    Ok(_) => ()
+    Err(e) => abort("parse failed: \{e}")
+  }
+  assert_eq(parsed.length(), 3)
+  assert_eq(parsed[0].offset, 0L)
+  assert_eq(parsed[2].offset, 2L)
+  assert_eq(parsed[0].record.key, @utf8.encode("k1"))
+  assert_eq(parsed[1].record.key.length(), 0) // null key round-trips as empty
+  assert_eq(parsed[0].record.timestamp, 1000L)
+  assert_eq(parsed[2].record.timestamp, 1020L)
+  assert_eq(parsed[1].record.value, @utf8.encode("second"))
+  // empty batches are legal on the wire and parse to nothing
+  let empty : Array[KafkaRecord] = []
+  match parse_batches(build_batch([], 5L), empty) {
+    Ok(_) => assert_eq(empty.length(), 0)
+    Err(e) => abort("empty batch failed: \{e}")
+  }
+}
+
+///|
+test "a corrupted batch fails its CRC instead of parsing" {
+  let batch = build_batch([krec("", "payload", 1L)], 1L)
+  // flip the last byte: inside the CRC-covered region, and never
+  // already 0xFF (an earlier draft patched a baseSequence -1 and the
+  // "corruption" was a no-op — a test that cannot fail is not a test)
+  let tampered = patch_byte(batch, batch.length() - 1, 0xFF)
+  let out : Array[KafkaRecord] = []
+  match parse_batches(tampered, out) {
+    Ok(_) => abort("a corrupted batch parsed")
+    Err(e) => assert_true(e.contains("CRC-32C"))
+  }
+}
+
+///|
+test "a compressed batch is refused by codec name" {
+  let batch = build_batch([krec("", "payload", 1L)], 1L)
+  // set the gzip codec bit in the attributes (covered offset 21) and
+  // recompute the CRC, so the ONLY objection left is the codec
+  let with_codec = patch_byte(batch, 22, 1)
+  let covered = with_codec[21:with_codec.length()]
+  let crc = @codec.crc32c_view(covered)
+  let consistent = patch_u32(with_codec, 17, crc)
+  let out : Array[KafkaRecord] = []
+  match parse_batches(consistent, out) {
+    Ok(_) => abort("a compressed batch parsed")
+    Err(e) => {
+      assert_true(e.contains("gzip"))
+      assert_true(e.contains("not supported"))
+    }
+  }
 }

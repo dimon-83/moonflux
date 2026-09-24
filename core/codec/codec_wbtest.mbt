@@ -98,6 +98,30 @@ test "crc32 extend composition law" {
 }
 
 ///|
+test "crc32c known vectors" {
+  // The standard CRC-32C check value, and the catalogue's short
+  // vectors — the anchor that keeps two hand-rolled implementations
+  // (ours and the gate's Python peer) from agreeing on the same wrong
+  // polynomial.
+  assert_eq(crc32c(b"123456789"), 0xE3069283U)
+  assert_eq(crc32c(b""), 0U)
+  assert_eq(crc32c(b"a"), 0xC1D04330U)
+  assert_eq(crc32c(b"abc"), 0x364B3FB7U)
+  // and it is not the IEEE CRC-32 wearing a hat
+  assert_true(crc32(b"123456789") != crc32c(b"123456789"))
+}
+
+///|
+test "crc32c extend composition law" {
+  let a = b"hello, "
+  let b = b"moonflux world"
+  let buf = Buffer::Buffer()
+  buf.write_bytes(a[0:a.length()])
+  buf.write_bytes(b[0:b.length()])
+  assert_eq(crc32c(buf.to_bytes()), crc32c_extend(crc32c(a), b))
+}
+
+///|
 test "crc32 view matches owned" {
   let data = b"protocol frame payload \x00\xFF\x80"
   assert_eq(crc32(data), crc32_view(data[0:data.length()]))
