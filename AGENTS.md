@@ -65,6 +65,7 @@
 | P18 | **已定位小票收口**：① 真偏移——fetch 应答按**连续偏移段**分帧（空洞/扇出重复各起新帧），本地消费游标按偏移推进（不再按条数）；② serve 命令面——topic 家族（声明入 serve 元数据库、list 为**声明∪磁盘**、delete = 失效缓存后删数据）+ group 家族结构化拒绝；执行中修掉布尔 flag 吞参数的解析 bug | p14 腿 9–11（远端/committed 跨中洞显示真偏移、本地零重复）+ p0 新腿（rf>1 拒绝且说明、声明∪自动创建、删后重产从 0 且 `evicted` 有据、group 解释性拒绝）+ wbtest（分帧 6 条、flag 解析 4 条） | ✅ 2026-09-23（见决策 42） |
 | P19 | **连接器流式语义 + MQTT**：三态 pull（`Records`/`Quiet`/`Exhausted`）+ `pipeline run` 循环（一次性源语义不变）；手写 MQTT 3.1.1 客户端（零依赖、QoS 0 边界、会话复用）；spec 增 mqtt 源/汇 | `e2e-p19-mqtt.sh` 5 腿：订阅源流式交付且**不退出**、线上形状（CONNECT clean / SUBSCRIBE topic）被独立 Python broker 断言、汇发布被 broker 解码、坏 url **apply 期**拒绝 + 死 broker 结构化错误、一次性源一遍退出；wbtest 4 条（URL 解析 / varint 边界 / CONNECT 字节 / PUBLISH 解码含 QoS 1 形状） | ✅ 2026-09-23（见决策 43） |
 | P20 | **Kafka 连接器（对接生态对象）**：手写五个锁定版本的非 flexible API（ApiVersions v0 / Metadata v1 / ListOffsets v1 / Produce v3 / Fetch v4）+ RecordBatch v2 构建与解析 + CRC-32C 进 `core/codec`；spec 增 `kafka://` 源/汇 | `e2e-p20-kafka.sh` 5 腿：往返（file→kafka→moonflux）且源保持流式、线上形状（探针/元数据/**CRC 有效的批**/acks=1）被独立 Python broker 断言、`from=latest` 静默与缺失分区拒绝、坏 url/死 broker/旧版本 broker 三种结构化拒绝、一次性源语义不变；wbtest（URL/zigzag 边界/批往返/CRC 篡改/压缩拒绝）；**开发期用 kafka-python 3.0.11 解码我们发出的请求与自建批**（留痕于 ticket 83） | ✅ 2026-09-23（见决策 44；矩阵 #24） |
+| P21 | **细粒度授权与审计**：凭据可携带按主题 grants（read/write），`authorize_topic` 作为角色表之后的第二道门（**只收窄、不放大**）；`audit.log` 记拒绝、认证结果与主题生命周期，凭据永不入 | `e2e-p12` 腿 8–10：授权主题双向可用、未授权主题按名拒绝（码 10）、无 grants 凭据行为不变、read-only+write grant 不可放大、审计三断言 + **无凭据泄漏** grep | ✅ 2026-09-25（见决策 45） |
 
 - 详细路线图、里程碑台账与排期见 [docs/project-roadmap.md](docs/project-roadmap.md)（进度管理单一真相，决策 37）；依据见报告 3.4 / 4.4 / 6.4。
 - 阶段推进以**门禁**为准；门禁必须可证伪、可复现（对拍脚本 / 基准 / 故障注入），不得以"看起来能跑"代替。
@@ -146,6 +147,8 @@
 - **凭据不进日志**：门禁有一条腿专门 grep 日志。任何打印请求/应答的调试路径都要先想一遍它会不会带上 token。
 - **OpenSSL 的错误队列是线程局部且粘滞的**：每次 SSL 操作前必须 `ERR_clear_error()`（垫片 `clear_error()` 已就位）。否则前面一次**失败握手**留下的错误会让 `SSL_get_error` 把本次的 WANT_READ 报成 SSL_ERROR_SSL——一条健康连接在"别人失败过之后"就报 `TLS read failed`（P15 门禁踩到：安全门禁先故意试坏证书与无凭据客户端，紧接着的正常 produce 死在读 13 字节帧头上；修法见 `adapters/tls-native/tls_shim.c`）。`SSL_ERROR_ZERO_RETURN` 是**干净的关闭**，不是错误。
 - **安全面改变不了数据面对拍**：`e2e-p12-security.sh` 第 7 腿要求 TLS+认证之下复制仍**逐字节一致**。任何"为了安全而稍微改一下数据路径"的想法都要先过这一关。
+- **角色表先行，授权收窄（P21）**：`permit(role, cmd)` 仍是解析载荷之前的第一道门；`authorize_topic` 是主题解析后、触碰日志前的第二道门——**grants 只收窄**（read-only 带 write grant 仍不可写），无 grants 的凭据行为与 P12 完全相同，Node/Root 越过 grants（基础设施与操作员不是租户）。
+- **审计记什么**：拒绝（角色表/ACL）、认证结果、主题生命周期——**不是每条记录**；`audit.log` 每事件 append 即落盘，写失败必须 stderr 可见；**凭据永不入审计**（p12 腿 10 的 grep 会盯）。WS 死代码教训：**分发路径的副本（哪怕看起来是备用）也必须带同样的认证与鉴权**——已删除的预 hub 路径曾封存一条完整的不认证命令路径。
 
 **P13 事件循环纪律（改 hub / 节点循环 / 复制拨号 / 任何服务端循环前必读；决策依据见 README 决策 36）**
 
@@ -185,6 +188,7 @@
 - **一批一帧**：`--batch-records` × wire 尺寸必须 ≤ `PRODUCE_CHUNK_BYTES`，否则一次 send 是多帧、逐批计时失去意义（命令自己拒绝并说明）。偏移不连续 = 硬失败——基准不打印正确性有问题的报告。
 - **计时用垫片的单调微秒时钟**（`mf_cli_now_us`，CLOCK_MONOTONIC）：`@env.now()` 只有毫秒，本地回环的 p50 会圆成 0；间隔不能随 NTP 跳。宿主层专用，内核照旧零时钟。
 - **改服务端循环后跑一次 `benchmark latency`**：循环形状的延迟代价（如 accept 税）不会被任何既有门禁抓到——P13 门禁断言的是「不阻塞/不误判」，从不量延迟。这就是基准存在的理由，也是它的日常用途。
+- **门禁自己的解析器也是不可信输入的解析器**（P21 实测）：哨兵值（如 `hw=?`）必须在解析处显式拒绝——awk 对 `"?"` 与 `"2"` 做字符串比较且 `"?"` 更大，一条「leader 不可达」的状态行曾被视为 settled，把"还没复制完"变成假通过后立刻字节比对失败。多行状态解析要求数值模式（`hw=[0-9]+`）；单分区精确断言（`[ "$HW" = "3" ]`）天然免疫。
 
 **P19 连接器纪律（改连接器 / `pipeline run` / 源汇相关代码前先读；决策依据见 README 决策 43）**
 

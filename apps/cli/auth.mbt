@@ -68,7 +68,60 @@ fn AuthConfig::load(data_dir : String) -> AuthConfig {
         }
       _ => fail("corrupt \{path}: credential \{name} has no role")
     }
-    credentials.push(@auth.Credential::{ name, token, role })
+    // per-topic grants (P21): optional per credential. Presence narrows
+    // the credential to the granted topics. Typos fail at load — a
+    // misspelled "write" must not silently grant nothing.
+    let grants : Array[@auth.TopicGrant] = match entry.value("grants") {
+      Some(Array(grant_entries)) => {
+        let parsed : Array[@auth.TopicGrant] = []
+        for grant in grant_entries {
+          let obj = match grant {
+            Object(obj) => obj
+            _ => fail("corrupt \{path}: a grant must be an object")
+          }
+          for key, _ in obj {
+            let known = key == "topic" || key == "read" || key == "write"
+            if !known {
+              fail(
+                "\{path}: unknown grant field \"\{key}\" (topic, read, write)",
+              )
+            }
+          }
+          let topic = match obj.get("topic") {
+            Some(String(topic)) => topic
+            _ => fail("corrupt \{path}: a grant has no topic")
+          }
+          if !valid_topic(topic) {
+            fail("\{path}: grant topic \{topic} is not a valid topic name")
+          }
+          for earlier in parsed {
+            if earlier.topic == topic {
+              fail("\{path}: duplicate grant for topic \{topic}")
+            }
+          }
+          let read = match obj.get("read") {
+            Some(True) => true
+            Some(False) => false
+            _ => fail("corrupt \{path}: grant \{topic} needs a boolean read")
+          }
+          let write = match obj.get("write") {
+            Some(True) => true
+            Some(False) => false
+            _ => fail("corrupt \{path}: grant \{topic} needs a boolean write")
+          }
+          if !read && !write {
+            fail(
+              "\{path}: grant \{topic} grants neither read nor write — delete it instead",
+            )
+          }
+          parsed.push(@auth.TopicGrant::{ topic, read, write })
+        }
+        parsed
+      }
+      Some(_) => fail("corrupt \{path}: grants must be an array")
+      None => []
+    }
+    credentials.push(@auth.Credential::{ name, token, role, grants })
   }
   AuthConfig::{ credentials, }
 }
@@ -91,8 +144,11 @@ fn AuthConfig::identify(self : AuthConfig, token : String) -> @auth.Identity? {
 /// their cluster is in.
 fn announce_auth_mode(data_dir : String, config : AuthConfig) -> Unit {
   if config.required() {
+    let with_grants = config.credentials
+      .filter(credential => credential.grants.length() > 0)
+      .length()
     note(
-      "authentication ENABLED (\{config.credentials.length()} credential(s) from \{auth_path(data_dir)})",
+      "authentication ENABLED (\{config.credentials.length()} credential(s), \{with_grants} with per-topic grants, from \{auth_path(data_dir)})",
     )
   } else {
     note(
@@ -106,6 +162,10 @@ fn announce_auth_mode(data_dir : String, config : AuthConfig) -> Unit {
 /// about this node's authentication, plus the identity it resolved.
 struct AuthGate {
   config : AuthConfig
+  /// where this node's audit lines go (P21): the handshake is where
+  /// authentication outcomes are decided, so it is where they are
+  /// recorded
+  data_dir : String
 }
 
 ///|
@@ -129,8 +189,22 @@ fn AuthGate::present(self : AuthGate, token : String) -> AuthOutcome {
     return NotRequired
   }
   match self.config.identify(token) {
-    Some(identity) => Accepted(identity)
-    None => Rejected("unknown credential")
+    Some(identity) => {
+      // the outcome of every authentication attempt is an audit event
+      // (allow AND deny: the timeline needs both) — the token itself
+      // never is, which P12's gate greps for
+      audit_auth(
+        self.data_dir,
+        Some(identity.name),
+        "allow",
+        "credential accepted",
+      )
+      Accepted(identity)
+    }
+    None => {
+      audit_auth(self.data_dir, None, "deny", "unknown credential")
+      Rejected("unknown credential")
+    }
   }
 }
 

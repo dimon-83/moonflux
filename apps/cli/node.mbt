@@ -426,7 +426,7 @@ fn cmd_spu(argv : Array[String]) -> Unit {
       )
       @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1 }
     },
-    auth: AuthGate::{ config: auth_config },
+    auth: AuthGate::{ config: auth_config, data_dir },
     on_ready: fn() { () },
   }
   // the pump: what every outbound call does first. It is the same
@@ -602,11 +602,11 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   let handler = HubHandler::{
     on_frame: fn(frame, identity) {
       let reply = dispatch_control_frame(
-        frame, table, placement, store, groups, asset, identity,
+        frame, data_dir, table, placement, store, groups, asset, identity,
       )
       @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1 }
     },
-    auth: AuthGate::{ config: control_auth },
+    auth: AuthGate::{ config: control_auth, data_dir },
     on_ready: fn() { () },
   }
   note("serving connections concurrently (one thread, poll-driven)")
@@ -848,6 +848,7 @@ fn NodeTable::snapshot(self : NodeTable) -> Array[@client.NodeRecord] {
 /// and silently proxying would hide a misconfigured client.
 fn dispatch_control_frame(
   frame : @client.Frame,
+  data_dir : String,
   table : NodeTable,
   placement : PlacementState,
   store : MetadataStore,
@@ -862,6 +863,14 @@ fn dispatch_control_frame(
   match identity {
     Some(resolved) =>
       if !@auth.permit(resolved.role, frame.cmd) {
+        audit_deny(
+          data_dir,
+          resolved.name,
+          @auth.role_name(resolved.role),
+          frame.cmd,
+          None,
+          "role table",
+        )
         return (
           @client.CMD_ERR,
           @client.encode_error(
@@ -946,6 +955,15 @@ fn dispatch_control_frame(
               note(
                 "topic \{wire.name} declared (\{wire.partitions} partition(s), \{wire.replication_factor} replica(s))",
               )
+              audit_topic(
+                data_dir,
+                match identity {
+                  Some(identity) => Some(identity.name)
+                  None => None
+                },
+                wire.name,
+                "declare",
+              )
               // the next reconcile tick turns the declaration into
               // placement — no further instruction is needed
               Ok(@client.encode_wire_topic(wire))
@@ -976,6 +994,15 @@ fn dispatch_control_frame(
             Ok(_) => {
               note(
                 "topic \{wire.name} undeclared; its partitions will be removed",
+              )
+              audit_topic(
+                data_dir,
+                match identity {
+                  Some(identity) => Some(identity.name)
+                  None => None
+                },
+                wire.name,
+                "undeclare",
               )
               Ok(b"")
             }
@@ -2228,6 +2255,14 @@ fn dispatch_data_frame(
   match identity {
     Some(identity) =>
       if !@auth.permit(identity.role, frame.cmd) {
+        audit_deny(
+          data_dir,
+          identity.name,
+          @auth.role_name(identity.role),
+          frame.cmd,
+          None,
+          "role table",
+        )
         return (
           @client.CMD_ERR,
           @client.encode_error(
@@ -2281,7 +2316,7 @@ fn dispatch_data_frame(
         Ok(_) => ()
         Err(reply) => return reply
       }
-      let reply = dispatch_produce(frame.payload, data_dir)
+      let reply = dispatch_produce(frame.payload, data_dir, identity)
       // the append just moved this node's log end; the ledger is what
       // the watermark arithmetic reads
       match hosts.get(topic, 0) {
@@ -2292,7 +2327,7 @@ fn dispatch_data_frame(
     }
     @client.CMD_FETCH => {
       rules.sync(data_dir)
-      dispatch_fetch(frame.payload, data_dir, rules)
+      dispatch_fetch(frame.payload, data_dir, rules, identity)
     }
     @client.CMD_FETCH_COMMITTED => {
       let ref = match peek_committed_ref(frame.payload) {
@@ -2327,7 +2362,14 @@ fn dispatch_data_frame(
         }
         None => (0L, host.leo())
       }
-      dispatch_fetch_committed(frame.payload, data_dir, rules, hw, leo)
+      dispatch_fetch_committed(
+        frame.payload,
+        data_dir,
+        rules,
+        hw,
+        leo,
+        identity,
+      )
     }
     @client.CMD_PRODUCE_PARTITION => {
       let ref = match @client.decode_partitioned_produce(frame.payload) {
@@ -2349,7 +2391,11 @@ fn dispatch_data_frame(
         Ok(_) => ()
         Err(reply) => return reply
       }
-      let (code, payload) = dispatch_produce_partition(frame.payload, data_dir)
+      let (code, payload) = dispatch_produce_partition(
+        frame.payload,
+        data_dir,
+        identity,
+      )
       match hosts.get(ref.topic, ref.partition) {
         Some(fresh) => fresh.sync_leader_leo()
         None => ()
@@ -2362,6 +2408,7 @@ fn dispatch_data_frame(
         frame.payload,
         data_dir,
         rules,
+        identity,
       )
       (code, payload)
     }
@@ -2490,6 +2537,18 @@ fn dispatch_data_frame(
             @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
           )
       }
+      match
+        authorize_data_command(
+          identity,
+          data_dir,
+          ref.topic,
+          false,
+          @client.CMD_SEGMENTS,
+        ) {
+        Ok(_) => ()
+        Err((code, message)) =>
+          return (@client.CMD_ERR, @client.encode_error(code, message))
+      }
       match segment_view(data_dir, ref) {
         Ok(payload) => (@client.CMD_OK, payload)
         Err((code, message)) =>
@@ -2507,6 +2566,18 @@ fn dispatch_data_frame(
             @client.CMD_ERR,
             @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
           )
+      }
+      match
+        authorize_data_command(
+          identity,
+          data_dir,
+          ref.topic,
+          true,
+          @client.CMD_COMPACT,
+        ) {
+        Ok(_) => ()
+        Err((code, message)) =>
+          return (@client.CMD_ERR, @client.encode_error(code, message))
       }
       let host = match host_or_error(hosts, sc_addr, ref.topic, ref.partition) {
         Ok(host) => host
@@ -2554,6 +2625,18 @@ fn dispatch_data_frame(
             @client.CMD_ERR,
             @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
           )
+      }
+      match
+        authorize_data_command(
+          identity,
+          data_dir,
+          asked.topic,
+          false,
+          @client.CMD_OFFSET_INFO,
+        ) {
+        Ok(_) => ()
+        Err((code, message)) =>
+          return (@client.CMD_ERR, @client.encode_error(code, message))
       }
       // every partition answers the same way now (P7): the host's
       // ledger is the watermark truth, and a host with no ledger yet

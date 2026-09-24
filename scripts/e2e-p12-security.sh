@@ -48,7 +48,7 @@ cleanup() {
     [ -n "$pid" ] && wait "$pid" 2>/dev/null || true
   done
 }
-trap 'cleanup; rm -rf "$WORK"' EXIT
+trap 'cleanup; if [ "${MOONFLUX_KEEP:-0}" = "1" ]; then echo "keeping $WORK"; else rm -rf "$WORK"; fi' EXIT
 
 fail() { echo "E2E-P12-SECURITY FAIL: $*" >&2; exit 1; }
 pass() { echo "E2E-P12-SECURITY PASS: $*"; }
@@ -128,7 +128,11 @@ cat > "$WORK/auth.json" <<'JSON'
   {"name":"node-a","token":"spu-a-node-token","role":"node"},
   {"name":"spu-b","token":"spu-b-node-token","role":"node"},
   {"name":"alice","token":"alice-secret-1234","role":"read-write"},
-  {"name":"bob","token":"bob-secret-123456","role":"read-only"}
+  {"name":"bob","token":"bob-secret-123456","role":"read-only"},
+  {"name":"carol","token":"carol-secret-12345","role":"read-write",
+   "grants":[{"topic":"orders","read":true,"write":true}]},
+  {"name":"dave","token":"dave-secret-123456","role":"read-only",
+   "grants":[{"topic":"orders","read":true,"write":true}]}
 ]}
 JSON
 for d in sc spu-a spu-b; do
@@ -361,14 +365,17 @@ done
 # partition 0, and a hard-coded 2 would be asserting the order the legs
 # happen to run in).
 count_settled() { # stdin = cluster status; prints how many partitions are caught up
+  # "hw=?" (leader unreachable at query time) must NOT count as settled:
+  # awk compares "?" and "2" as strings and "?" sorts higher — the gate
+  # would pass while the partition never replicated
   awk '
     /\[[0-9]+\] leader=/ {
       hw=""; leo="";
       for (i = 1; i <= NF; i++) {
-        if ($i ~ /^hw=/) { sub("hw=", "", $i); hw = $i }
-        if ($i ~ /^leo=/) { sub("leo=", "", $i); leo = $i }
+        if ($i ~ /^hw=[0-9]+$/) { sub("hw=", "", $i); hw = $i }
+        if ($i ~ /^leo=[0-9]+$/) { sub("leo=", "", $i); leo = $i }
       }
-      if (hw == leo && hw >= 2) n++
+      if (hw != "" && hw == leo && hw + 0 >= 2) n++
     }
     END { print n + 0 }'
 }
@@ -379,13 +386,78 @@ for _ in $(seq 1 80); do
   sleep 0.25
 done
 [ -n "$SETTLED" ] || { printf '%s\n' "$STATUS"; fail "partitions did not replicate (hw != leo on some partition)"; }
+STATUS="$( "$EXE" cluster status --remote "127.0.0.1:$SC_PORT" "${ROOT_FLAGS[@]}" 2>/dev/null || true )"
+OFFSETS="$( "$EXE" cluster offsets --topic "$TOPIC" --partition 0 --remote "$LEADER" 2>/dev/null || true )"
 for p in 0 1 2; do
   A="$WORK/spu-a/topics/$TOPIC/partition-$p/00000000000000000000.log"
   B="$WORK/spu-b/topics/$TOPIC/partition-$p/00000000000000000000.log"
   [ -f "$A" ] || fail "spu-a has no segment for partition $p"
   [ -f "$B" ] || fail "spu-b has no segment for partition $p"
   cmp -s "$A" "$B" \
-    || fail "replication under TLS is not byte-identical for partition $p"
+    || fail "replication under TLS is not byte-identical for partition $p (status: $STATUS; p0 offsets: $OFFSETS; A=$(stat -f%z "$A" 2>/dev/null) B=$(stat -f%z "$B" 2>/dev/null))"
 done
 pass "7. replication under TLS + auth is byte-identical on all 3 partitions"
-pass "P12 security gate: 7 legs green ($([ -n "$TLS_AVAILABLE" ] && echo "TLS + auth" || echo "auth only"))"
+
+# ---- 8. per-topic grants: allowed here, refused there (P21) -----------
+# orders must be declared and placed before a cluster node will host it
+"$EXE" topic create --name orders --remote "127.0.0.1:$SC_PORT" "${ROOT_FLAGS[@]}" > /dev/null \
+  || fail "topic create for the ACL legs failed"
+ORDERS_LEADER=""
+for _ in $(seq 1 40); do
+  OUT="$("$EXE" cluster leader --topic orders --remote "127.0.0.1:$SC_PORT" "${ROOT_FLAGS[@]}" 2>/dev/null || true)"
+  case "$OUT" in 127.0.0.1:*) ORDERS_LEADER="$OUT"; break ;; esac
+  sleep 0.25
+done
+[ -n "$ORDERS_LEADER" ] || fail "orders was never placed"
+printf 'order-1\n' > "$WORK/orders.txt"
+OUT=""
+for _ in $(seq 1 40); do
+  OUT="$("$EXE" produce --topic orders --file "$WORK/orders.txt" --remote "$ORDERS_LEADER" \
+    --token carol-secret-12345 "${CLIENT_TLS[@]}" 2>&1 || true)"
+  printf '%s' "$OUT" | grep -q "offsets 0" && break
+  sleep 0.25
+done
+[[ "$OUT" == *"offsets 0"* ]] \
+  || fail "carol could not produce to her granted topic: $OUT"
+OUT="$("$EXE" consume --topic orders --remote "$ORDERS_LEADER" --max-records 5 \
+  --token carol-secret-12345 "${CLIENT_TLS[@]}" 2>&1 || true)"
+[[ "$OUT" == *"order-1"* ]] \
+  || fail "carol could not read her granted topic: $OUT"
+OUT="$("$EXE" produce --topic "$TOPIC" --file "$WORK/ro.txt" --remote "$LEADER" \
+  --token carol-secret-12345 "${CLIENT_TLS[@]}" 2>&1 || true)"
+[[ "$OUT" =~ code[[:space:]=]+10 ]] \
+  || fail "carol was allowed into an ungranted topic: $OUT"
+[[ "$OUT" == *"may not write topic"* ]] \
+  || fail "the grant refusal does not name the topic and user: $OUT"
+OUT="$("$EXE" consume --topic "$TOPIC" --remote "$LEADER" --max-records 5 \
+  --token carol-secret-12345 "${CLIENT_TLS[@]}" 2>&1 || true)"
+[[ "$OUT" =~ code[[:space:]=]+10 ]] \
+  || fail "carol was allowed to read an ungranted topic: $OUT"
+pass "8. per-topic grants: carol works orders, and events refuses her by name"
+
+# ---- 9. grants narrow; the role table still governs kind --------------
+OUT="$("$EXE" produce --topic orders --file "$WORK/orders.txt" --remote "$ORDERS_LEADER" \
+  --token dave-secret-123456 "${CLIENT_TLS[@]}" 2>&1 || true)"
+[[ "$OUT" =~ code[[:space:]=]+10 ]] \
+  || fail "a read-only role was widened by a write grant: $OUT"
+OUT="$("$EXE" consume --topic orders --remote "$ORDERS_LEADER" --max-records 5 \
+  --token dave-secret-123456 "${CLIENT_TLS[@]}" 2>&1 || true)"
+[[ "$OUT" == *"order-1"* ]] \
+  || fail "dave could not read his granted topic: $OUT"
+pass "9. grants narrow, never widen: the role table ran first (dave read orders, wrote nothing)"
+
+# ---- 10. the audit log remembers every denial, and no secret ----------
+AUDIT_LINES="$(cat "$WORK"/*/audit.log 2>/dev/null | wc -l | tr -d ' ')"
+[ "$AUDIT_LINES" -ge 3 ] || fail "audit.log has $AUDIT_LINES lines; denials and auth outcomes must land"
+grep -q '"topic":"events"' "$WORK"/*/audit.log 2>/dev/null ||
+  fail "carol's ungranted-topic denial is not audited with its topic"
+grep -q '"user":"dave","role":"read-only","cmd"' "$WORK"/*/audit.log 2>/dev/null ||
+  fail "dave's role-table denial is not audited with his role"
+grep -q '"user":"carol","decision":"allow"' "$WORK"/*/audit.log 2>/dev/null ||
+  fail "carol's successful authentication is not audited"
+if grep -q "carol-secret-12345\|dave-secret-123456\|alice-secret-1234\|bob-secret-123456\|spu-a-node-token\|root-token-123456" \
+    "$WORK"/*/audit.log 2>/dev/null; then
+  fail "credential material leaked into the audit log"
+fi
+pass "10. the audit log carries denials and auth outcomes, and no credential material"
+pass "P12 security gate: 10 legs green ($([ -n "$TLS_AVAILABLE" ] && echo "TLS + auth" || echo "auth only"))"

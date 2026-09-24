@@ -74,6 +74,7 @@
 | **MQTT 连接器（P19）**：订阅源 + 发布汇（手写 MQTT 3.1.1，零依赖） | ✅ | `mqtt://[user:pass@]host[:port]/topic`；三态 pull（流式源不退出、一次性源语义不变）；QoS 0 边界与 URL 凭据提示见 README 决策 43；`scripts/e2e-p19-mqtt.sh`（5 腿，对端 = 独立 Python broker）；**增量源批量**：`pipeline run` 成为流式循环，消费按批追加 + 变换 + 汇 |
 | **Kafka 连接器（P20）**：消费源 + 生产汇（手写五个锁定版本 API + RecordBatch v2 + CRC-32C） | ✅ | `kafka://host:port/topic[?partition=N&from=earliest\|latest\|<offset>]`；连接期版本探针按名拒绝不兼容 broker；无压缩/无消费组/acks=1 等边界见 README 决策 44；开发期经 kafka-python 3.0.11 解码对拍（ticket 83）；`scripts/e2e-p20-kafka.sh`（5 腿，对端 = 独立 Python broker 且**校验收到的批 CRC**） |
 | 认证（握手期 CMD_AUTH + 凭据表 + 常数时间比较） | ✅ | `core/auth`；`scripts/e2e-p12-security.sh` |
+| **细粒度授权与审计（P21）**：按主题 grants（收窄不放大）+ `audit.log`（拒绝/认证/生命周期，凭据永不入） | ✅ | `core/auth.authorize_topic`；`apps/cli/audit.mbt`；`scripts/e2e-p12-security.sh` 腿 8–10 |
 | 授权（闭合权限表，四角色，节点身份独立） | ✅ | 同上（客户端凭据伪造节点命令被拒） |
 | TLS 传输（服务端 + 客户端强制校验 + 双向可选） | ✅ | `adapters/tls-native`；`e2e-p12-security.sh`（错 CA/无证书/明文均拒） |
 | 节点间安全（复制/控制调用带凭据与 TLS） | ✅ | 同上（TLS+认证下复制逐字节一致） |

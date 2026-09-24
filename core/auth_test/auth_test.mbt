@@ -5,7 +5,7 @@
 
 ///|
 fn cred(name : String, token : String, role : @auth.Role) -> @auth.Credential {
-  @auth.Credential::{ name, token, role }
+  @auth.Credential::{ name, token, role, grants: [] }
 }
 
 ///|
@@ -18,7 +18,7 @@ test "roles resolve from tokens, and nothing else does" {
   ]
   assert_eq(
     @auth.authenticate(table, "s3cret-app"),
-    Some(@auth.Identity::{ name: "app", role: ReadWrite }),
+    Some(@auth.Identity::{ name: "app", role: ReadWrite, grants: [] }),
   )
   assert_eq(@auth.authenticate(table, "wrong"), None)
   assert_eq(@auth.authenticate(table, ""), None)
@@ -119,4 +119,60 @@ test "token comparison does not leak where a difference is" {
   assert_eq(@auth.parse_role("read-write"), Ok(ReadWrite))
   assert_true(@auth.parse_role("admin") is Err(_))
   assert_eq(@auth.role_name(Node), "node")
+}
+
+///|
+test "authorize_topic: no grants means the role alone governs" {
+  let identity = @auth.Identity::{ name: "app", role: ReadWrite, grants: [] }
+  assert_true(@auth.authorize_topic(identity, "events", write=true) is Ok(_))
+  assert_true(@auth.authorize_topic(identity, "events", write=false) is Ok(_))
+  let reader = @auth.Identity::{ name: "ro", role: ReadOnly, grants: [] }
+  // the ROLE table still governs kind: this second gate narrows, it
+  // does not widen (the runner checks permit first)
+  assert_true(@auth.authorize_topic(reader, "events", write=true) is Ok(_))
+}
+
+///|
+test "authorize_topic: grants narrow to their topics" {
+  let granted = [
+    @auth.TopicGrant::{ topic: "orders", read: true, write: true },
+    @auth.TopicGrant::{ topic: "audit", read: true, write: false },
+  ]
+  let identity = @auth.Identity::{
+    name: "svc",
+    role: ReadWrite,
+    grants: granted,
+  }
+  // granted topics: read and write as granted
+  assert_true(@auth.authorize_topic(identity, "orders", write=true) is Ok(_))
+  assert_true(@auth.authorize_topic(identity, "orders", write=false) is Ok(_))
+  assert_true(@auth.authorize_topic(identity, "audit", write=false) is Ok(_))
+  // audit is read-granted only: the write refusal names user, verb, topic
+  match @auth.authorize_topic(identity, "audit", write=true) {
+    Err(message) => {
+      assert_true(message.contains("svc"))
+      assert_true(message.contains("may not write"))
+      assert_true(message.contains("audit"))
+    }
+    Ok(_) => abort("a read-only grant permitted a write")
+  }
+  // a topic the grants do not cover: the refusal says so
+  match @auth.authorize_topic(identity, "other", write=true) {
+    Err(message) => assert_true(message.contains("cover other topics"))
+    Ok(_) => abort("an ungranted topic was allowed")
+  }
+}
+
+///|
+test "authorize_topic: nodes and root are infrastructure, not tenants" {
+  let node = @auth.Identity::{ name: "spu-a", role: Node, grants: [] }
+  assert_true(@auth.authorize_topic(node, "anything", write=true) is Ok(_))
+  let root = @auth.Identity::{
+    name: "root",
+    role: Root,
+    grants: [@auth.TopicGrant::{ topic: "narrow", read: true, write: false }],
+  }
+  // even a Root whose grants would narrow it stays Root: grants narrow
+  // tenants, and the operator is not one
+  assert_true(@auth.authorize_topic(root, "anything", write=true) is Ok(_))
 }

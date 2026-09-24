@@ -38,6 +38,8 @@
 
 | 24 | **对接生态对象：Kafka 客户端（非对标面）** | Fluvio 数据面**与 Kafka 线协议不兼容**（参考指南 §4：仅是"Kafka 格式"的自有 codec）；Kafka 在本项目里是**互操作端点**而非参考系统 | 手写零依赖客户端：五个锁定非 flexible 版本（ApiVersions v0/Metadata v1/ListOffsets v1/Produce v3/Fetch v4）+ RecordBatch v2 + CRC-32C（进 `core/codec`）；连接期版本探针按名拒绝；边界：无压缩/无消费组/无幂等/acks=1/分区 0 | ✅ 对拍通过 | `scripts/e2e-p20-kafka.sh`（5 腿：往返且源保持流式 / 线上形状被独立 Python broker 断言且**校验批 CRC** / from=latest 静默 + 缺失分区拒绝 / 坏 url·死 broker·旧版本 broker 三类拒绝 / 一次性源不变）+ **kafka-python 3.0.11 开发期解码我们发出的请求与自建批**（ticket 83 留痕） |
 
+| 25 | **细粒度授权与审计**：按主题实例级授权 + 独立审计流 | 参考系统的授权为三级策略（Root/ReadOnly/Basic RBAC——JSON 策略文件把 Role 绑到 ObjectType×Action，8 类对象，判定在 SC 管理面；报告 §2.11.1）；报告未列独立审计面 | 角色闭合表先行（解析载荷之前），按主题 grants **只收窄**（read-only 带 write grant 仍不可写）；无 grants = 角色决定；Node/Root 越过；审计 `audit.log` 认证结果/权限拒绝/主题生命周期（JSON 行，append 即落盘，**凭据永不入**）；拒绝 = `ERR_FORBIDDEN` + 按名说明 | ✅ 对拍通过 | `scripts/e2e-p12-security.sh`（腿 8：授权主题双向可用 + 未授权按名拒绝；腿 9：收窄不放大 + 无 grants 回归；腿 10：审计三断言 + 无凭据泄漏）+ `core/auth_test`（authorize_topic 7 断言） |
+
 **图例**：✅ 对拍通过（有可复现脚本/测试）｜⚠️ 部分验证（注明缺口）｜⏳ 未验证（属后续里程碑门禁）。
 
 **维护规则**：新增对标语义先入表（状态 ⏳），落地并取得可证伪证据后更新为 ✅ 并附证据入口；状态变更需在 PR 说明中注明依据（AGENTS.md §7）。

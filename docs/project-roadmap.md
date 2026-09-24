@@ -31,6 +31,7 @@
 | **P18** | **已定位小票收口** | ① 真偏移：fetch 应答按连续偏移段分帧（`ReplyPacker`；空洞/扇出各起新帧）+ 游标按偏移推进；② serve 命令面：topic 家族（delete = evict 后删数据）+ group 解释性拒绝 + 布尔 flag 解析修复 | ✅ 达成（2026-09-23）：`e2e-p14-compaction.sh` 腿 9–11 + `e2e-p0.sh` topic/group 腿全绿——**实测发现 compaction 空洞今天就触发偏移错位**（幸存者 0,2,3 → 打成 0,1,2）与本地跨洞重复读（2,3,2,3），三路（远端/committed/本地）全真；布尔 flag 曾吞掉下一个参数使 `--committed --remote X` 静默变本地消费（决策 42） |
 | **P19** | **连接器流式语义 + MQTT** | 三态 pull（`Records`/`Quiet`/`Exhausted`）+ `pipeline run` 流式循环（一次性源语义逐字节不变）；手写 MQTT 3.1.1 客户端（零依赖、QoS 0 边界、会话复用）+ spec 的 mqtt 源/汇 | ✅ 达成（2026-09-23）：`scripts/e2e-p19-mqtt.sh` 5 腿全绿——订阅源流式交付三条消息**且不退出**、CONNECT/SUBSCRIBE 形状由独立 Python broker 在线上断言、汇发布被解码、坏 url apply 期拒绝且死 broker 是结构化错误、一次性源仍一遍退出；Kafka 协议面大，单独立票（决策 43） |
 | **P20** | **Kafka 连接器（对接生态对象）** | 手写五个锁定非 flexible 版本 API（ApiVersions v0/Metadata v1/ListOffsets v1/Produce v3/Fetch v4）+ RecordBatch v2 构建/解析 + CRC-32C 进 `core/codec`；spec 增 `kafka://` 源/汇；连接期版本探针 | ✅ 达成（2026-09-23）：`scripts/e2e-p20-kafka.sh` 5 腿全绿——往返（file→kafka→moonflux）且源保持流式、线上形状被**独立 Python broker** 断言且**校验批 CRC-32C**、from=latest 静默、坏 url/死 broker/旧版本 broker 三类结构化拒绝；**开发期 kafka-python 3.0.11 解码我们发出的请求与自建批**（ticket 83）；定位说明：Kafka 是互操作端点不是对标参考（决策 44；矩阵 #24） |
+| **P21** | **细粒度授权与审计** | 凭据可携带按主题 grants（read/write），`authorize_topic` 为角色表之后的第二道门（只收窄不放大）；`audit.log` 记拒绝/认证/主题生命周期，凭据永不入 | ✅ 达成（2026-09-25）：`e2e-p12` 腿 8–10 全绿——授权主题双向可用、未授权按名拒绝（码 10）、无 grants 凭据行为不变、read-only+write grant 不可放大、审计断言 + 无凭据泄漏 grep；顺带删除预 hub 死代码（内含完整不认证命令路径）（决策 45） |
 > **为什么 Native 先行**（2026-09-15 修订，README 决策 3）：数据源（Source）与数据汇（Sink）需要**独立的外部读写能力**——网络 / 文件 / 协议 / MQ / 硬件直采，**WASM 沙箱不能自主 IO**；连接器与数据面是第一梯队能力，因此承载它们的 Native 先行。WASM 保留为"数据路径内算子沙箱"（P2 落地）；**内核全后端可编译的纪律由 CI 矩阵从第一天保持**。
 >
 > **K8s 与阶段的关系**：P0–P3 **不依赖 K8s**，全部在本地单机/多进程推进与验收；K8s 仅是部署目标之一，只贡献元数据后端（CRD）与生命周期自动化。数据面、复制、选主、元数据调和是**任何部署模型都需要**的架构能力（AGENTS.md §1.2）。
@@ -61,6 +62,7 @@
 - [x] P18 达成：已定位小票收口——fetch 应答按连续段分帧（**实测发现 compaction 的空洞今天就触发**：幸存者 0,2,3 被打成 0,1,2；本地消费按条数推进跨洞重复读）+ serve 的 topic 家族（delete 即删数据、缓存先失效——P16 预言的第二写入路径第一条实例）与 group 解释性拒绝 + 布尔 flag 解析修复；p14 腿 9–11 + p0 新腿（2026-09-23，决策 42）
 - [x] P19 达成：连接器流式语义（三态 pull + `pipeline run` 循环）+ MQTT 3.1.1 连接器（零依赖手写，QoS 0 边界），`scripts/e2e-p19-mqtt.sh` 5 腿全绿（对端 = 独立 Python broker）（2026-09-23，决策 43）
 - [x] P20 达成：Kafka 连接器（手写五 API + RecordBatch v2 + CRC-32C；开发期第三方解码对拍），`scripts/e2e-p20-kafka.sh` 5 腿全绿（2026-09-23，决策 44）
+- [x] P21 达成：细粒度授权（按主题 grants，收窄不放大）+ 审计日志（拒绝/认证/生命周期，凭据永不入），`e2e-p12` 腿 8–10 全绿；顺带删除预 hub 死代码的不认证命令路径（2026-09-25，决策 45）
 - [x] 生成项目规约 [`AGENTS.md`](../AGENTS.md)（2026-09-15）；随代码结构落地更新（2026-09-16 补 §10 文档规范）
 
 ## 3. 待办与排期

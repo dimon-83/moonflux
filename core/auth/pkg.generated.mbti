@@ -8,6 +8,8 @@ import {
 // Values
 pub fn authenticate(Array[Credential], String) -> Identity?
 
+pub fn authorize_topic(Identity, String, write~ : Bool) -> Result[Unit, String]
+
 pub fn constant_time_eq(String, String) -> Bool
 
 pub fn is_node_command(Int) -> Bool
@@ -25,11 +27,13 @@ pub(all) struct Credential {
   name : String
   token : String
   role : Role
+  grants : Array[TopicGrant]
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct Identity {
   name : String
   role : Role
+  grants : Array[TopicGrant]
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) enum Role {
@@ -37,6 +41,12 @@ pub(all) enum Role {
   ReadWrite
   ReadOnly
   Node
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct TopicGrant {
+  topic : String
+  read : Bool
+  write : Bool
 } derive(Eq, Show, @debug.Debug)
 
 // Type aliases

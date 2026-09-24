@@ -52,7 +52,7 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     on_frame: fn(frame, identity) {
       dispatch_session_frame(frame, data_dir, rules, ws, identity)
     },
-    auth: AuthGate::{ config: auth_config },
+    auth: AuthGate::{ config: auth_config, data_dir },
     on_ready: fn() {
       // hot-reload checkpoint: a freshly applied spec is picked up here,
       // exactly as it was on the single-connection path
@@ -119,6 +119,14 @@ fn dispatch_session_frame(
   match identity {
     Some(identity) =>
       if !@auth.permit(identity.role, frame.cmd) {
+        audit_deny(
+          data_dir,
+          identity.name,
+          @auth.role_name(identity.role),
+          frame.cmd,
+          None,
+          "role table",
+        )
         return err_frame(
           frame.rid,
           @client.ERR_FORBIDDEN,
@@ -148,16 +156,25 @@ fn dispatch_session_frame(
       }
     }
     @client.CMD_PRODUCE => {
-      let (code, payload) = dispatch_produce(frame.payload, data_dir)
+      let (code, payload) = dispatch_produce(frame.payload, data_dir, identity)
       reply_frame(frame.rid, code, payload)
     }
     @client.CMD_FETCH => {
       rules.sync(data_dir)
-      let (code, payload) = dispatch_fetch(frame.payload, data_dir, rules)
+      let (code, payload) = dispatch_fetch(
+        frame.payload,
+        data_dir,
+        rules,
+        identity,
+      )
       reply_frame(frame.rid, code, payload)
     }
     @client.CMD_PRODUCE_PARTITION => {
-      let (code, payload) = dispatch_produce_partition(frame.payload, data_dir)
+      let (code, payload) = dispatch_produce_partition(
+        frame.payload,
+        data_dir,
+        identity,
+      )
       reply_frame(frame.rid, code, payload)
     }
     @client.CMD_FETCH_PARTITION => {
@@ -166,6 +183,7 @@ fn dispatch_session_frame(
         frame.payload,
         data_dir,
         rules,
+        identity,
       )
       reply_frame(frame.rid, code, payload)
     }
@@ -184,6 +202,7 @@ fn dispatch_session_frame(
             rules,
             hw,
             leo,
+            identity,
           )
           reply_frame(frame.rid, code, payload)
         }
@@ -194,6 +213,17 @@ fn dispatch_session_frame(
       let ref = match @client.decode_partition_ref(frame.payload) {
         Ok(ref) => ref
         Err(e) => return err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+      match
+        authorize_data_command(
+          identity,
+          data_dir,
+          ref.topic,
+          false,
+          @client.CMD_SEGMENTS,
+        ) {
+        Ok(_) => ()
+        Err((code, message)) => return err_frame(frame.rid, code, message)
       }
       match segment_view(data_dir, ref) {
         Ok(payload) => reply_frame(frame.rid, @client.CMD_OK, payload)
@@ -206,6 +236,17 @@ fn dispatch_session_frame(
       let ref = match @client.decode_partition_ref(frame.payload) {
         Ok(ref) => ref
         Err(e) => return err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+      match
+        authorize_data_command(
+          identity,
+          data_dir,
+          ref.topic,
+          true,
+          @client.CMD_COMPACT,
+        ) {
+        Ok(_) => ()
+        Err((code, message)) => return err_frame(frame.rid, code, message)
       }
       let floor = match open_partition_log(data_dir, ref.topic, ref.partition) {
         Ok(log) => log.high_watermark()
@@ -245,7 +286,8 @@ fn dispatch_session_frame(
     @client.CMD_TOPIC_CREATE
     | @client.CMD_TOPIC_LIST
     | @client.CMD_TOPIC_DELETE =>
-      match dispatch_topic_command(frame.cmd, frame.payload, data_dir) {
+      match
+        dispatch_topic_command(frame.cmd, frame.payload, data_dir, identity) {
         Ok(payload) => reply_frame(frame.rid, @client.CMD_OK, payload)
         Err((code, message)) => err_frame(frame.rid, code, message)
       }
@@ -317,192 +359,6 @@ fn err_frame(rid : Int, code : Int, message : String) -> @client.Frame {
 }
 
 ///|
-/// Sniffs the start of a connection: an HTTP request becomes a
-/// WebSocket session, anything else goes to the frame handler with its
-/// first bytes restored.
-fn serve_websocket_connection(
-  conn : @client.Conn,
-  data_dir : String,
-  rules : RuleState,
-) -> Result[Unit, String] {
-  let head = match (conn.recv_exact)(4) {
-    Ok(head) => head
-    Err(e) => return Err(e)
-  }
-  if looks_like_http(head) {
-    match ws_handshake(conn) {
-      Ok(_) => ()
-      Err(e) => {
-        // an HTTP client deserves an HTTP answer: silently dropping
-        // a request that reached the right port is the kind of
-        // behavior that costs an operator an afternoon
-        let body = "not a websocket upgrade: " + e + "\n"
-        let response = "HTTP/1.1 400 Bad Request\r\n" +
-          "Content-Type: text/plain\r\n" +
-          "Content-Length: " +
-          body.length().to_string() +
-          "\r\n" +
-          "Connection: close\r\n\r\n" +
-          body
-        let bytes = @utf8.encode(response[0:response.length()])
-        let _ = (conn.send)(bytes)
-        return Err(e)
-      }
-    }
-    let transport = ws_transport(conn)
-    handle_connection(transport, data_dir, rules)
-    Ok(())
-  } else {
-    handle_connection(prefixed_transport(head, conn), data_dir, rules)
-    Ok(())
-  }
-}
-
-///|
-/// Handles one connection: v2 handshake first, then sequential
-/// request frames until the peer closes. One reply frame per request
-/// with the request id echoed.
-fn handle_connection(
-  conn : @client.Conn,
-  data_dir : String,
-  rules : RuleState,
-) -> Unit {
-  // handshake: HELLO must be the first frame; the major version
-  // decides whether the session may proceed
-  let hello = match conn.recv_first() {
-    @client.Got(frame) => frame
-    @client.Eof => return
-    @client.WrongVersion(version) => {
-      // a v1-era peer gets a structured rejection, never a silent drop
-      let _ = conn.send_frame(@client.Frame::{
-        cmd: @client.CMD_ERR,
-        rid: 0,
-        payload: @client.encode_error(
-          @client.ERR_UNSUPPORTED_VERSION,
-          "server speaks frame version \{@client.PROTOCOL_VERSION}; peer sent \{version}",
-        ),
-      })
-      return
-    }
-    @client.Garbage(msg) => {
-      let _ = conn.send_frame(@client.Frame::{
-        cmd: @client.CMD_ERR,
-        rid: 0,
-        payload: @client.encode_error(@client.ERR_BAD_PAYLOAD, msg),
-      })
-      return
-    }
-  }
-  if hello.cmd != @client.CMD_HELLO {
-    let _ = conn.send_frame(@client.Frame::{
-      cmd: @client.CMD_ERR,
-      rid: hello.rid,
-      payload: @client.encode_error(
-        @client.ERR_SEQUENCE,
-        "handshake required: send HELLO first",
-      ),
-    })
-    return
-  }
-  let (major, minor) = match @client.decode_hello(hello.payload) {
-    Ok(parts) => parts
-    Err(e) => {
-      let _ = conn.send_frame(@client.Frame::{
-        cmd: @client.CMD_ERR,
-        rid: hello.rid,
-        payload: @client.encode_error(@client.ERR_BAD_PAYLOAD, e),
-      })
-      return
-    }
-  }
-  if major != 1 {
-    let _ = conn.send_frame(@client.Frame::{
-      cmd: @client.CMD_ERR,
-      rid: hello.rid,
-      payload: @client.encode_error(
-        @client.ERR_UNSUPPORTED_VERSION,
-        "server speaks major version 1 (frames v2); client sent \{major}",
-      ),
-    })
-    return
-  }
-  let _ = conn.send_frame(@client.Frame::{
-    cmd: @client.CMD_WELCOME,
-    rid: hello.rid,
-    payload: @client.encode_hello(1, 0),
-  })
-  let _ = minor
-  while true {
-    let frame = match conn.recv_frame() {
-      Ok(Some(frame)) => frame
-      Ok(None) => return // peer closed
-      Err(_) => return
-    }
-    let reply = match frame.cmd {
-      @client.CMD_PRODUCE => dispatch_produce(frame.payload, data_dir)
-      @client.CMD_FETCH => {
-        // hot-reload checkpoint: picks up a freshly applied spec here
-        rules.sync(data_dir)
-        dispatch_fetch(frame.payload, data_dir, rules)
-      }
-      @client.CMD_APPLY_PIPELINE =>
-        match dispatch_apply(frame.payload, data_dir) {
-          Ok(summary) => reply(@client.CMD_OK, summary)
-          Err((code, message)) => err_reply(code, message)
-        }
-      @client.CMD_FETCH_COMMITTED => {
-        rules.sync(data_dir)
-        // a standalone broker has one replica, so its committed prefix
-        // is its whole log; the topic is parsed inside the handler, so
-        // the watermarks are read from the request's topic here
-        match committed_watermarks_for(frame.payload, data_dir) {
-          Ok((hw, leo)) =>
-            dispatch_fetch_committed(frame.payload, data_dir, rules, hw, leo)
-          Err(e) => err_reply(@client.ERR_BAD_PAYLOAD, e)
-        }
-      }
-      @client.CMD_TOPIC_CREATE
-      | @client.CMD_TOPIC_LIST
-      | @client.CMD_TOPIC_DELETE =>
-        match dispatch_topic_command(frame.cmd, frame.payload, data_dir) {
-          Ok(payload) => (@client.CMD_OK, payload)
-          Err((code, message)) => (code, @client.encode_error(code, message))
-        }
-      @client.CMD_GROUP_JOIN
-      | @client.CMD_GROUP_HEARTBEAT
-      | @client.CMD_GROUP_LEAVE
-      | @client.CMD_GROUP_COMMIT
-      | @client.CMD_GROUP_DESCRIBE => {
-        let (code, message) = group_coordination_refusal()
-        (code, @client.encode_error(code, message))
-      }
-      cmd if is_function_set_command(cmd) =>
-        match dispatch_function_set(frame, file_metadata_store(data_dir)) {
-          Ok(payload) => (@client.CMD_OK, payload)
-          Err((code, message)) => (code, @client.encode_error(code, message))
-        }
-      other =>
-        (
-          @client.CMD_ERR,
-          @client.encode_error(
-            @client.ERR_UNKNOWN_COMMAND,
-            "unknown command \{other}",
-          ),
-        )
-    }
-    match
-      conn.send_frame(@client.Frame::{
-        cmd: reply.0,
-        rid: frame.rid,
-        payload: reply.1,
-      }) {
-      Ok(_) => ()
-      Err(_) => return
-    }
-  }
-}
-
-///|
 fn reply(cmd : Int, payload : Bytes) -> (Int, Bytes) {
   (cmd, payload)
 }
@@ -514,11 +370,20 @@ fn err_reply(code : Int, msg : String) -> (Int, Bytes) {
 }
 
 ///|
-fn dispatch_produce(payload : Bytes, data_dir : String) -> (Int, Bytes) {
+fn dispatch_produce(
+  payload : Bytes,
+  data_dir : String,
+  identity : @auth.Identity?,
+) -> (Int, Bytes) {
   let reader = @codec.Reader::new(payload)
   let topic = match read_topic_name(reader) {
     Ok(topic) => topic
     Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  match
+    authorize_data_command(identity, data_dir, topic, true, @client.CMD_PRODUCE) {
+    Ok(_) => ()
+    Err((code, message)) => return err_reply(code, message)
   }
   let rest = reader.remaining()
   let frame = match reader.read_bytes(rest) {
@@ -564,11 +429,23 @@ fn batch_refusal(error : @protocol.ProtocolError) -> String {
 fn dispatch_produce_partition(
   payload : Bytes,
   data_dir : String,
+  identity : @auth.Identity?,
 ) -> (Int, Bytes) {
   let (topic, partition, frame) = match
     @client.decode_partitioned_produce(payload) {
     Ok(parsed) => parsed
     Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  match
+    authorize_data_command(
+      identity,
+      data_dir,
+      topic,
+      true,
+      @client.CMD_PRODUCE_PARTITION,
+    ) {
+    Ok(_) => ()
+    Err((code, message)) => return err_reply(code, message)
   }
   let records = match @protocol.decode_frame_strict(frame) {
     Ok(batch) => batch.records
@@ -594,11 +471,23 @@ fn dispatch_fetch_partition(
   payload : Bytes,
   data_dir : String,
   rules : RuleState,
+  identity : @auth.Identity?,
 ) -> (Int, Bytes) {
   let (topic, partition, from, max) = match
     @client.decode_partitioned_fetch(payload) {
     Ok(parsed) => parsed
     Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  match
+    authorize_data_command(
+      identity,
+      data_dir,
+      topic,
+      false,
+      @client.CMD_FETCH_PARTITION,
+    ) {
+    Ok(_) => ()
+    Err((code, message)) => return err_reply(code, message)
   }
   let log = match open_partition_log(data_dir, topic, partition) {
     Ok(log) => log
@@ -756,11 +645,17 @@ fn dispatch_fetch(
   payload : Bytes,
   data_dir : String,
   rules : RuleState,
+  identity : @auth.Identity?,
 ) -> (Int, Bytes) {
   let reader = @codec.Reader::new(payload)
   let topic = match read_topic_name(reader) {
     Ok(topic) => topic
     Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  match
+    authorize_data_command(identity, data_dir, topic, false, @client.CMD_FETCH) {
+    Ok(_) => ()
+    Err((code, message)) => return err_reply(code, message)
   }
   let from = match reader.read_i64_be() {
     Ok(from) => from
@@ -821,11 +716,23 @@ fn dispatch_fetch_committed(
   rules : RuleState,
   high_watermark : Int64,
   log_end_offset : Int64,
+  identity : @auth.Identity?,
 ) -> (Int, Bytes) {
   let reader = @codec.Reader::new(payload)
   let topic = match read_topic_name(reader) {
     Ok(topic) => topic
     Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, e)
+  }
+  match
+    authorize_data_command(
+      identity,
+      data_dir,
+      topic,
+      false,
+      @client.CMD_FETCH_COMMITTED,
+    ) {
+    Ok(_) => ()
+    Err((code, message)) => return err_reply(code, message)
   }
   let from = match reader.read_i64_be() {
     Ok(from) => from
@@ -909,8 +816,13 @@ fn dispatch_topic_command(
   cmd : Int,
   payload : Bytes,
   data_dir : String,
+  identity : @auth.Identity?,
 ) -> Result[Bytes, (Int, String)] {
   let store = file_metadata_store(data_dir)
+  let user = match identity {
+    Some(identity) => identity.name
+    None => ""
+  }
   if cmd == @client.CMD_TOPIC_LIST {
     let wire : Array[@client.WireTopic] = []
     let declared : Map[String, Bool] = {}
@@ -979,6 +891,7 @@ fn dispatch_topic_command(
         note(
           "topic \{wire.name} declared (\{wire.partitions} partition(s)) on this broker",
         )
+        audit_topic(data_dir, Some(user), wire.name, "declare")
         Ok(@client.encode_wire_topic(wire))
       }
       Err(e) => Err((@client.ERR_BAD_PAYLOAD, "\{e}"))
@@ -1001,6 +914,7 @@ fn dispatch_topic_command(
         note(
           "topic \{wire.name} deleted: undeclared, \{evicted} cached log handle(s) evicted, data removed",
         )
+        audit_topic(data_dir, Some(user), wire.name, "delete")
         Ok(b"")
       }
       Err(e) => Err((@client.ERR_STORAGE, "remove: \{e}"))

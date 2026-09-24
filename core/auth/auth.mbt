@@ -20,6 +20,10 @@
 pub(all) struct Identity {
   name : String
   role : Role
+  /// per-topic grants (P21): empty means the role alone governs this
+  /// identity; non-empty means data-plane topics must be covered by a
+  /// matching grant (which narrows the role, never widens it)
+  grants : Array[TopicGrant]
 } derive(Debug, Eq, Show)
 
 ///|
@@ -133,6 +137,7 @@ pub(all) struct Credential {
   name : String
   token : String
   role : Role
+  grants : Array[TopicGrant]
 } derive(Debug, Eq, Show)
 
 ///|
@@ -150,7 +155,11 @@ pub fn authenticate(
   }
   for credential in credentials {
     if constant_time_eq(credential.token, token) {
-      return Some(Identity::{ name: credential.name, role: credential.role })
+      return Some(Identity::{
+        name: credential.name,
+        role: credential.role,
+        grants: credential.grants,
+      })
     }
   }
   None
@@ -173,4 +182,64 @@ pub fn constant_time_eq(a : String, b : String) -> Bool {
     difference = difference + (a[i].to_int() ^ b[i].to_int())
   }
   difference == 0
+}
+
+// ---------------------------------------------------------------------------
+// Per-topic authorization (P21): the second, narrower gate
+
+///|
+/// What one credential may do to ONE topic. A credential with no grants
+/// at all is governed by its role alone; a credential WITH grants must
+/// find a matching topic for every data-plane touch.
+pub(all) struct TopicGrant {
+  topic : String
+  read : Bool
+  write : Bool
+} derive(Debug, Eq, Show)
+
+///|
+/// The second, narrower gate for topic-carrying commands: may this
+/// identity touch this topic for read or write?
+///
+/// `permit(role, cmd)` has already said yes — that first gate runs
+/// before the payload is parsed (P12) and stays authoritative for what
+/// KINDS of commands the role can ever issue. Grants **narrow, never
+/// widen**: a read-only identity with a write grant still cannot write,
+/// because this function is only consulted for commands the role
+/// already allows. Nodes are infrastructure — replication reads and
+/// writes whatever it hosts, by design (P12: node trust is its own
+/// kind). And an identity without grants is governed by its role alone,
+/// exactly as every P12-era credential behaved.
+pub fn authorize_topic(
+  identity : Identity,
+  topic : String,
+  write~ : Bool,
+) -> Result[Unit, String] {
+  if identity.role is Node {
+    return Ok(())
+  }
+  if identity.role is Root {
+    // Root is the operator: everything by definition (the same rule
+    // `permit` applies). Grants narrow tenants, and the operator is
+    // not one — a grants block on a root credential is dead config.
+    return Ok(())
+  }
+  if identity.grants.length() == 0 {
+    return Ok(())
+  }
+  let verb = if write { "write" } else { "read" }
+  for grant in identity.grants {
+    if grant.topic == topic {
+      let allowed = if write { grant.write } else { grant.read }
+      if allowed {
+        return Ok(())
+      }
+      return Err(
+        "\{identity.name} (\{role_name(identity.role)}) may not \{verb} topic \{topic}: the grant for this topic does not include \{verb}",
+      )
+    }
+  }
+  Err(
+    "\{identity.name} (\{role_name(identity.role)}) may not \{verb} topic \{topic}: the credential's grants cover other topics",
+  )
 }
