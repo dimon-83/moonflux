@@ -59,6 +59,8 @@ cli.exe consume --topic events --remote 127.0.0.1:19420
 
 **MQTT 连接器（P19）**：spec 的源/汇可以是 MQTT——`{"type":"mqtt","url":"mqtt://[user:pass@]host[:port]/topic"}`。**源是订阅**：`pipeline run` 首拉建连并订阅，之后按批把消息追加进主题再出汇——与一次性源（file/stdin/http）不同，**它不会自己退出**（流式运行，Ctrl-C 停止）；`Quiet` 时安静等待，消息到了就交付。**汇是发布**：每条记录的值发到 URL 的 topic。边界（决策 43）：订阅与发布均 QoS 0（订阅 QoS 0 时 broker 按 min 降级送出）；不做 TLS / 遗嘱 / 保留消息 / 自动重连——断线是结构化错误，重启 run 即重连；URL 内嵌凭据会随 spec 落入 `topology.json`，请用受信网络或 broker 侧 ACL。本地自测可用任意 MQTT broker（如 mosquitto：`mosquitto -p 1884`）；`scripts/e2e-p19-mqtt.sh` 里的 `scripts/mqtt_test_broker.py` 就是最小可用的测试 broker。
 
+**Kafka 连接器（P20）**：spec 的源/汇可以是 Kafka——`{"type":"kafka","url":"kafka://host:port/topic[?partition=N&from=earliest|latest|<offset>]"}`。**源是消费**：`pipeline run` 首拉建连、解析元数据与起始偏移（默认 earliest），之后每拉一轮从 broker 取一批——同样是**流式运行**（Ctrl-C 停止），空应答是安静、不是结束。**汇是发布**：每批记录打成一个 RecordBatch v2 发到 URL 的分区（默认 0），acks=1。**边界（决策 44）**：无压缩（收到压缩批会**按 codec 名**拒绝）、**无消费组**（偏移在本进程内存里，重启按 `from` 重开）、无幂等/事务、无 TLS/SASL。连上先做版本探针：broker 不支持锁定的协议版本会在**连接期**按名报错。本地自测需一个真实 broker（本仓库门禁用 `scripts/kafka_test_broker.py` 这个最小实现）。
+
 **spec 形态**（`core/spec::parse_spec` 是唯一权威）：
 
 | 字段 | 取值 |
@@ -471,7 +473,7 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
-| 一切（36 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| 一切（37 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
 | 多分区复制与隔离 | `scripts/e2e-p7-partitions.sh` |
@@ -482,6 +484,7 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 | 基准（吞吐/延迟报告；门禁只断言结构） | `scripts/e2e-p17-bench.sh`；日常跑 `cli.exe benchmark produce\|consume\|latency` |
 | 连接器：file/stdin/http | `scripts/e2e-p1-connectors.sh` |
 | MQTT 订阅源 / 发布汇（含最小测试 broker） | `scripts/e2e-p19-mqtt.sh` · `scripts/mqtt_test_broker.py` |
+| Kafka 消费源 / 生产汇（含最小测试 broker） | `scripts/e2e-p20-kafka.sh` · `scripts/kafka_test_broker.py` |
 | 消费组 | `scripts/e2e-p9-groups.sh` |
 | 安全面 | `scripts/e2e-p12-security.sh` |
 | 控制面并发与停摆 | `scripts/e2e-p13-control-plane.sh` |

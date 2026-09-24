@@ -146,6 +146,12 @@
   cli-roadmap §1 的 `pipeline run` 行按此口径理解。
 - Kafka 连接器仍未交付（协议面远大于 MQTT，单独立票）。
 
+#### 3.3.6 落地回填（2026-09-23，P20 达成）
+
+- Kafka 连接器：spec 源/汇支持 `{"type":"kafka","url":"kafka://host:port/topic[?partition=N&from=earliest|latest|<offset>]"}`——手写五个锁定非 flexible 版本 API（ApiVersions v0/Metadata v1/ListOffsets v1/Produce v3/Fetch v4）+ RecordBatch v2；连接期版本探针按名拒绝；边界（无压缩/无消费组/无幂等/acks=1/分区 0）见 README 决策 44。**定位**：Kafka 是互操作端点，不是对标参考系统（AGENTS §7）。门禁 `scripts/e2e-p20-kafka.sh`（5 腿，对端 `scripts/kafka_test_broker.py`）。
+- 开发期证据：kafka-python 3.0.11（隔离安装）解码我们发出的三类请求与自建 RecordBatch（ticket 83）。
+- 至此 `fluvio-<cmd>` 命令面对应的连接器尾巴（MQTT/Kafka）两半均收口；剩余命令面缺口见 §1 与 §3.3.1。
+
 ### 3.4 P4（全平台体验）
 
 - CLI 契约稳定化：与 native + wasm 客户端 SDK 对齐（README 能力对标表"客户端 SDK"行）；

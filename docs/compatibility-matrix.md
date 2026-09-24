@@ -36,6 +36,8 @@
 
 | 23 | **连接器：流式源与 MQTT** | 参考系统的**生产连接器在外仓**（`fluvio-connectors`），本仓只有框架；协议客户端无对标面 | 连接器框架 + 自建 MQTT 3.1.1 客户端（零依赖手写）：三态 pull（`Records`/`Quiet`/`Exhausted`——流式源不自行退出，一次性源第二次 pull 报耗尽）；订阅/发布均 QoS 0（显式边界，决策 43）；断线即结构化错误、无静默重连；spec 增 `{"type":"mqtt","url":...}`，坏 url **apply 期**拒绝 | ✅ 对拍通过 | `scripts/e2e-p19-mqtt.sh`（5 腿：订阅流式交付且不退出 / CONNECT·SUBSCRIBE 形状被**独立 Python broker**在线上断言 / 汇发布被解码 / apply 期拒绝 + 死 broker 结构化错误 / 一次性源语义不变）+ `apps/connectors/connectors_wbtest.mbt`（URL / varint / CONNECT / PUBLISH 解码） |
 
+| 24 | **对接生态对象：Kafka 客户端（非对标面）** | Fluvio 数据面**与 Kafka 线协议不兼容**（参考指南 §4：仅是"Kafka 格式"的自有 codec）；Kafka 在本项目里是**互操作端点**而非参考系统 | 手写零依赖客户端：五个锁定非 flexible 版本（ApiVersions v0/Metadata v1/ListOffsets v1/Produce v3/Fetch v4）+ RecordBatch v2 + CRC-32C（进 `core/codec`）；连接期版本探针按名拒绝；边界：无压缩/无消费组/无幂等/acks=1/分区 0 | ✅ 对拍通过 | `scripts/e2e-p20-kafka.sh`（5 腿：往返且源保持流式 / 线上形状被独立 Python broker 断言且**校验批 CRC** / from=latest 静默 + 缺失分区拒绝 / 坏 url·死 broker·旧版本 broker 三类拒绝 / 一次性源不变）+ **kafka-python 3.0.11 开发期解码我们发出的请求与自建批**（ticket 83 留痕） |
+
 **图例**：✅ 对拍通过（有可复现脚本/测试）｜⚠️ 部分验证（注明缺口）｜⏳ 未验证（属后续里程碑门禁）。
 
 **维护规则**：新增对标语义先入表（状态 ⏳），落地并取得可证伪证据后更新为 ✅ 并附证据入口；状态变更需在 PR 说明中注明依据（AGENTS.md §7）。

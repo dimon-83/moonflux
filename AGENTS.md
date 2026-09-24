@@ -64,6 +64,7 @@
 | P17 | **基准工具**：`benchmark produce/consume/latency`（本地+远端；值头 4 字节序号做负载下完整性校验；单调 µs 时钟与 nearest-rank 直方图）；执行中修掉 accept 阻塞在 poll 之前的「每请求一 tick」税 | 六条结构腿：计数与偏移区间精确、序号头校验通过、百分位单调、e2e ⊇ produce-ack、**每主题恰好一次 `opened`**（P16 回归护栏）、超限按名拒绝且服务端存活；**吞吐/延迟数字只报告不设门禁**（决策 41） | ✅ 2026-09-22（`scripts/e2e-p17-bench.sh`，6 条腿；矩阵 #22；见决策 41） |
 | P18 | **已定位小票收口**：① 真偏移——fetch 应答按**连续偏移段**分帧（空洞/扇出重复各起新帧），本地消费游标按偏移推进（不再按条数）；② serve 命令面——topic 家族（声明入 serve 元数据库、list 为**声明∪磁盘**、delete = 失效缓存后删数据）+ group 家族结构化拒绝；执行中修掉布尔 flag 吞参数的解析 bug | p14 腿 9–11（远端/committed 跨中洞显示真偏移、本地零重复）+ p0 新腿（rf>1 拒绝且说明、声明∪自动创建、删后重产从 0 且 `evicted` 有据、group 解释性拒绝）+ wbtest（分帧 6 条、flag 解析 4 条） | ✅ 2026-09-23（见决策 42） |
 | P19 | **连接器流式语义 + MQTT**：三态 pull（`Records`/`Quiet`/`Exhausted`）+ `pipeline run` 循环（一次性源语义不变）；手写 MQTT 3.1.1 客户端（零依赖、QoS 0 边界、会话复用）；spec 增 mqtt 源/汇 | `e2e-p19-mqtt.sh` 5 腿：订阅源流式交付且**不退出**、线上形状（CONNECT clean / SUBSCRIBE topic）被独立 Python broker 断言、汇发布被 broker 解码、坏 url **apply 期**拒绝 + 死 broker 结构化错误、一次性源一遍退出；wbtest 4 条（URL 解析 / varint 边界 / CONNECT 字节 / PUBLISH 解码含 QoS 1 形状） | ✅ 2026-09-23（见决策 43） |
+| P20 | **Kafka 连接器（对接生态对象）**：手写五个锁定版本的非 flexible API（ApiVersions v0 / Metadata v1 / ListOffsets v1 / Produce v3 / Fetch v4）+ RecordBatch v2 构建与解析 + CRC-32C 进 `core/codec`；spec 增 `kafka://` 源/汇 | `e2e-p20-kafka.sh` 5 腿：往返（file→kafka→moonflux）且源保持流式、线上形状（探针/元数据/**CRC 有效的批**/acks=1）被独立 Python broker 断言、`from=latest` 静默与缺失分区拒绝、坏 url/死 broker/旧版本 broker 三种结构化拒绝、一次性源语义不变；wbtest（URL/zigzag 边界/批往返/CRC 篡改/压缩拒绝）；**开发期用 kafka-python 3.0.11 解码我们发出的请求与自建批**（留痕于 ticket 83） | ✅ 2026-09-23（见决策 44；矩阵 #24） |
 
 - 详细路线图、里程碑台账与排期见 [docs/project-roadmap.md](docs/project-roadmap.md)（进度管理单一真相，决策 37）；依据见报告 3.4 / 4.4 / 6.4。
 - 阶段推进以**门禁**为准；门禁必须可证伪、可复现（对拍脚本 / 基准 / 故障注入），不得以"看起来能跑"代替。
@@ -192,6 +193,15 @@
 - **每批 flush stdout**：被重定向的 stdout 是块缓冲的（P4 教训的重述）——流式 run 不会自己退出，不 flush 的门禁是在断言"没有输出"。任何新 sink 走 stdout 都要 flush。
 - **QoS 0 边界写进文档，不写 TODO**：订阅 QoS 0 ⇒ broker 按 min(publish, subscribe) 降级，入站只需处理 QoS 0（防御性 PUBACK 防止 packet id 被读成 payload）；出站 QoS 1（packet id + PUBACK 等待）是明示的后续候选。URL 内嵌凭据会随 spec 落入 `topology.json`——受信网络或 broker 侧 ACL，别把 URL 当保险箱。
 - **门禁的对端是独立实现**：MQTT 门禁用 `scripts/mqtt_test_broker.py`（标准库、按规范说话）断言**线上字节**（CONNECT 形状、SUBSCRIBE topic、PUBLISH 内容）——同 `mfs_probe.py` 的精神：断言属于服务端视角，不属于客户端的意愿。
+
+**P20 对接生态纪律（做任何"与外部系统说别人的协议"的客户端前先读；决策依据见 README 决策 44）**
+
+- **对接对象不是对标参考**（AGENTS §7）：Kafka 只在协议客户端这一侧存在——moonflux 自身语义（至少一次、无 leader epoch、默认未提交读）**不被** Kafka 的默认假设改写。新增对接端点时照此定界，别把"大家都这样"带进来。
+- **版本锁定 + 连接期探针**：只用非 flexible 编码的固定版本集合；连上先发 ApiVersions 并断言区间，不兼容在**连接期按名报错**（`broker does not support Produce v3 (advertises v0..v2)`）——不要留到解析期变成看不懂的错位。
+- **两个实现都归你写时，必须有外部锚点**：客户端与门禁对端同源时，"两边自洽"可以冒充正确。锚点 = 规范定义 + 第三方实现（CRC-32C 用已知检验向量 `"123456789"→0xE3069283` 钉住；开发期用 kafka-python 解码**我们产出的字节**并留痕）。任何新协议客户端都要自带这类锚点。
+- **边界写成边界**：无压缩（**按 codec 名**拒绝，如 `compressed batches are not supported (codec gzip)`）、无消费组（偏移是进程内存，重启按 URL 的 `from` 重开）、无幂等/事务（producer_id = −1）、无 TLS/SASL、acks = 1、分区 0（URL 可指）。
+- **两个容易致命的格式点**：RecordBatch v2 的 **CRC 从 attributes（偏移 21）起覆盖**——baseOffset/batchLength 不在其内，broker 改写偏移正是靠这个（我们自己解析时也必须照此校验）；**请求与应答一样带 4 字节长度前缀**（少了它 broker 把 api_key 当长度读，表现为连接期挂住——门禁抓到过）。
+- **失败即丢会话**：sink/source 任何操作失败都关连接、清状态，下一轮重新解析元数据——"leader 动了就再问一次"，不做静默重连循环（与 P19 的连接器纪律同源）。
 ## 3. 目录与包结构（MoonBit 约定）
 
 ```

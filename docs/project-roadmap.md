@@ -2,7 +2,7 @@
 
 > **定位**：项目的**进度管理**单一真相——分阶段路线图、每阶段的交付物与门禁证据、已达成的里程碑清单与后续排期。**规约依据**：AGENTS.md §2（阶段与门禁，工程纪律口径）；**边界声明**：README 只保留路线图**摘要**并链接到这里（2026-09-17 文档重构，决策 37）；阶段推进的门禁必须可证伪、可复现，"看起来能跑"不计数（AGENTS.md §2）。
 >
-> **日期**：2026-09-23 · 状态：P0–P19 全部达成 · 门禁全套 36 步绿
+> **日期**：2026-09-23 · 状态：P0–P20 全部达成 · 门禁全套 37 步绿
 
 ## 1. 阶段路线图（含门禁证据）
 
@@ -30,6 +30,7 @@
 | **P17** | **基准工具** | `benchmark produce/consume/latency`（本地+远端；值头序号完整性校验；单调 µs 时钟 + nearest-rank 直方图）；对标 `fluvio benchmark` 并补 consume 与 e2e 可见性两模式（参考系统 consumer 基准未发布） | ✅ 达成（2026-09-22）：`scripts/e2e-p17-bench.sh` 6 条腿全绿（结构断言：计数/区间/单调/`opened` 计数/按名拒绝）；**数字只报告不设门禁**（决策 41）。执行中抓掉一个**既有真缺陷**：`poll_once` 先在 `accept()` 里睡一整个 tick 再 poll 连接——锁步的请求-应答对端**每请求恒定 ~200 ms**（与载荷无关；本地铁环回实测修后 ~202 ms → ~0.1 ms，produce 吞吐 2.4k → 116k recs/s）；顺带修正旧叙事：P15/P16 报告的延迟数字里有相当一部分是这笔 tick 税（ticket 75）。提速浮出并修掉两条门禁自身的时序竞态（p8 启动期 retention 扫描、p14 follower floor 滞后一轮）；矩阵 #22 |
 | **P18** | **已定位小票收口** | ① 真偏移：fetch 应答按连续偏移段分帧（`ReplyPacker`；空洞/扇出各起新帧）+ 游标按偏移推进；② serve 命令面：topic 家族（delete = evict 后删数据）+ group 解释性拒绝 + 布尔 flag 解析修复 | ✅ 达成（2026-09-23）：`e2e-p14-compaction.sh` 腿 9–11 + `e2e-p0.sh` topic/group 腿全绿——**实测发现 compaction 空洞今天就触发偏移错位**（幸存者 0,2,3 → 打成 0,1,2）与本地跨洞重复读（2,3,2,3），三路（远端/committed/本地）全真；布尔 flag 曾吞掉下一个参数使 `--committed --remote X` 静默变本地消费（决策 42） |
 | **P19** | **连接器流式语义 + MQTT** | 三态 pull（`Records`/`Quiet`/`Exhausted`）+ `pipeline run` 流式循环（一次性源语义逐字节不变）；手写 MQTT 3.1.1 客户端（零依赖、QoS 0 边界、会话复用）+ spec 的 mqtt 源/汇 | ✅ 达成（2026-09-23）：`scripts/e2e-p19-mqtt.sh` 5 腿全绿——订阅源流式交付三条消息**且不退出**、CONNECT/SUBSCRIBE 形状由独立 Python broker 在线上断言、汇发布被解码、坏 url apply 期拒绝且死 broker 是结构化错误、一次性源仍一遍退出；Kafka 协议面大，单独立票（决策 43） |
+| **P20** | **Kafka 连接器（对接生态对象）** | 手写五个锁定非 flexible 版本 API（ApiVersions v0/Metadata v1/ListOffsets v1/Produce v3/Fetch v4）+ RecordBatch v2 构建/解析 + CRC-32C 进 `core/codec`；spec 增 `kafka://` 源/汇；连接期版本探针 | ✅ 达成（2026-09-23）：`scripts/e2e-p20-kafka.sh` 5 腿全绿——往返（file→kafka→moonflux）且源保持流式、线上形状被**独立 Python broker** 断言且**校验批 CRC-32C**、from=latest 静默、坏 url/死 broker/旧版本 broker 三类结构化拒绝；**开发期 kafka-python 3.0.11 解码我们发出的请求与自建批**（ticket 83）；定位说明：Kafka 是互操作端点不是对标参考（决策 44；矩阵 #24） |
 > **为什么 Native 先行**（2026-09-15 修订，README 决策 3）：数据源（Source）与数据汇（Sink）需要**独立的外部读写能力**——网络 / 文件 / 协议 / MQ / 硬件直采，**WASM 沙箱不能自主 IO**；连接器与数据面是第一梯队能力，因此承载它们的 Native 先行。WASM 保留为"数据路径内算子沙箱"（P2 落地）；**内核全后端可编译的纪律由 CI 矩阵从第一天保持**。
 >
 > **K8s 与阶段的关系**：P0–P3 **不依赖 K8s**，全部在本地单机/多进程推进与验收；K8s 仅是部署目标之一，只贡献元数据后端（CRD）与生命周期自动化。数据面、复制、选主、元数据调和是**任何部署模型都需要**的架构能力（AGENTS.md §1.2）。
@@ -59,6 +60,7 @@
 - [x] P17 达成：基准工具（produce/consume/latency，本地+远端），`scripts/e2e-p17-bench.sh` 6 条腿全绿；执行中抓掉 accept 先于 poll 的「每请求一 tick」税（本地铁环回 ~202 ms → ~0.1 ms，ticket 75）与两条门禁时序竞态（2026-09-22，决策 41）
 - [x] P18 达成：已定位小票收口——fetch 应答按连续段分帧（**实测发现 compaction 的空洞今天就触发**：幸存者 0,2,3 被打成 0,1,2；本地消费按条数推进跨洞重复读）+ serve 的 topic 家族（delete 即删数据、缓存先失效——P16 预言的第二写入路径第一条实例）与 group 解释性拒绝 + 布尔 flag 解析修复；p14 腿 9–11 + p0 新腿（2026-09-23，决策 42）
 - [x] P19 达成：连接器流式语义（三态 pull + `pipeline run` 循环）+ MQTT 3.1.1 连接器（零依赖手写，QoS 0 边界），`scripts/e2e-p19-mqtt.sh` 5 腿全绿（对端 = 独立 Python broker）（2026-09-23，决策 43）
+- [x] P20 达成：Kafka 连接器（手写五 API + RecordBatch v2 + CRC-32C；开发期第三方解码对拍），`scripts/e2e-p20-kafka.sh` 5 腿全绿（2026-09-23，决策 44）
 - [x] 生成项目规约 [`AGENTS.md`](../AGENTS.md)（2026-09-15）；随代码结构落地更新（2026-09-16 补 §10 文档规范）
 
 ## 3. 待办与排期
@@ -71,7 +73,7 @@
 - [x] ~~门禁卫生（原 P16 后续 ③）~~ **已达成**（2026-09-19）：p7/p14 清理改为**按各自固定端口兜底杀**——命令替换重启的节点被 init 收养，pid 再寻址不到而端口仍可；固定端口检查保持清理的特异性（P14 曾连续两次漏掉一个 spu），收尾后 `pgrep cli.exe` 为空
 - [ ] **K8s 部署形态（CRD 元数据后端 + operator）明确排到最后**（2026-09-17，用户裁定并留痕）：AGENTS §1.2 本就把 K8s 定为可选、与本地单二进制并列，且元数据接口可插拔（CRD 是第二个实现而非重写，推迟无锁定成本）；更关键的是它的门禁需要真实集群才可证伪，而本项目要求门禁可复现——把弱门禁排在强门禁之后。真需要时第一步也不是 CRD：清单 + PVC 跑文件后端即可上 K8s
 - [x] ~~MQTT 连接器~~ **已达成**（2026-09-23，P19：三态 pull + 手写 MQTT 3.1.1 客户端 + `e2e-p19-mqtt.sh`，决策 43）
-- [ ] **Kafka 连接器**（P1 收尾项的另一半）：协议面远大于 MQTT（ApiVersions/Metadata/Produce/Fetch/RecordBatch v2/压缩编解码）——单独立票，未立项
+- [x] ~~Kafka 连接器~~ **已达成**（2026-09-23，P20：五个锁定版本 API + RecordBatch v2 + CRC-32C；外部锚点验证，决策 44）
 - [ ] 多语言客户端 SDK（线协议已有第二实现证明可复制；SDK 未立项）
 
 **不做清单**（永久或条件触发，防无意带入）：见 AGENTS.md §9；安全面的边界（无 ACL/SASL/审计）见 README 决策 35。

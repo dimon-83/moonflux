@@ -2,7 +2,7 @@
 
 > **定位**：对当前快照（P0–P18）的**生产就绪度评估**——分级结论、支撑证据、会变成事故的缺口、以及不开发新功能即可执行的最小生产化清单。**规约依据**：AGENTS.md §10（证据与状态规范）；**边界声明**：本文是**评估**，不是能力承诺——能力状态的单一真相在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，进度在 [`project-roadmap.md`](project-roadmap.md) 与 [`progress-board.md`](progress-board.md)。结论只对文末「评估方法与局限」列出的证据范围成立；未做的验证（压载 / 长稳 / Linux）不在此承诺。
 >
-> **日期**：2026-09-23 · 评估对象：P0–P19（门禁 36 步绿，native 239 / wasm-gc 162）
+> **日期**：2026-09-23 · 评估对象：P0–P20（门禁 37 步绿，native 239 / wasm-gc 162）
 
 ## 1. 分级结论
 
@@ -16,8 +16,8 @@
 | :--- | :--- | :--- |
 | 耐久性 | 每批 append **fsync 后**才回应答（ack 即落盘）；每帧 CRC；撕裂尾/坏帧截断到确认前缀**且报告丢弃量**；索引可疑一律回退全扫、两路径逐字节一致 | `core/log`（`append` → `file.flush`）；`e2e-p8-storage.sh` |
 | 复制正确性 | follower-pull；HW 单调（迟到低报忽略）；分歧截断报告丢弃量；副本逐字节一致（含 TLS 之下） | `e2e-p3/p7/p8`；`e2e-p12-security.sh` 腿 7 |
-| 故障注入 | 杀 leader / 换主 / 控制面重启 / 撕裂尾 / 分区隔离 / 慢客户端——门禁全部可复现，含反例腿 | `scripts/gates.sh` 36 步 |
-| 连接器与流式源 | HTTP/文件/stdin 一次性源 + **MQTT 订阅源**（P19：手写 3.1.1、QoS 0、会话复用、断线即结构化错误）；汇：stdout / HTTP / MQTT 发布；门禁对端是独立 Python 实现（线上字节断言） | `e2e-p1-connectors.sh`；`e2e-p19-mqtt.sh` |
+| 故障注入 | 杀 leader / 换主 / 控制面重启 / 撕裂尾 / 分区隔离 / 慢客户端——门禁全部可复现，含反例腿 | `scripts/gates.sh` 37 步 |
+| 连接器与流式源 | HTTP/文件/stdin 一次性源 + **MQTT 订阅源**（P19：手写 3.1.1、QoS 0、会话复用）+ **Kafka 消费源**（P20：手写锁定版本协议与 RecordBatch v2、CRC-32C 外部锚点、连接期版本探针）；汇：stdout / HTTP / MQTT / Kafka；门禁对端是独立 Python 实现（线上字节断言 + 批 CRC 校验） | `e2e-p1-connectors.sh`；`e2e-p19-mqtt.sh`；`e2e-p20-kafka.sh` |
 | 语义 | 至少一次且**无缺口**（重平衡窗内允许重复，文档化）；偏移是身份；真偏移（空洞两侧） | `e2e-p9-groups.sh`；`e2e-p14` 腿 9–11 |
 | 安全面（**默认关闭，必须开启**） | 握手期认证 + 四角色闭合权限表 + mTLS（客户端强校验）；判定在分发入口一处、解析之前；凭据不入日志 | `e2e-p12-security.sh` |
 | 可编程层 | WASM 算子沙箱（fuel 确定性预算、fail-closed、双后端字节级对拍）；mbel 规则热重载；版本化函数集 | `crosscheck-operators.sh`；`e2e-p1-rules.sh`；`e2e-p6-functions.sh` |
