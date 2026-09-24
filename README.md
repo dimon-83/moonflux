@@ -77,6 +77,7 @@ flowchart LR
 | 现在能做什么、什么状态 | [`docs/feature-matrix.md`](docs/feature-matrix.md) |
 | 做到哪一步了、接下来做什么 | [`docs/project-roadmap.md`](docs/project-roadmap.md) |
 | 一页看板：已完成 / 待办 / 阻塞 / 返工 | [`docs/progress-board.md`](docs/progress-board.md) |
+| 能不能上生产、缺什么 | [`docs/production-readiness.md`](docs/production-readiness.md) |
 | 与 Fluvio 对标语义的验证状态 | [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) |
 | 在 Fluvio 参考仓库作业的规则 | [`docs/fluvio-reference-guide.md`](docs/fluvio-reference-guide.md) |
 | 立项的技术依据（Fluvio 全景剖析） | [`docs/fluvio-moonbit-evaluation.md`](docs/fluvio-moonbit-evaluation.md) |
@@ -92,6 +93,7 @@ flowchart LR
 | **功能矩阵** | [`docs/feature-matrix.md`](docs/feature-matrix.md) | 能力清单的单一真相：功能 × 状态 × 证据入口 |
 | **路线图与进度** | [`docs/project-roadmap.md`](docs/project-roadmap.md) | 进度管理的单一真相：阶段详情 / 里程碑台账 / 排期 |
 | 进度看板 | [`docs/progress-board.md`](docs/progress-board.md) | 带日期的进度快照：已完成 / 待办 / 优先级 / 阻塞 / 返工 + 功能点简介（派生视图，真相在 roadmap） |
+| 生产就绪度评估 | [`docs/production-readiness.md`](docs/production-readiness.md) | 分级结论 / 支撑证据 / 事故级缺口 / 最小生产化清单（快照；上线评审的输入） |
 | 兼容性矩阵 | [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) | 每个对标语义的验证状态与证据入口（图例单一真相） |
 | CLI 命令工具规划 | [`docs/cli-roadmap.md`](docs/cli-roadmap.md) | 命令面现状盘点 + 对标 Fluvio CLI 的分阶段映射（决策 13） |
 | 算子 ABI v2 设计稿 | [`docs/operator-abi-v2-scalar.md`](docs/operator-abi-v2-scalar.md) | 不可信标量函数的沙箱路线（只设计不实现，决策 28） |

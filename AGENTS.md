@@ -302,6 +302,7 @@ moonflux/
 | 功能矩阵 | [docs/feature-matrix.md](docs/feature-matrix.md) | **能力清单的单一真相**：功能 × 状态 × 证据入口（与兼容性矩阵分工：那里管"对标语义验证状态"） |
 | 进度管理 | [docs/project-roadmap.md](docs/project-roadmap.md) | **进度与排期的单一真相**：阶段详情 / 里程碑台账 / 待办（README 只留摘要与链接，决策 37） |
 | 进度看板 | [docs/progress-board.md](docs/progress-board.md) | 带日期的进度快照与返工台账（派生视图；真相在 roadmap，每轮收口随提交更新） |
+| 生产就绪度评估 | [docs/production-readiness.md](docs/production-readiness.md) | 分级结论 / 事故级缺口 / 最小生产化清单（快照型评估；上线评审的输入） |
 | 规划类 | `docs/*-roadmap.md`（实例 [cli-roadmap.md](docs/cli-roadmap.md)） | 分阶段映射、边界声明、勘误清单 |
 | 实证类 | `docs/*-spike.md`（实例 [p2-wasm-host-spike.md](docs/p2-wasm-host-spike.md)） | 探针命令与输出、选型依据、落地回填 |
 | 工作项（ticket） | `.scratch/moonflux-p{N}/issues/NN-slug.md` | What to build / Blocked by / Status / 勾选清单 |
