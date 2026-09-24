@@ -36,6 +36,19 @@ step "generated artifacts are current" bash -c '
   python3 tools/gen_protocol_vectors.py --check &&
   python3 tools/gen_operator_golden.py --check'
 
+# interfaces must be regenerated with the code that changed them: a
+# stale pkg.generated.mbti is how P15 shipped a whole round without
+# filing its new public surface (caught in review, not by this gate —
+# which is why this step exists)
+step "moon info: interfaces are current" bash -c '
+  moon info >/dev/null 2>&1
+  stale=$(git status --porcelain -- "*pkg.generated.mbti")
+  if [ -n "$stale" ]; then
+    echo "pkg.generated.mbti is stale — run moon info and commit the diff:" >&2
+    echo "$stale" >&2
+    exit 1
+  fi'
+
 for target in wasm wasm-gc js native; do
   step "moon build --target $target" bash -c "
     out=\$(moon build --target $target 2>&1)

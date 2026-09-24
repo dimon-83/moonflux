@@ -99,7 +99,7 @@
   节点形态（`serve` 保留为全在一体形态，向后兼容）。
 
 仍未交付（属 P4 或后续）：
-- `partition list`（多分区存储未落地，见 compatibility-matrix #10）、`cluster spu list` 的
+- `partition list`（多分区存储与复制均已落地——P7/P8 收口矩阵 #10；缺的只是这条命令本身）、`cluster spu list` 的
   完整字段（磁盘/主题数等）、`consumer` 托管偏移（矩阵 #11 另一半）、
   `profile`（配置档案）、SmartModule/算子管理命令族。
 
