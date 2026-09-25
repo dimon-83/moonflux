@@ -94,6 +94,8 @@ cli.exe cluster offsets --topic events --partition 0 --remote 127.0.0.1:19452   
 
 ## 4. 消费组（至少一次）
 
+集群（`sc + spu`）与**单机 `serve`**（P22）支持完全相同的消费组语义——serve 自任协调者，成员与门禁分辨不出对端是谁；`--remote` 指向 serve 的监听地址即可。
+
 ```bash
 # 两个成员组队消费 3 个分区（range 分配，世代围栏）
 cli.exe consume --topic events --remote 127.0.0.1:19451 --group g1 --member m1 --follow --commit-ms 500
@@ -107,7 +109,9 @@ cli.exe group commit   --group g1 --member m1 --topic events --partition 0 \
 
 - **空闲也要心跳**（`--follow` 期间自动进行）：静默成员被按存活超时清扫，其分区立即重分配。
 - 语义是**至少一次**：提交在处理之后，重复允许、缺口不允许；再平衡窗口内两个成员可能短暂同读一个分区。
-- 消费组有提交的分区参与 retention 下界（最慢消费者挡住删除）；从未提交的组不算"落后"。
+- 消费组有提交的分区参与 retention 下界（最慢消费者挡住删除）；从未提交的组不算"落后"。单机 serve 的 compact 与 retention 同样接组地板（`min(自身末端, 组地板)`）。
+- **单机 serve 的分区来源是"声明 ∪ 磁盘"**：produce 自动创建的主题（从未 `topic create`）一样能被组消费——份额按磁盘上实际存在的分区分配。
+- 成员凭据与所有 CLI 命令同一口径：`--token` 优先，`MOONFLUX_TOKEN` 环境变量兜底。
 
 ## 5. 可编程：表达式、函数集与算子
 

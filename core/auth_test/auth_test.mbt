@@ -29,13 +29,18 @@ test "roles resolve from tokens, and nothing else does" {
 
 ///|
 test "the permission table is closed: unlisted commands fail closed" {
-  // reads: every role that can read, can read the same things
+  // reads: every role that can read, can read the same things —
+  // including the "where does this partition live" question (P22): a
+  // consumer that may read the data must be able to find it, and a
+  // node's placement fallback keeps working (it stays in
+  // is_node_command too)
   let reads = [
     @client.CMD_FETCH,
     @client.CMD_FETCH_COMMITTED,
     @client.CMD_FETCH_PARTITION,
     @client.CMD_OFFSET_INFO,
     @client.CMD_SEGMENTS,
+    @client.CMD_LEADER,
   ]
   for cmd in reads {
     // 9001 stands in for "a command someone adds next year"
@@ -43,6 +48,7 @@ test "the permission table is closed: unlisted commands fail closed" {
     assert_true(@auth.permit(ReadWrite, cmd))
     assert_true(@auth.permit(ReadOnly, cmd))
   }
+  assert_true(@auth.permit(Node, @client.CMD_LEADER))
   // writes: root and read-write, never read-only
   let writes = [
     @client.CMD_PRODUCE,

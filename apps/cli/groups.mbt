@@ -172,11 +172,64 @@ fn GroupRegistry::ensure(
 }
 
 ///|
-/// The partitions a group's declared topics cover, from the control
-/// plane's own metadata: a topic that is not declared contributes
-/// nothing, which is the honest answer — there is nowhere to read from
-/// until someone declares it.
+/// The partition index a directory entry under `topics/<topic>` names,
+/// if it names one at all. Both layouts count: the segmented
+/// `partition-<N>/` directory and the pre-P8 `partition-<N>.log` single
+/// file (migrated by the next open, but the truth about disk until
+/// then). Anything else names no partition.
+fn partition_index_of(entry : String) -> Int? {
+  if !entry.has_prefix("partition-") {
+    return None
+  }
+  let rest = entry["partition-".length():entry.length()]
+  let rest = if rest.has_suffix(".log") {
+    rest[0:rest.length() - ".log".length()]
+  } else {
+    rest
+  }
+  match (try? @string.parse_int(rest[0:rest.length()])) {
+    Ok(index) => Some(index)
+    Err(_) => None
+  }
+}
+
+///|
+/// One past the highest partition index that exists on disk. Counting
+/// entries would lie whenever a produce addressed an index past a hole
+/// — `produce --partition 3` creates partition-3 and nothing else — so
+/// this is a max, not a count. An unlistable directory reads as zero:
+/// the control plane's data dir hosts no logs, and that is its normal
+/// shape, not a failure.
+fn disk_partition_end(data_dir : String, topic : String) -> Int {
+  let topic_dir = "\{data_dir}/topics/\{topic}"
+  let mut highest = -1
+  match @fs.list_dir(topic_dir) {
+    Ok(entries) =>
+      for entry in entries {
+        match partition_index_of(entry) {
+          Some(index) => if index > highest { highest = index }
+          None => ()
+        }
+      }
+    Err(_) => ()
+  }
+  highest + 1
+}
+
+///|
+/// The partitions a group's declared topics cover, from the
+/// coordinator's own view of the world: a topic's partition count is
+/// the **larger** of what is declared and what exists on disk, because
+/// the two hosts of this registry disagree about where topics come
+/// from. The control plane only knows declarations (produce there
+/// auto-creates nothing); a standalone broker's produce auto-creates
+/// without declaring (P18) — an enumeration that ignored its disk
+/// would hand a group an empty share for the very topics the broker
+/// actually has. A topic that appears in neither contributes nothing,
+/// which is the honest answer: there is nowhere to read from until
+/// someone declares (or produces to) it.
 fn group_partitions(
+  data_dir : String,
   topics : Array[String],
   store : MetadataStore,
 ) -> Array[@cluster.PartitionId] {
@@ -186,12 +239,18 @@ fn group_partitions(
   }
   let out : Array[@cluster.PartitionId] = []
   for topic in topics {
+    let mut count = 0
     for decl in declarations {
       if decl.name == topic {
-        for i = 0; i < decl.partitions; i = i + 1 {
-          out.push(@cluster.PartitionId::{ topic, index: i })
-        }
+        count = decl.partitions
       }
+    }
+    let disk = disk_partition_end(data_dir, topic)
+    if disk > count {
+      count = disk
+    }
+    for i = 0; i < count; i = i + 1 {
+      out.push(@cluster.PartitionId::{ topic, index: i })
     }
   }
   out
@@ -207,7 +266,7 @@ fn GroupRegistry::view_of(
   member : String,
   store : MetadataStore,
 ) -> @client.GroupView {
-  let partitions = group_partitions(state.topics, store)
+  let partitions = group_partitions(self.data_dir, state.topics, store)
   let mine = @group.assignment_of(state, member, partitions)
   let wire : Array[@client.WireGroupPartition] = []
   for p in mine {
@@ -328,7 +387,7 @@ fn GroupRegistry::commit(
     Some(state) => state
     None => return Err("no such group \{commit.group}")
   }
-  let partitions = group_partitions(state.topics, store)
+  let partitions = group_partitions(self.data_dir, state.topics, store)
   let mine = @group.assignment_of(state, commit.member, partitions)
   let partition = @cluster.PartitionId::{
     topic: commit.topic,

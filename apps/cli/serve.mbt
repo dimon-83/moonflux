@@ -48,9 +48,21 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   // to guess which mode this broker is in
   let auth_config = AuthConfig::load(data_dir)
   announce_auth_mode(data_dir, auth_config)
+  // consumer groups (P22): a standalone broker coordinates its own —
+  // the same registry the control plane runs, pointed at the same data
+  // dir that holds this broker's declarations and logs. Membership is
+  // in memory, committed offsets persist in groups.json, and the
+  // liveness clock is the node clock (a "silent member" and a "silent
+  // node" mean the same amount of time everywhere)
+  let groups = GroupRegistry::new(data_dir, NODE_TIMEOUT_MS.to_int64())
+  // the address advertised as the leader of every partition: the one
+  // this broker bound (the same one its startup line prints)
+  let self_addr = "\{host}:\{actual}"
   let handler = HubHandler::{
     on_frame: fn(frame, identity) {
-      dispatch_session_frame(frame, data_dir, rules, ws, identity)
+      dispatch_session_frame(
+        frame, data_dir, rules, ws, groups, self_addr, identity,
+      )
     },
     auth: AuthGate::{ config: auth_config, data_dir },
     on_ready: fn() {
@@ -62,8 +74,9 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   note("serving connections concurrently (one thread, poll-driven)")
   // storage housekeeping (P8): a standalone broker owns its partitions
   // alone, so its committed prefix is its own log end — the floor for
-  // retention is that end, and the policy is off unless an operator
-  // asked for it (README 决策 31)
+  // retention is that end, intersected with the slowest consumer's need
+  // (P22: the group registry lives next door), and the policy is off
+  // unless an operator asked for it (README 决策 31)
   let mut last_housekeeping : Int64 = -1L
   while true {
     let live = hub.poll_once(handler, fn(kind) {
@@ -73,21 +86,83 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     })
     let _ = live
     let now = @env.now().reinterpret_as_int64()
+    // consumer-group members go silent on the node clock, the same
+    // sweep the control plane runs: a departure moves the generation,
+    // and the survivors learn it in their heartbeat reply
+    for pair in groups.sweep(now) {
+      let (group, member) = pair
+      note(
+        "group \{group}: \{member} went silent; generation moved, its partitions will be reassigned",
+      )
+    }
     if last_housekeeping < 0L || now - last_housekeeping >= HOUSEKEEPING_MS {
       last_housekeeping = now
-      let topic = applied_topic(data_dir)
-      if topic.length() > 0 {
-        let floor = match open_topic_log(data_dir, topic) {
-          Ok(log) => log.high_watermark()
-          Err(_) => 0L
-        }
-        match retain_partition(data_dir, topic, 0, floor, now) {
-          Ok(_) => ()
-          Err(e) => note("warning: \{e}")
-        }
+      // every partition the broker hosts: the serve-side equivalent of
+      // the cluster node's "retain each hosted partition" (P9) — which
+      // for a standalone broker is whatever lives under topics/. The
+      // policy is off unless an operator asked for it (README 决策 31),
+      // and each floor is the log end lowered to the slowest consumer
+      serve_retain_all(data_dir, groups, now)
+    }
+  }
+}
+
+///|
+/// Runs the (default-off) retention policy across every partition on
+/// disk. The enumeration is the same one the group coordinator uses
+/// for shares — declared ∪ disk, per partition — so retention and
+/// assignment can never disagree about what this broker hosts.
+fn serve_retain_all(
+  data_dir : String,
+  groups : GroupRegistry,
+  now : Int64,
+) -> Unit {
+  let topic_names = match @fs.list_dir("\{data_dir}/topics") {
+    Ok(names) => names
+    Err(_) => return // nothing hosted (yet): not an error
+  }
+  for name in topic_names {
+    if !valid_topic(name) {
+      continue
+    }
+    let end = disk_partition_end(data_dir, name)
+    for p = 0; p < end; p = p + 1 {
+      let hw = match open_partition_log(data_dir, name, p) {
+        Ok(log) => log.high_watermark()
+        Err(_) => continue // a directory that opens as no log: skip it
+      }
+      let floor = serve_partition_floor(groups, name, p, hw)
+      match retain_partition(data_dir, name, p, floor, now) {
+        Ok(_) => ()
+        Err(e) => note("warning: \{e}")
       }
     }
   }
+}
+
+///|
+/// The floor a standalone broker may delete below: its own log end,
+/// lowered to the slowest group's committed offset when one exists
+/// (P9's rule, served from the local registry). Only groups that
+/// actually committed participate — a group that joined but never
+/// committed has not started, and holding the whole log for it would
+/// mean never deleting anything.
+fn serve_partition_floor(
+  groups : GroupRegistry,
+  topic : String,
+  partition : Int,
+  committed : Int64,
+) -> Int64 {
+  let floors = groups.floors([@cluster.PartitionId::{ topic, index: partition }])
+  for floor in floors {
+    if floor.topic == topic && floor.partition == partition {
+      if floor.floor < committed {
+        return floor.floor
+      }
+      return committed
+    }
+  }
+  committed
 }
 
 ///|
@@ -111,6 +186,8 @@ fn dispatch_session_frame(
   data_dir : String,
   rules : RuleState,
   ws_enabled : Bool,
+  groups : GroupRegistry,
+  self_addr : String,
   identity : @auth.Identity?,
 ) -> @client.Frame {
   let _ = ws_enabled
@@ -248,10 +325,16 @@ fn dispatch_session_frame(
         Ok(_) => ()
         Err((code, message)) => return err_frame(frame.rid, code, message)
       }
-      let floor = match open_partition_log(data_dir, ref.topic, ref.partition) {
+      // the floor is the committed prefix intersected with the slowest
+      // consumer's need (P9): on a standalone broker the committed
+      // prefix is the log's own end, and the registry next door knows
+      // what every group still needs — deleting below a group that has
+      // committed there is the one storage mistake that cannot be undone
+      let hw = match open_partition_log(data_dir, ref.topic, ref.partition) {
         Ok(log) => log.high_watermark()
         Err(e) => return err_frame(frame.rid, @client.ERR_STORAGE, e)
       }
+      let floor = serve_partition_floor(groups, ref.topic, ref.partition, hw)
       match
         compact_partition(
           data_dir,
@@ -291,16 +374,111 @@ fn dispatch_session_frame(
         Ok(payload) => reply_frame(frame.rid, @client.CMD_OK, payload)
         Err((code, message)) => err_frame(frame.rid, code, message)
       }
-    // group coordination is the control plane's, and the refusal says
-    // so (P18/T77)
-    @client.CMD_GROUP_JOIN
-    | @client.CMD_GROUP_HEARTBEAT
-    | @client.CMD_GROUP_LEAVE
-    | @client.CMD_GROUP_COMMIT
-    | @client.CMD_GROUP_DESCRIBE => {
-      let (code, message) = group_coordination_refusal()
-      err_frame(frame.rid, code, message)
+    // consumer groups (P22): the standalone broker is its own
+    // coordinator — same registry, same commands, same fencing as the
+    // control plane's, so a member cannot tell which host it is
+    // talking to and neither can the gate
+    @client.CMD_GROUP_JOIN =>
+      match @client.decode_group_join(frame.payload) {
+        Ok(join) =>
+          match groups.join(join, file_metadata_store(data_dir), now_ms()) {
+            Ok(view) =>
+              reply_frame(
+                frame.rid,
+                @client.CMD_OK,
+                @client.encode_group_view(view),
+              )
+            Err(e) => err_frame(frame.rid, @client.ERR_GROUP, e)
+          }
+        Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+    @client.CMD_GROUP_HEARTBEAT =>
+      match @client.decode_group_heartbeat(frame.payload) {
+        Ok(beat) =>
+          match
+            groups.heartbeat(beat, file_metadata_store(data_dir), now_ms()) {
+            Ok(view) =>
+              reply_frame(
+                frame.rid,
+                @client.CMD_OK,
+                @client.encode_group_view(view),
+              )
+            Err(e) => err_frame(frame.rid, @client.ERR_GROUP, e)
+          }
+        Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+    // leaving is a heartbeat that says goodbye: same fields, one
+    // different consequence
+    @client.CMD_GROUP_LEAVE =>
+      match @client.decode_group_heartbeat(frame.payload) {
+        Ok(beat) =>
+          match groups.leave(beat.group, beat.member.id) {
+            Ok(_) => reply_frame(frame.rid, @client.CMD_OK, b"")
+            Err(e) => err_frame(frame.rid, @client.ERR_GROUP, e)
+          }
+        Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+    @client.CMD_GROUP_COMMIT =>
+      match @client.decode_group_commit(frame.payload) {
+        Ok(commit) =>
+          match groups.commit(commit, file_metadata_store(data_dir)) {
+            Ok(_) => reply_frame(frame.rid, @client.CMD_OK, b"")
+            Err(e) => err_frame(frame.rid, @client.ERR_GROUP, e)
+          }
+        Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
+    @client.CMD_GROUP_DESCRIBE => {
+      let group = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
+      if group.length() == 0 {
+        // an empty name lists the groups; the reply is JSON so the
+        // CLI can print a table without a second codec
+        let all : Array[Json] = []
+        for entry in groups.list() {
+          let (name, epoch, members, commits) = entry
+          let doc : Map[String, Json] = {}
+          doc["name"] = Json::string(name)
+          doc["epoch"] = Json::number(epoch.to_double())
+          doc["members"] = Json::number(members.to_double())
+          doc["commits"] = Json::number(commits.to_double())
+          all.push(Json::object(doc))
+        }
+        let text = Json::array(all).stringify()
+        reply_frame(
+          frame.rid,
+          @client.CMD_OK,
+          @utf8.encode(text[0:text.length()]),
+        )
+      } else {
+        match groups.describe(group) {
+          Ok(desc) =>
+            reply_frame(
+              frame.rid,
+              @client.CMD_OK,
+              @client.encode_group_description(desc),
+            )
+          Err(e) => err_frame(frame.rid, @client.ERR_GROUP, e)
+        }
+      }
     }
+    // who leads a partition (P22): on a standalone broker the answer
+    // is always "this one" — it hosts everything it has, and a group
+    // member (or any consumer) asking where to read needs this to
+    // resolve its fetches, the same question the control plane answers
+    // for a cluster
+    @client.CMD_LEADER =>
+      match @client.decode_partition_ref(frame.payload) {
+        Ok(_) =>
+          reply_frame(
+            frame.rid,
+            @client.CMD_OK,
+            @client.encode_partition_view(@client.PartitionView::{
+              leader: self_addr,
+              replicas: [self_addr],
+              nominated: "",
+            }),
+          )
+        Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
     // rule assets: a standalone broker owns its own function sets,
     // because it compiles its own applies (P6)
     cmd if is_function_set_command(cmd) =>
@@ -788,18 +966,6 @@ fn dispatch_fetch_committed(
     frames: frames.to_bytes(),
   }
   reply(@client.CMD_OK, @client.encode_sync_response(response))
-}
-
-///|
-/// Consumer-group coordination is the control plane's (P9 discipline):
-/// a standalone serve hosts data, not generations, and the honest
-/// answer is a refusal that says where the capability lives — the same
-/// shape as a data node's refusal of placement commands.
-fn group_coordination_refusal() -> (Int, String) {
-  (
-    @client.ERR_WRONG_ROLE,
-    "group coordination lives with the control plane (sc), not a standalone serve; consumer groups need an sc + spu cluster",
-  )
 }
 
 ///|

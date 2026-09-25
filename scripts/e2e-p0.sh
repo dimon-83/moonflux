@@ -114,13 +114,16 @@ printf 'after\n' > "$WORK/after.txt"
   | grep -q "offsets 0\.\.1" || fail "a re-created topic did not start at offset 0"
 pass "topic family: delete removes the data (cache evicted first), and a re-create starts at 0"
 
-# group coordination is the control plane's (P9); a standalone serve
-# says so instead of "unknown command"
+# group coordination (P22): the standalone broker is its own coordinator
+# — the describe face answers, and an empty registry is the honest
+# empty answer, not "unknown command" and not a pointer elsewhere
 "$EXE" group describe --name g --remote "127.0.0.1:$PORT" > "$WORK/group.out" 2>&1 \
-  && fail "a group command was accepted by a standalone serve"
-grep -q "group coordination lives with the control plane" "$WORK/group.out" \
-  || fail "the group refusal does not say where the capability lives: $(cat "$WORK/group.out")"
-pass "group family: a standalone serve refuses coordination with a pointer to the control plane"
+  && fail "describing a group that was never joined should fail"
+grep -q "no such group" "$WORK/group.out" \
+  || fail "the group refusal is not the coordinator's own: $(cat "$WORK/group.out")"
+"$EXE" group describe --remote "127.0.0.1:$PORT" 2>&1 | grep -q "g" \
+  && fail "an empty registry listed a group"
+pass "group family: the standalone broker coordinates (describe answers from an empty registry)"
 
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true

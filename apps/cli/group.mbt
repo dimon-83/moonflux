@@ -16,23 +16,19 @@ fn group_request(
   sc_addr : String,
   cmd : Int,
   payload : Bytes,
+  token : String?,
 ) -> Result[Bytes, String] {
-  control_call_secure(sc_addr, cmd, payload, group_link())
+  control_call_secure(sc_addr, cmd, payload, group_link(token))
 }
 
 ///|
-/// The link a group member presents. Read once here rather than threaded
-/// through every call: a member has exactly one, and the alternative is a
-/// transport parameter on a dozen functions whose only opinion about it
-/// is "pass it on". It reads the environment for the same reason
-/// `MOONFLUX_TOKEN` is an environment variable at all — a member may be a
-/// CLI invocation with flags, or a process configured by its
-/// environment, and both must reach a TLS broker.
-fn group_link() -> PeerLink {
-  PeerLink::{
-    token: @env.get_env_var("MOONFLUX_TOKEN"),
-    tls: env_tls_options(),
-  }
+/// The link a group member presents: the credential resolved once by
+/// the caller (`--token` first, then the environment — the same
+/// resolution every CLI command runs) rides every group request. A
+/// member that dialled without presenting a credential would look
+/// exactly like a member that meant to.
+fn group_link(token : String?) -> PeerLink {
+  PeerLink::{ token, tls: env_tls_options() }
 }
 
 ///|
@@ -109,6 +105,7 @@ fn group_commit(argv : Array[String]) -> Unit {
       remote,
       @client.CMD_GROUP_COMMIT,
       @client.encode_group_commit(commit),
+      client_token(flags),
     ) {
     Ok(_) =>
       println(
@@ -124,7 +121,8 @@ fn group_commit(argv : Array[String]) -> Unit {
 fn group_list(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let remote = flags.require("remote")
-  let payload = match group_request(remote, @client.CMD_GROUP_DESCRIBE, b"") {
+  let payload = match
+    group_request(remote, @client.CMD_GROUP_DESCRIBE, b"", client_token(flags)) {
     Ok(payload) => payload
     Err(e) => fail("group list: \{e}")
   }
@@ -167,8 +165,14 @@ fn group_describe(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let remote = flags.require("remote")
   let name = flags.require("name")
+  let token = client_token(flags)
   let payload = match
-    group_request(remote, @client.CMD_GROUP_DESCRIBE, @utf8.encode(name)) {
+    group_request(
+      remote,
+      @client.CMD_GROUP_DESCRIBE,
+      @utf8.encode(name),
+      client_token(flags),
+    ) {
     Ok(payload) => payload
     Err(e) => fail("group describe: \{e}")
   }
@@ -186,7 +190,7 @@ fn group_describe(argv : Array[String]) -> Unit {
   // remembered — the same stance the project takes for replica lag.
   for commit in desc.commits {
     let mut lag_text = "lag=?"
-    match leader_of(remote, commit.topic, commit.partition) {
+    match leader_of(remote, commit.topic, commit.partition, token) {
       Some(leader) => {
         let ref = @client.PartitionRef::{
           topic: commit.topic,
@@ -197,6 +201,7 @@ fn group_describe(argv : Array[String]) -> Unit {
             leader,
             @client.CMD_OFFSET_INFO,
             @client.encode_partition_ref(ref),
+            token,
           ) {
           Ok(info) =>
             match @client.decode_offset_info(info) {
@@ -247,6 +252,7 @@ fn consume_group(
   from : Int64,
   follow : Bool,
   commit_ms : Int64,
+  token : String?,
 ) -> Unit {
   let join = @client.GroupJoin::{
     group,
@@ -258,6 +264,7 @@ fn consume_group(
       sc_addr,
       @client.CMD_GROUP_JOIN,
       @client.encode_group_join(join),
+      token,
     ) {
     Ok(payload) =>
       match @client.decode_group_view(payload) {
@@ -280,7 +287,8 @@ fn consume_group(
     let mut read_any = false
     for i = 0; i < cursors.length(); i = i + 1 {
       let cursor = cursors[i]
-      let leader = match leader_of(sc_addr, cursor.topic, cursor.partition) {
+      let leader = match
+        leader_of(sc_addr, cursor.topic, cursor.partition, token) {
         Some(leader) => leader
         None => continue
       }
@@ -324,8 +332,8 @@ fn consume_group(
     if !follow {
       // a batch consumer: drain, commit what moved, and leave so the
       // partitions are free for the next run
-      let _ = commit_cursors(sc_addr, group, member, epoch, cursors)
-      leave_group(sc_addr, group, member)
+      let _ = commit_cursors(sc_addr, group, member, epoch, cursors, token)
+      leave_group(sc_addr, group, member, token)
       cli_exit(0)
     }
     let now = @env.now().reinterpret_as_int64()
@@ -348,6 +356,7 @@ fn consume_group(
           sc_addr,
           @client.CMD_GROUP_HEARTBEAT,
           @client.encode_group_heartbeat(beat),
+          token,
         ) {
         Ok(payload) =>
           match @client.decode_group_view(payload) {
@@ -363,7 +372,7 @@ fn consume_group(
           }
         Err(e) => warn("heartbeat \{group}: \{e}")
       }
-      let stale = commit_cursors(sc_addr, group, member, epoch, cursors)
+      let stale = commit_cursors(sc_addr, group, member, epoch, cursors, token)
       if stale {
         // the commit was refused because the generation moved between
         // the heartbeat and now: re-join rather than push against a
@@ -374,6 +383,7 @@ fn consume_group(
             sc_addr,
             @client.CMD_GROUP_JOIN,
             @client.encode_group_join(join),
+            token,
           ) {
           Ok(payload) =>
             match @client.decode_group_view(payload) {
@@ -471,6 +481,7 @@ fn commit_cursors(
   member : String,
   epoch : Int64,
   cursors : Array[GroupCursor],
+  token : String?,
 ) -> Bool {
   let mut stale = false
   for i = 0; i < cursors.length(); i = i + 1 {
@@ -491,6 +502,7 @@ fn commit_cursors(
         sc_addr,
         @client.CMD_GROUP_COMMIT,
         @client.encode_group_commit(commit),
+        token,
       ) {
       Ok(_) => {
         cursor.committed = cursor.next
@@ -508,7 +520,12 @@ fn commit_cursors(
 }
 
 ///|
-fn leave_group(sc_addr : String, group : String, member : String) -> Unit {
+fn leave_group(
+  sc_addr : String,
+  group : String,
+  member : String,
+  token : String?,
+) -> Unit {
   let beat = @client.GroupHeartbeat::{
     group,
     member: @client.WireGroupMember::{ id: member, address: "cli:\{cli_pid()}" },
@@ -518,6 +535,7 @@ fn leave_group(sc_addr : String, group : String, member : String) -> Unit {
       sc_addr,
       @client.CMD_GROUP_LEAVE,
       @client.encode_group_heartbeat(beat),
+      token,
     ) {
     Ok(_) => ()
     Err(e) => warn("leave \{group}: \{e}")
@@ -527,13 +545,19 @@ fn leave_group(sc_addr : String, group : String, member : String) -> Unit {
 ///|
 /// Which node leads a partition, asked of the control plane. A member
 /// reads from leaders; this is the one lookup it cannot avoid.
-fn leader_of(sc_addr : String, topic : String, partition : Int) -> String? {
+fn leader_of(
+  sc_addr : String,
+  topic : String,
+  partition : Int,
+  token : String?,
+) -> String? {
   let ref = @client.PartitionRef::{ topic, partition }
   let payload = match
     group_request(
       sc_addr,
       @client.CMD_LEADER,
       @client.encode_partition_ref(ref),
+      token,
     ) {
     Ok(payload) => payload
     Err(_) => return None

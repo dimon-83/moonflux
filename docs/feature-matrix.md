@@ -40,7 +40,7 @@
 | :--- | :--- | :--- |
 | 任意 offset 重放 / 最多 N 条 | ✅ | `consume --from N`；`e2e-p0.sh` |
 | 提交读开关（`--committed`，应答带水位） | ✅ | `e2e-p4-readmodes.sh`；compatibility-matrix #11 |
-| 消费组：join/heartbeat/commit/leave + range 分配 | ✅ | `consume --group`；`scripts/e2e-p9-groups.sh` |
+| 消费组：join/heartbeat/commit/leave + range 分配（集群与**单机 serve** 同一语义，P22） | ✅ | `consume --group`；`scripts/e2e-p9-groups.sh`（集群）+ `scripts/e2e-p22-serve-groups.sh`（7 腿，单机） |
 | 世代围栏（过期提交拒绝，无特权路径） | ✅ | 同上 |
 | 托管偏移持久化（跨控制面重启存活） | ✅ | `groups.json` 原子写；同上 |
 | 至少一次投递（无缺口；允许重复） | ✅ | 同上（12 生产 vs 18 投递腿） |
@@ -66,7 +66,7 @@
 | :--- | :--- | :--- |
 | 版本化帧协议 v2（HELLO/WELCOME/错误码/rid 回显） | ✅ | `core/client`；`crosscheck-protocol.sh` + 独立 Python 客户端 |
 | 单机 TCP 服务（`serve`）与远程读写 | ✅ | `scripts/e2e-p0.sh` |
-| serve 单机命令面（P18）：`topic create/list/delete`（声明入 serve 元数据、list = 声明∪自动创建、delete 即删数据且缓存先失效、rf>1 拒绝）+ group 家族解释性拒绝 | ✅ | `scripts/e2e-p0.sh` 的 topic/group 腿 |
+| serve 单机命令面（P18）：`topic create/list/delete`（声明入 serve 元数据、list = 声明∪自动创建、delete 即删数据且缓存先失效、rf>1 拒绝）；group 命令自 P22 起由 serve 自己协调（P18 的解释性拒绝退役，`e2e-p0` 的 group 腿翻转为协调断言） | ✅ | `scripts/e2e-p0.sh` 的 topic/group 腿 + `scripts/e2e-p22-serve-groups.sh` |
 | 连接多路复用（单线程 poll hub，缓冲上限由协议批预算派生） | ✅ | `apps/cli/hub.mbt`（收包按轮 join，超限**报告后**断开）；`scripts/e2e-p5-concurrency.sh`、`scripts/e2e-p15-bulk.sh` 腿 4 |
 | 控制面并发服务（`sc` 同 hub；沉默对端不伤害他人） | ✅ | `scripts/e2e-p13-control-plane.sh` |
 | WebSocket 网关（同端口，浏览器与 CLI 同协议） | ✅ | `serve --ws`；`scripts/e2e-p4-ws.sh` |

@@ -480,3 +480,46 @@ test "floors only reflect groups that actually committed" {
   assert_eq(both.length(), 1)
   assert_eq(both[0].floor, 1L)
 }
+
+///|
+test "a group's partitions are the larger of declared and on-disk" {
+  let (registry, store) = group_fixture("disk", "events")
+  // declared: 2 partitions. disk: partition-0 and partition-2 exist —
+  // an index addressed past a hole (`produce --partition 2` on a fresh
+  // topic creates partition-2 and nothing else), so the disk truth is
+  // "three partitions addressable", and counting entries would have
+  // said two
+  let base = "/tmp/moonflux_group_fixture_disk"
+  let _ = @fs.mkdirs("\{base}/topics/events/partition-0")
+  let _ = @fs.mkdirs("\{base}/topics/events/partition-2")
+  // the pre-P8 single-file layout also says a partition exists
+  let _ = @fs.write_file("\{base}/topics/events/partition-5.log", b"")
+  // a file that is not a partition says nothing about partitions
+  let _ = @fs.write_file("\{base}/topics/events/topology.json", b"{}")
+  let view = match
+    registry.join(join_req("g", "m1", ["events"]), store, 1000L) {
+    Ok(view) => view
+    Err(e) => abort("join: \{e}")
+  }
+  assert_eq(view.partitions.length(), 6)
+  // the share spans the whole disk truth, holes included
+  assert_eq(view.partitions[5].partition, 5)
+}
+
+///|
+test "a coordinator whose data dir hosts no logs enumerates declarations only" {
+  // the SC's shape: nothing under <data-dir>/topics, so the disk term
+  // of the max is zero and the declaration rules — exactly the pre-P22
+  // answer, and the proof that the serve addition did not move the
+  // cluster's semantics
+  let (registry, store) = group_fixture("nodisk", "events")
+  let _ = @fs.mkdirs(
+    "/tmp/moonflux_group_fixture_nodisk/topics/other-events/partition-0",
+  )
+  let view = match
+    registry.join(join_req("g", "m1", ["events"]), store, 1000L) {
+    Ok(view) => view
+    Err(e) => abort("join: \{e}")
+  }
+  assert_eq(view.partitions.length(), 2)
+}

@@ -44,7 +44,16 @@ fn cmd_consume(argv : Array[String]) -> Unit {
         }
       None => 1000L
     }
-    consume_group(group, member, [topic], remote, from, follow, commit_ms)
+    consume_group(
+      group,
+      member,
+      [topic],
+      remote,
+      from,
+      follow,
+      commit_ms,
+      client_token(flags),
+    )
     return
   }
   match flags.get("remote") {

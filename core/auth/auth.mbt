@@ -94,13 +94,19 @@ pub fn permit(role : Role, cmd : Int) -> Bool {
 
 ///|
 /// Reads on the data plane: every answer here is either records the
-/// caller is allowed to see or metadata about them.
+/// caller is allowed to see or metadata about them. Asking where a
+/// partition lives (`CMD_LEADER`) is metadata of exactly that kind — a
+/// consumer that may read the data must be able to find it (P22) —
+/// while the data itself stays behind its own gates. The command also
+/// stays in `is_node_command`: a data node's one-shot placement
+/// fallback asks the same question (P7).
 fn is_data_read(cmd : Int) -> Bool {
   cmd == @client.CMD_FETCH ||
   cmd == @client.CMD_FETCH_COMMITTED ||
   cmd == @client.CMD_FETCH_PARTITION ||
   cmd == @client.CMD_OFFSET_INFO ||
-  cmd == @client.CMD_SEGMENTS
+  cmd == @client.CMD_SEGMENTS ||
+  cmd == @client.CMD_LEADER
 }
 
 ///|
