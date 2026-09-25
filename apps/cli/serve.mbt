@@ -460,6 +460,45 @@ fn dispatch_session_frame(
         }
       }
     }
+    // how far the partition has come: a standalone broker has no
+    // replicas, so its whole log IS the committed prefix — hw and leo
+    // are the same number by construction (the cluster's answer comes
+    // from a ledger; here the log is its own ledger)
+    @client.CMD_OFFSET_INFO =>
+      match @client.decode_partition_ref_opt(frame.payload) {
+        Ok(asked) =>
+          if asked.topic.length() == 0 {
+            err_frame(
+              frame.rid,
+              @client.ERR_BAD_PAYLOAD,
+              "offset info must name a topic: watermarks are per partition",
+            )
+          } else {
+            match
+              authorize_data_command(
+                identity,
+                data_dir,
+                asked.topic,
+                false,
+                @client.CMD_OFFSET_INFO,
+              ) {
+              Ok(_) => ()
+              Err((code, message)) => return err_frame(frame.rid, code, message)
+            }
+            match open_partition_log(data_dir, asked.topic, asked.partition) {
+              Ok(log) => {
+                let end = log.high_watermark()
+                reply_frame(
+                  frame.rid,
+                  @client.CMD_OK,
+                  @client.encode_offset_info(end, end),
+                )
+              }
+              Err(e) => err_frame(frame.rid, @client.ERR_STORAGE, e)
+            }
+          }
+        Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+      }
     // who leads a partition (P22): on a standalone broker the answer
     // is always "this one" — it hosts everything it has, and a group
     // member (or any consumer) asking where to read needs this to
@@ -996,9 +1035,20 @@ fn dispatch_topic_command(
       Ok(topics) =>
         for topic in topics {
           declared[topic.name] = true
+          // the count a listing reports is the one every consumer of
+          // this answer relies on — groups (P22) and retention both
+          // take max(declared, disk), so the listing must say the same
+          // thing or a partition could exist for the coordinator but
+          // be invisible to an operator
+          let disk = disk_partition_end(data_dir, topic.name)
+          let partitions = if disk > topic.partitions {
+            disk
+          } else {
+            topic.partitions
+          }
           wire.push(@client.WireTopic::{
             name: topic.name,
-            partitions: topic.partitions,
+            partitions,
             replication_factor: topic.replication_factor,
           })
         }
@@ -1011,17 +1061,9 @@ fn dispatch_topic_command(
             continue
           }
           // an auto-created topic: its partitions are whatever is on
-          // disk, and it has never had a replica
-          let mut partitions = 0
-          match @fs.list_dir("\{data_dir}/topics/\{name}") {
-            Ok(entries) =>
-              for entry in entries {
-                if entry.has_prefix("partition-") {
-                  partitions += 1
-                }
-              }
-            Err(_) => ()
-          }
+          // disk, and it has never had a replica — the disk truth is a
+          // max of indexes, not a count of directories
+          let partitions = disk_partition_end(data_dir, name)
           if partitions > 0 {
             wire.push(@client.WireTopic::{
               name,

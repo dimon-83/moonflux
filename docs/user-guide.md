@@ -89,6 +89,38 @@ cli.exe cluster offsets --topic events --partition 0 --remote 127.0.0.1:19452   
 ```
 
 - **放置与选主都是控制面的决定**：节点只上报、只采纳；写入只认 leader，打错节点会得到带 leader 地址的结构化拒绝。
+
+### 3.1 观测平表与连接档案（P23）
+
+```bash
+# 每分区一行：谁领导、谁持有、走到哪了（集群与单机 serve 同一命令）
+cli.exe partition list --topic events --remote 127.0.0.1:19451
+
+# 节点与其承载（集群）：注册表 + 逐分区放置视图组合出的承载计数
+cli.exe cluster spu list --remote 127.0.0.1:19451
+```
+
+- `partition list` 是**组合不是第二个权威**：每个分区的 hw/leo 就是该分区 leader 对
+  `cluster offsets` 的回答，门禁断言两者逐分区一致。
+- `spu list` 不含每节点磁盘字节——那需要节点上报（协议加法段），缺位留痕而非拿 leader
+  侧字节冒充。
+
+```bash
+# 命名连接档案：不再每次裸传 --remote
+cli.exe profile add local --remote 127.0.0.1:19451   # 首个档案自动成为 current
+cli.exe partition list --topic events                # 无 --remote 时用 current profile
+cli.exe profile list                                 # current 带 * 标记
+cli.exe profile use other                            # 切换
+cli.exe profile remove local                         # 移除
+```
+
+- 解析顺序：**显式 `--remote` 优先 → current profile → 报错**（错误文本会说明三条路）。
+- 配置文件：`$MOONFLUX_CONFIG`（测试/CI 隔离用）或 `~/.moonflux/config`；原子写、损坏即报错、
+  未知字段拒绝。
+- **档案不是凭据库**：携带 `token` 的档案在加载期按名拒绝——凭据走 `--token` 或
+  `MOONFLUX_TOKEN`，不会有第三条静默口径。
+- 本地/远端模式不受档案影响：`produce/consume/benchmark` 的本地模式由"是否带 `--remote`"
+  决定，档案不会隐式把人切进远端。
 - 分区是复制的单元：3 分区 RF=2 时，杀掉一个节点只停它持有的分区，其余分区照常推进；新 leader 由最小滞后副本自我提升（提名随心跳下发）。
 - 数据节点离开控制面也能跑（自持已应用管道的 partition 0），日志会写明这是退化自放置。
 

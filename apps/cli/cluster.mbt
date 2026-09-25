@@ -24,9 +24,10 @@ fn cmd_cluster(argv : Array[String]) -> Unit {
     "offsets" => cluster_offsets(rest)
     "segments" => cluster_segments(rest)
     "compact" => cluster_compact(rest)
+    "spu" => cluster_spu_list(rest)
     _ =>
       fail(
-        "cluster: unknown verb '\{verb}' (known: nodes, status, leader, offsets, segments, compact)",
+        "cluster: unknown verb '\{verb}' (known: nodes, status, leader, offsets, segments, compact, spu)",
       )
   }
 }
@@ -38,13 +39,9 @@ fn cmd_cluster(argv : Array[String]) -> Unit {
 /// Sorted by the control plane, so repeated reads are comparable.
 fn cluster_nodes(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = match flags.get("remote") {
-    Some(remote) => remote
-    None =>
-      fail(
-        "cluster nodes: --remote host:port is required (a control plane must be asked, not guessed)",
-      )
-  }
+  // a control plane must be asked, not guessed: explicit --remote or a
+  // current profile (resolve_remote's refusal names both ways)
+  let remote = resolve_remote(flags)
   let payload = match
     control_call_secure(remote, @client.CMD_NODES, b"", peer_link(flags)) {
     Ok(payload) => payload
@@ -70,7 +67,7 @@ fn cluster_nodes(argv : Array[String]) -> Unit {
 /// a failed query).
 fn cluster_leader(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let topic = flags.require("topic")
   let partition = match flags.get("partition") {
     Some(text) => parse_partition_flag(text)
@@ -105,7 +102,7 @@ fn cluster_leader(argv : Array[String]) -> Unit {
 /// would answer a different question).
 fn cluster_offsets(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let topic = flags.require("topic")
   let partition = match flags.get("partition") {
     Some(text) => parse_partition_flag(text)
@@ -155,7 +152,7 @@ fn parse_partition_flag(text : String) -> Int {
 /// that hosts it, not only the leader.
 fn cluster_compact(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let topic = flags.require("topic")
   let partition = match flags.get("partition") {
     Some(text) => parse_partition_flag(text)
@@ -198,7 +195,7 @@ fn cluster_compact(argv : Array[String]) -> Unit {
 /// partition, because the disk is that node's fact (P8).
 fn cluster_segments(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let topic = flags.require("topic")
   let partition = match flags.get("partition") {
     Some(text) => parse_partition_flag(text)
@@ -233,7 +230,7 @@ fn cluster_segments(argv : Array[String]) -> Unit {
 /// own rather than the control plane's memory of them.
 fn cluster_status(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let nodes_payload = match
     control_call_secure(remote, @client.CMD_NODES, b"", peer_link(flags)) {
     Ok(payload) => payload
@@ -320,4 +317,185 @@ fn cluster_status(argv : Array[String]) -> Unit {
     }
   }
   cli_exit(0)
+}
+
+///|
+/// `moonflux partition list --topic T --remote <control plane | serve>`
+/// — the per-partition observability face (cli-roadmap §3.3, the
+/// reference's `partition list`): one flat row per partition with who
+/// leads it, who holds it, and how far it has come. A composition of
+/// the same three questions `cluster status` asks, narrowed to one
+/// topic; it works against a serve as well, because a standalone
+/// broker answers LEADER for everything it hosts (P22).
+fn partition_list(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let remote = resolve_remote(flags)
+  let topic = flags.require("topic")
+  let link = peer_link(flags)
+  let topics_payload = match
+    control_call_secure(remote, @client.CMD_TOPIC_LIST, b"", link) {
+    Ok(payload) => payload
+    Err(e) => fail("partition list: \{e}")
+  }
+  let topics = match @client.decode_wire_topics(topics_payload) {
+    Ok(topics) => topics
+    Err(e) => fail("partition list: \{e}")
+  }
+  let mut count = -1
+  for candidate in topics {
+    if candidate.name == topic {
+      count = candidate.partitions
+    }
+  }
+  if count < 0 {
+    fail(
+      "partition list: topic \{topic} is not declared or hosted there (topic list shows what exists)",
+    )
+  }
+  println("partition\tleader\treplicas\thw\tleo")
+  for index in 0..<count {
+    let ref = @client.PartitionRef::{ topic, partition: index }
+    let (leader, replicas) = match
+      control_call_secure(
+        remote,
+        @client.CMD_LEADER,
+        @client.encode_partition_ref(ref),
+        link,
+      ) {
+      Ok(payload) =>
+        match @client.decode_partition_view(payload) {
+          Ok(view) =>
+            if view.leader.length() == 0 {
+              ("(election pending)", format_addresses(view.replicas))
+            } else {
+              (view.leader, format_addresses(view.replicas))
+            }
+          Err(_) => ("?", "?")
+        }
+      Err(_) => ("?", "?")
+    }
+    let (hw, leo) = if leader.length() == 0 ||
+      leader == "?" ||
+      leader == "(election pending)" {
+      ("?", "?")
+    } else {
+      match
+        control_call_secure(
+          leader,
+          @client.CMD_OFFSET_INFO,
+          @client.encode_partition_ref(ref),
+          link,
+        ) {
+        Ok(payload) =>
+          match @client.decode_offset_info(payload) {
+            Ok(pair) => (pair.0.to_string(), pair.1.to_string())
+            Err(_) => ("?", "?")
+          }
+        Err(_) => ("?", "?")
+      }
+    }
+    println("\{index}\t\{leader}\t\{replicas}\t\{hw}\t\{leo}")
+  }
+  cli_exit(0)
+}
+
+///|
+/// `moonflux cluster spu list --remote <control plane>` — the nodes as
+/// the control plane sees them, with what each one holds: the
+/// registered set (id, address, role, log end) joined with the
+/// placement views into per-node hosting counts. Composed client-side
+/// from answers the control plane already serves; a per-node disk-byte
+/// total would need the nodes to report it, which is a protocol
+/// addition, not a query (left out rather than approximated).
+fn cluster_spu_list(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let remote = resolve_remote(flags)
+  let link = peer_link(flags)
+  let nodes_payload = match
+    control_call_secure(remote, @client.CMD_NODES, b"", link) {
+    Ok(payload) => payload
+    Err(e) => fail("cluster spu list: \{e}")
+  }
+  let nodes = match @client.decode_nodes(nodes_payload) {
+    Ok(nodes) => nodes
+    Err(e) => fail("cluster spu list: \{e}")
+  }
+  let topics_payload = match
+    control_call_secure(remote, @client.CMD_TOPIC_LIST, b"", link) {
+    Ok(payload) => payload
+    Err(e) => fail("cluster spu list: \{e}")
+  }
+  let topics = match @client.decode_wire_topics(topics_payload) {
+    Ok(topics) => topics
+    Err(e) => fail("cluster spu list: \{e}")
+  }
+  let hosted : Map[String, Int] = {}
+  let topic_names : Map[String, Map[String, Bool]] = {}
+  for topic in topics {
+    for index in 0..<topic.partitions {
+      let ref = @client.PartitionRef::{ topic: topic.name, partition: index }
+      let view = match
+        control_call_secure(
+          remote,
+          @client.CMD_LEADER,
+          @client.encode_partition_ref(ref),
+          link,
+        ) {
+        Ok(payload) =>
+          match @client.decode_partition_view(payload) {
+            Ok(view) => view
+            Err(_) => continue
+          }
+        Err(_) => continue
+      }
+      for address in view.replicas {
+        let seen = match hosted.get(address) {
+          Some(count) => count
+          None => 0
+        }
+        hosted[address] = seen + 1
+        match topic_names.get(address) {
+          Some(set) => set[topic.name] = true
+          None => {
+            let set : Map[String, Bool] = {}
+            set[topic.name] = true
+            topic_names[address] = set
+          }
+        }
+      }
+    }
+  }
+  println("spu\taddress\trole\tleo\thosted-partitions\ttopics")
+  for node in nodes {
+    let held = match hosted.get(node.address) {
+      Some(count) => count
+      None => 0
+    }
+    let topic_count = match topic_names.get(node.address) {
+      Some(set) => set.length()
+      None => 0
+    }
+    println(
+      "\{node.id}\t\{node.address}\t\{@client.role_name(node.role)}\t\{node.leo}\t\{held}\t\{topic_count}",
+    )
+  }
+  cli_exit(0)
+}
+
+///|
+/// `moonflux partition <verb>` — the partition observability family.
+fn cmd_partition(argv : Array[String]) -> Unit {
+  if argv.length() == 0 {
+    fail("partition: missing verb (list)")
+  }
+  let verb = argv[0]
+  let rest = if argv.length() > 1 {
+    argv[1:argv.length()].to_owned()
+  } else {
+    []
+  }
+  match verb {
+    "list" => partition_list(rest)
+    _ => fail("partition: unknown verb '\{verb}' (known: list)")
+  }
 }

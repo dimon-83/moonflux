@@ -85,6 +85,9 @@
 | 能力 | 状态 | 说明与证据 |
 | :--- | :--- | :--- |
 | CLI（单二进制多子命令；数据/集群/运维/管道四族） | ✅ | `apps/cli`；`produce --key/--key-separator`（无分隔符行跳过并告警）、`cluster compact`；命令面盘点 [`cli-roadmap.md`](cli-roadmap.md) |
+| 分区观测平表（P23）：`partition list --topic T`（PARTITION/LEADER/REPLICAS/HW/LEO；集群与单机同一实现，与 `cluster offsets` 逐分区一致） | ✅ | `scripts/e2e-p23-cli.sh`（腿 1/5） |
+| 节点承载视图（P23）：`cluster spu list`（注册表 + 客户端组合的承载计数；磁盘字节需节点上报，缺位留痕） | ✅ | `scripts/e2e-p23-cli.sh`（腿 4） |
+| 连接档案（P23）：`profile add/list/use/remove` + `resolve_remote` 单点解析（显式 --remote 优先；档案不是凭据库——token 条目按名拒绝） | ✅ | `scripts/e2e-p23-cli.sh`（腿 3）+ `apps/cli/profile_wbtest.mbt`（4 条） |
 | PipelineSpec v1alpha1（JSON；plan 差异预览 / apply 发布期检查） | ✅ | `core/spec`；`scripts/e2e-p0p.sh` |
 | Web 拖拽编辑器（spec-first；同端口 WS；浏览器闭环） | ✅ | `apps/editor-kernel` + `web/editor/`；`scripts/e2e-p4-editor.sh`（浏览器阶段人/agent 驱动） |
 | 客户端内核（native + wasm-gc 双后端同一份逻辑） | ✅ | `core/client`；`moon test --target wasm-gc` |

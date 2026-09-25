@@ -26,11 +26,10 @@ fn cmd_consume(argv : Array[String]) -> Unit {
   }
   if flags.get("group") is Some(group) {
     // group mode: the coordinator decides which partitions this member
-    // reads, and the group's committed offsets decide where
-    if flags.get("remote") is None {
-      fail("--group needs --remote <control plane>")
-    }
-    let remote = flags.require("remote")
+    // reads, and the group's committed offsets decide where; a
+    // coordinator must be asked, not guessed (explicit --remote or a
+    // current profile)
+    let remote = resolve_remote(flags)
     let member = match flags.get("member") {
       Some(member) => member
       None => "cli-\{cli_pid()}"

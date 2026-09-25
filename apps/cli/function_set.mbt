@@ -36,7 +36,7 @@ fn cmd_function_set(argv : Array[String]) -> Unit {
 /// is the only way for a document that omits one).
 fn function_set_create(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let path = flags.require("file")
   let text = match @fs.read_file(path) {
     Ok(bytes) => @utf8.decode_lossy(bytes[0:bytes.length()])
@@ -86,7 +86,7 @@ fn function_set_create(argv : Array[String]) -> Unit {
 /// `moonflux function-set get --name N --remote host:port`
 fn function_set_get(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let name = flags.require("name")
   let payload = match
     control_call_secure(
@@ -107,7 +107,7 @@ fn function_set_get(argv : Array[String]) -> Unit {
 /// `moonflux function-set list --remote host:port`
 fn function_set_list(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let payload = match
     control_call_secure(
       remote,
@@ -148,7 +148,7 @@ fn function_set_list(argv : Array[String]) -> Unit {
 /// `moonflux function-set delete --name N --remote host:port`
 fn function_set_delete(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let name = flags.require("name")
   match
     control_call_secure(

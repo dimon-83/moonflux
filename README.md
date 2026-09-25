@@ -190,6 +190,21 @@ moonflux/
     （ACL/fetch）；它保留在 `is_node_command`（数据节点的放置兜底依赖它），集群与单机行为一致。
     对标签注：无——这是本项目的部署形态语义（单机 serve = 自持集群），不是从参考系统借的。
     门禁：`scripts/e2e-p22-serve-groups.sh`（7 腿；对端 = 单个 serve）+ `e2e-p0` 翻转的 group 腿。
+47. **命令面尾巴收口：观测的两条腿与一份连接档案**（2026-09-25，P23）：cli-roadmap 挂了三轮的
+    三条命令一次清账。① `partition list`——对标 `fluvio partition list` 的平表
+    （PARTITION/LEADER/REPLICAS/HW/LEO），**纯客户端组合**（topic list 定分区数 → 每分区
+    LEADER + OFFSET_INFO），不做第二个权威：它与 `cluster offsets` 逐分区一致是门禁断言；
+    集群（SC）与单机（serve 自 P22 应答 LEADER）同一实现。顺带暴露并补齐 **serve 缺
+    `CMD_OFFSET_INFO` 臂**——`cluster offsets` 与 `group describe` 的滞后列对 serve 从未
+    通过（单机 broker 无副本，hw = leo = 日志末端是构造事实）。② `cluster spu list`——
+    注册表 + 承载计数（逐分区放置视图里数副本归属）；**每节点磁盘字节需要节点上报（协议
+    加法段），缺位留痕而非拿 leader 侧字节冒充**。③ `profile`——命名连接档案
+    （`$MOONFLUX_CONFIG` 或 `~/.moonflux/config`），`resolve_remote` 单点解析：显式
+    `--remote` 优先 → current profile → 报错；**档案不是凭据库**（携带 token 的档案在加载
+    期按名拒绝——凭据已有两条口径，第三条静默口径是替用户做的安全决定，P12 纪律）；本地/
+    远端模式切换不受档案影响（produce/consume/benchmark 的本地模式由是否带 --remote 决定，
+    档案不隐式把人切进远端）。**`topic add-partition` 明确不做**：加分区是放置调和事件，
+    属元数据面扩展，不混入命令面收口。门禁：`scripts/e2e-p23-cli.sh`（5 腿）。
 43. **连接器学会流式：三态 pull，和一只自己写的 MQTT 3.1.1 客户端**（2026-09-23，P19）：`pipeline run` 此前是严格一次性的——一次 `pull()` → append → transform → sink → 退出——订阅型源（MQTT）装不进去，而 `Source.pull` 的返回类型也没有「此刻没数据」与「源已耗尽」的区别。不做这个区分就有两种错法：流式源被当成耗尽（订阅一次就退出），或一次性源被反复重放（`file_source` 每次 pull 都重读整文件，循环会无限追加同一份数据）。修法是**三态 pull**（`Records` / `Quiet` / `Exhausted`）：一次性源记住"已交付"（第二次 pull 报 `Exhausted`，行为逐字节不变），流式源用 `Quiet` 表达静默；`pipeline run` 变成 `Records` → 处理并继续拉 / `Quiet` → 短睡再拉 / `Exhausted` → 退出 0 的循环。然后是 MQTT 客户端本身：**零依赖手写 MQTT 3.1.1**（依赖纪律下，"写客户端"是这笔交易便宜的一半——固定头 + 剩余长度 varint + 十余种控制包），跑在 `@net` 上；`mqtt_source` 首拉建连订阅、之后按读期限收消息（`Quiet` 语义），`mqtt_sink` 每批发布记录值；spec 增 `{"type":"mqtt","url":"mqtt://[user:pass@]host[:port]/topic"}`，**坏 url 在 apply 期拒绝**（连接器会拒绝打开的 URL，spec 不把它存下来）。**边界写成边界而不是 TODO**：订阅与发布均 QoS 0（订阅 QoS 0 ⇒ broker 按 min 降级，入站只需处理 QoS 0；防御性 PUBACK 防止 packet id 被读成 payload；出站 QoS 1 是明示的后续候选）；不做 TLS/遗嘱/保留消息/自动重连（断线 = 结构化错误）；URL 内嵌凭据会随 spec 落入 `topology.json`——受信网络或 broker 侧 ACL。顺带两处小修：stdout 汇每批 flush（被重定向的 stdout 是块缓冲的，流式 run 不会自己退出——P4 教训的重述），以及 `core/pipeline` 的 sink detail 不再对所有汇都写 "stdout sink"（对 http/mqtt 汇是说谎）。门禁 `scripts/e2e-p19-mqtt.sh`（5 腿），对端是 `scripts/mqtt_test_broker.py`——**独立第二实现按规范说话**（同 `mfs_probe.py` 的精神）：CONNECT 形状、SUBSCRIBE topic、PUBLISH 内容都在线上字节上断言；Kafka 协议面远大于 MQTT（ApiVersions/Metadata/Produce/Fetch/RecordBatch v2/压缩编解码），单独立票排后。
 
 ---

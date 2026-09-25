@@ -63,7 +63,7 @@ fn cmd_group(argv : Array[String]) -> Unit {
 /// no privileged path.
 fn group_commit(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let group = flags.require("group")
   let member = flags.require("member")
   let topic = flags.require("topic")
@@ -120,7 +120,7 @@ fn group_commit(argv : Array[String]) -> Unit {
 /// `moonflux group list --remote <control plane>`
 fn group_list(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let payload = match
     group_request(remote, @client.CMD_GROUP_DESCRIBE, b"", client_token(flags)) {
     Ok(payload) => payload
@@ -163,7 +163,7 @@ fn group_list(argv : Array[String]) -> Unit {
 /// in the group and how far each partition got.
 fn group_describe(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let name = flags.require("name")
   let token = client_token(flags)
   let payload = match

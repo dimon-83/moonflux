@@ -99,9 +99,32 @@
   节点形态（`serve` 保留为全在一体形态，向后兼容）。
 
 仍未交付（属 P4 或后续）：
-- `partition list`（多分区存储与复制均已落地——P7/P8 收口矩阵 #10；缺的只是这条命令本身）、`cluster spu list` 的
-  完整字段（磁盘/主题数等）、`consumer` 托管偏移（矩阵 #11 另一半）、
-  `profile`（配置档案）、SmartModule/算子管理命令族。
+- ~~`partition list`~~、~~`cluster spu list` 完整字段~~、~~`profile`~~ —— **已于 P23 交付**（见 §3.3.4）；
+  `consumer` 托管偏移（矩阵 #11 另一半）由 `group list/describe/commit` 承担（P9/P22）；
+  SmartModule/算子管理命令族已随 P5 交付（`operator verify/describe/list`）。
+
+#### 3.3.4 落地回填（2026-09-25，P23 达成）
+
+- `partition list --topic T --remote <sc|serve>`：平表 PARTITION/LEADER/REPLICAS/HW/LEO——
+  **纯客户端组合**（topic list 定分区数 → 每分区 LEADER + OFFSET_INFO），集群与单机（serve 自
+  P22 起应答 LEADER/OFFSET_INFO）同一实现；无 leader 显 "election pending"、不可达显 "?"。
+  顺带补齐 serve 的 `CMD_OFFSET_INFO` 臂（该命令对 serve 此前从未通过——`cluster offsets`
+  与 `group describe` 的滞后列在单机因此可用）。
+- `cluster spu list --remote SC`：SPU/ADDRESS/ROLE/LEO/HOSTED-PARTITIONS/TOPICS——注册表
+  加**客户端组合**的承载计数（逐分区 LEADER 视图里数副本归属）；**每节点磁盘字节需要节点
+  上报（协议加法段），缺位留痕而非用 leader 侧字节冒充**。
+- `profile add|list|use|remove`：命名连接档案（`$MOONFLUX_CONFIG` 或 `~/.moonflux/config`，
+  原子写、损坏即报错、未知字段拒绝）；`resolve_remote` 单点解析——显式 `--remote` 优先 →
+  current profile → 报错说明三条路。**档案不是凭据库**：携带 token 的档案在加载期按名拒绝
+  （凭据已有 --token / MOONFLUX_TOKEN 两条口径，第三条静默口径是替用户做的安全决定）。
+  模式切换型命令（produce/consume/benchmark 的本地模式）**不受档案影响**——本地/远端由
+  是否带 `--remote` 决定，档案不隐式切换。
+- `usage()` 补齐 pipeline/profile/partition 行（§3.1 的"帮助与用法"项就此关闭；`--help`
+  非错误退出仍未做，留痕）。
+- **`topic add-partition` 明确不做**（对标 §2.2.4）：加分区是放置调和事件，属元数据面的
+  扩展，不是命令面尾巴——如实标注未排期，不混入命令面收口。
+- 门禁：`scripts/e2e-p23-cli.sh`（5 腿）+ wbtest 4 条（config 往返/token 拒绝/未知字段/
+  解析优先级）。
 
 #### 3.3.3 落地回填（2026-09-22，P17 达成）
 

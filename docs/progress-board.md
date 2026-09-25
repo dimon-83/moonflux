@@ -1,8 +1,8 @@
 # moonflux 进度看板（快照）
 
-> **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–46），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–88 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
+> **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–47），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–90 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
 
-**快照日期**：2026-09-25 · 状态：**P0–P22 全部达成** · 门禁全套 **39 步绿**（native 256 / wasm-gc 168 / 算子 6）
+**快照日期**：2026-09-25 · 状态：**P0–P23 全部达成** · 门禁全套 **40 步绿**（native 260 / wasm-gc 168 / 算子 6）
 
 ---
 
@@ -35,6 +35,7 @@
 | P20 | Kafka 连接器（手写五 API + RecordBatch v2 + CRC-32C；对接生态对象而非对标参考） | 09-23 | `e2e-p20-kafka.sh`（5 腿，对端校验收到的批 CRC）+ kafka-python 开发期对拍 |
 | P21 | 细粒度授权（per-topic grants，只收窄不放宽）+ 安全审计日志（认证/拒绝/主题生命周期 JSON 行） | 09-24 | `e2e-p12-security.sh`（10 腿；腿 8–10 为新增） |
 | P22 | 单机消费组：serve 自任协调者（同一注册表/命令/围栏）+ 分区枚举 = 声明∪磁盘 + 地板接最慢消费者 | 09-25 | `e2e-p22-serve-groups.sh`（7 腿）+ `e2e-p0` 翻转的 group 腿 |
+| P23 | 命令面尾巴：`partition list` / `cluster spu list` / `profile` 档案；serve 补 OFFSET_INFO | 09-25 | `e2e-p23-cli.sh`（5 腿）+ profile wbtest 4 条 |
 
 ### 📋 待办（按优先级）
 
@@ -42,10 +43,9 @@
 | :--- | :--- | :--- | :--- |
 | 1 | **远端仓库 + CI** | **高（工程风险）** | 全部历史（12+ 笔提交）只在单机；`gh` 未安装、无 remote。**等待外部输入**：仓库地址或装好 gh 后一条命令收口 |
 | 2 | ~~Kafka 连接器~~ **已达成**（P20，09-23） | — | 五个锁定版本 API + RecordBatch v2 + CRC-32C；见决策 44。P1 尾巴的 MQTT/Kafka 两半均收口 |
-| 3 | ~~serve 的 group 协调~~ **已达成**（P22，09-25） | — | serve 自任协调者：同一注册表/命令/围栏；分区枚举 = 声明∪磁盘；见决策 46。P18 的解释性拒绝退役（`e2e-p0` group 腿翻转为协调断言） |
-| 4 | gates.sh 补 `.mbti` 新鲜度检查 | 中（卫生） | P15 漏 `moon info` 的直接教训——「generated artifacts」步只查 Python 生成器 |
-| 5 | cli-roadmap §3.3.1 过时注 | 低（卫生） | `partition list` 的理由注（「多分区存储未落地」）在 P7/P8 后已不成立；缺的只是命令本身 |
-| 6 | `partition list` / `profile` / `cluster spu list` 完整字段 | 低 | cli-roadmap 仍未交付清单 |
+| 3 | ~~serve 的 group 协调~~ **已达成**（P22，09-25）· ~~命令面尾巴（partition list / profile / spu list）~~ **已达成**（P23，09-25） | — | serve 自任协调者：同一注册表/命令/围栏（决策 46）；三条挂账命令清账（决策 47）。P18 的解释性拒绝退役（`e2e-p0` group 腿翻转为协调断言） |
+| 4 | ~~gates.sh 补 `.mbti` 新鲜度检查~~ **已达成**（2026-09-24） | — | stale `.mbti`（含已 staged 未提交的）会红全量门禁 |
+| 5 | ~~cli-roadmap §3.3.1 过时注~~ **已达成**（P23，09-25） | — | §3.3.4 回填：三条命令清账、`--help` 非错误退出留痕、`topic add-partition` 明确不做（放置调和事件） |
 | 7 | 批压缩（gzip/snappy） | 低（未立项） | feature-matrix ⏳ 行 |
 | 8 | ~~细粒度 ACL / 审计日志~~ **已达成**（P21，09-24）；剩余 SASL / 证书轮转 / 压缩 | 低（边界已留痕） | ACL 与审计见决策 45；SASL 与证书轮转仍为后续候选（决策 35） |
 | 9 | K8s 部署形态 | **最后（用户裁定）** | 弱门禁让位强门禁（roadmap §3 留痕）；真需要时先清单 + PVC 跑文件后端 |

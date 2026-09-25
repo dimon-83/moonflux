@@ -64,6 +64,7 @@
 | P17 | **基准工具**：`benchmark produce/consume/latency`（本地+远端；值头 4 字节序号做负载下完整性校验；单调 µs 时钟与 nearest-rank 直方图）；执行中修掉 accept 阻塞在 poll 之前的「每请求一 tick」税 | 六条结构腿：计数与偏移区间精确、序号头校验通过、百分位单调、e2e ⊇ produce-ack、**每主题恰好一次 `opened`**（P16 回归护栏）、超限按名拒绝且服务端存活；**吞吐/延迟数字只报告不设门禁**（决策 41） | ✅ 2026-09-22（`scripts/e2e-p17-bench.sh`，6 条腿；矩阵 #22；见决策 41） |
 | P18 | **已定位小票收口**：① 真偏移——fetch 应答按**连续偏移段**分帧（空洞/扇出重复各起新帧），本地消费游标按偏移推进（不再按条数）；② serve 命令面——topic 家族（声明入 serve 元数据库、list 为**声明∪磁盘**、delete = 失效缓存后删数据）+ group 家族结构化拒绝；执行中修掉布尔 flag 吞参数的解析 bug | p14 腿 9–11（远端/committed 跨中洞显示真偏移、本地零重复）+ p0 新腿（rf>1 拒绝且说明、声明∪自动创建、删后重产从 0 且 `evicted` 有据、group 解释性拒绝）+ wbtest（分帧 6 条、flag 解析 4 条） | ✅ 2026-09-23（见决策 42） |
 | P22 | **单机消费组**：serve 自任协调者（与控制面同一注册表/命令/围栏/清扫）+ 分区枚举 = **声明∪磁盘**（取 max(index)+1，不是数目录）+ compact/retention 地板接最慢消费者 + 成员凭据走 `client_token` 口径 | 自动建题的分区全部被份额覆盖且不重叠、接管续读无缺口、过期世代提交被拒、偏移跨 serve 重启存活、组地板挡 retention、read-only join 被拒且 root 可管理 | ✅ 2026-09-25（`scripts/e2e-p22-serve-groups.sh`，7 条腿；矩阵 #11 补 serve 证据；见决策 46） |
+| P23 | **命令面尾巴**：`partition list`（客户端组合，集群/单机同一实现）+ `cluster spu list`（承载计数）+ `profile` 配置档案（resolve_remote 单点解析，档案不是凭据库）+ serve 补 `CMD_OFFSET_INFO` 臂 | partition list 与 cluster offsets 逐分区一致（两种宿主）、自动建题的列表= max(index)+1、档案往返/优先级/移除后拒绝、spu list 承载计数正确 | ✅ 2026-09-25（`scripts/e2e-p23-cli.sh`，5 条腿；见决策 47） |
 | P19 | **连接器流式语义 + MQTT**：三态 pull（`Records`/`Quiet`/`Exhausted`）+ `pipeline run` 循环（一次性源语义不变）；手写 MQTT 3.1.1 客户端（零依赖、QoS 0 边界、会话复用）；spec 增 mqtt 源/汇 | `e2e-p19-mqtt.sh` 5 腿：订阅源流式交付且**不退出**、线上形状（CONNECT clean / SUBSCRIBE topic）被独立 Python broker 断言、汇发布被 broker 解码、坏 url **apply 期**拒绝 + 死 broker 结构化错误、一次性源一遍退出；wbtest 4 条（URL 解析 / varint 边界 / CONNECT 字节 / PUBLISH 解码含 QoS 1 形状） | ✅ 2026-09-23（见决策 43） |
 | P20 | **Kafka 连接器（对接生态对象）**：手写五个锁定版本的非 flexible API（ApiVersions v0 / Metadata v1 / ListOffsets v1 / Produce v3 / Fetch v4）+ RecordBatch v2 构建与解析 + CRC-32C 进 `core/codec`；spec 增 `kafka://` 源/汇 | `e2e-p20-kafka.sh` 5 腿：往返（file→kafka→moonflux）且源保持流式、线上形状（探针/元数据/**CRC 有效的批**/acks=1）被独立 Python broker 断言、`from=latest` 静默与缺失分区拒绝、坏 url/死 broker/旧版本 broker 三种结构化拒绝、一次性源语义不变；wbtest（URL/zigzag 边界/批往返/CRC 篡改/压缩拒绝）；**开发期用 kafka-python 3.0.11 解码我们发出的请求与自建批**（留痕于 ticket 83） | ✅ 2026-09-23（见决策 44；矩阵 #24） |
 | P21 | **细粒度授权与审计**：凭据可携带按主题 grants（read/write），`authorize_topic` 作为角色表之后的第二道门（**只收窄、不放大**）；`audit.log` 记拒绝、认证结果与主题生命周期，凭据永不入 | `e2e-p12` 腿 8–10：授权主题双向可用、未授权主题按名拒绝（码 10）、无 grants 凭据行为不变、read-only+write grant 不可放大、审计三断言 + **无凭据泄漏** grep | ✅ 2026-09-25（见决策 45） |
@@ -222,7 +223,7 @@ moonflux/
 │   ├── fs-native net-native                        # P0–P1
 │   └── wasmtime-native                             # P2：算子宿主（dlopen，无链接期依赖）
 └── apps/        # 入口包：is-main，按目标打包（算子模板 / cli / 服务端 / web-client）
-    ├── cli（produce/consume/serve/pipeline/spu/sc/topic/cluster）
+    ├── cli（produce/consume/serve/pipeline/spu/sc/topic/cluster/group/function-set/operator/benchmark/profile/partition）
     ├── client connectors transform                 # P1：客户端 SDK / 连接器 / mbel 执行器
     ├── operator-sdk operator-*                     # P2：guest SDK 与算子模块
     └── editor-kernel                               # P4：Web 编辑器的内核侧（js 目标）

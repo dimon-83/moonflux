@@ -69,18 +69,17 @@ fn usage() -> Unit {
     "  spu      --id A --listen host:port [--data-dir D] [--sc host:port]",
   )
   println("  sc       --listen host:port [--data-dir D]")
-  println("  topic    create|list|delete ...")
-  println("  group    list|describe ...")
+  println("  topic    create|list|delete --name T ...")
+  println("  group    list|describe|commit --remote host:port ...")
   println("  function-set create|get|list|delete ...")
   println("  operator verify|describe|list ...")
+  println("  pipeline plan|apply|run -f spec.json ...")
+  println("  profile  add|list|use|remove ...")
+  println("  partition list --topic T --remote host:port")
   println(
     "  benchmark produce|consume|latency --topic T [--data-dir D | --remote host:port] ...",
   )
-  println("  cluster  nodes   --remote host:port")
-  println("  cluster  status  --remote host:port")
-  println("  cluster  leader  --topic T --remote host:port")
-  println("  cluster  offsets --topic T --remote <leader>")
-  println("  cluster  compact --topic T [--partition N] --remote <leader>")
+  println("  cluster  nodes|status|leader|offsets|segments|compact|spu ...")
   cli_exit(1)
 }
 
@@ -187,7 +186,9 @@ fn main {
     text == "function-set" ||
     text == "group" ||
     text == "operator" ||
-    text == "benchmark"
+    text == "benchmark" ||
+    text == "profile" ||
+    text == "partition"
   }
 
   let start = if args.length() > 0 && is_command(args[0]) {
@@ -215,6 +216,8 @@ fn main {
     "group" => cmd_group(rest)
     "operator" => cmd_operator(rest)
     "benchmark" => cmd_benchmark(rest)
+    "profile" => cmd_profile(rest)
+    "partition" => cmd_partition(rest)
     _ => usage()
   }
 }

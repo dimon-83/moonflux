@@ -106,6 +106,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p19-mqtt.sh" scripts/e2e-p19-mqtt.sh
   step "e2e-p20-kafka.sh" scripts/e2e-p20-kafka.sh
   step "e2e-p22-serve-groups.sh" scripts/e2e-p22-serve-groups.sh
+  step "e2e-p23-cli.sh" scripts/e2e-p23-cli.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

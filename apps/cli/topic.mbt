@@ -29,7 +29,7 @@ fn cmd_topic(argv : Array[String]) -> Unit {
 /// `moonflux topic create --name T [--partitions N] [--replication-factor R] --remote host:port`
 fn topic_create(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let name = flags.require("name")
   let partitions = match flags.get("partitions") {
     Some(text) => parse_positive(text, "partitions")
@@ -64,7 +64,7 @@ fn topic_create(argv : Array[String]) -> Unit {
 /// `moonflux topic list --remote host:port`
 fn topic_list(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let payload = match
     control_call_secure(remote, @client.CMD_TOPIC_LIST, b"", peer_link(flags)) {
     Ok(payload) => payload
@@ -86,7 +86,7 @@ fn topic_list(argv : Array[String]) -> Unit {
 /// `moonflux topic delete --name T --remote host:port`
 fn topic_delete(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = flags.require("remote")
+  let remote = resolve_remote(flags)
   let name = flags.require("name")
   let wire = @client.WireTopic::{ name, partitions: 0, replication_factor: 0 }
   match
