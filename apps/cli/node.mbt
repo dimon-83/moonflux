@@ -412,13 +412,14 @@ fn cmd_spu(argv : Array[String]) -> Unit {
   // TLS on the data port (P12): replication and client traffic both
   // arrive here, and both are configured by the same flags, so a node
   // cannot end up serving one of them in the clear by accident.
-  let hub = match tls_listener(flags) {
+  let tls_context = tls_listener(flags)
+  let hub = match tls_context {
     None => ConnectionHub::new(listener, POLL_TICK_MS)
     Some(context) =>
       ConnectionHub::new(listener, POLL_TICK_MS).with_tls(context)
   }
   let auth_config = AuthConfig::load(data_dir)
-  announce_auth_mode(data_dir, auth_config)
+  announce_auth_mode(data_dir, auth_config, tls_context is Some(_))
   let handler = HubHandler::{
     on_frame: fn(frame, identity) {
       let reply = dispatch_data_frame(
@@ -433,6 +434,7 @@ fn cmd_spu(argv : Array[String]) -> Unit {
   // poll the main loop runs, so a peer's inbound handshake is served
   // between our calls rather than after all of them.
   let pump = fn() { let _ = hub.poll_once(handler, fn(_kind) { () }) }
+  let rotator = RotationWatch::for_server(flags, data_dir)
   let mut last_report : Int64 = -1L
   let mut registered = false
   let mut last_assignment_count = -1
@@ -447,6 +449,7 @@ fn cmd_spu(argv : Array[String]) -> Unit {
         if last_report < 0L ||
           now - last_report >= HOUSEKEEPING_INTERVAL_MS.to_int64() {
           last_report = now
+          rotator.check(hub, handler.auth)
           // the node-level leo stays: it is the compat field every
           // pre-P7 reader knows, and it means partition 0 of the
           // applied topic (the real truth travels per partition below)
@@ -582,7 +585,8 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   // the control plane's credential table (P12), announced like every
   // other mode this process runs in
   let control_auth = AuthConfig::load(data_dir)
-  announce_auth_mode(data_dir, control_auth)
+  let tls_context = tls_listener(flags)
+  announce_auth_mode(data_dir, control_auth, tls_context is Some(_))
   let store = file_metadata_store(data_dir)
   let placement = PlacementState::new(data_dir)
   // The control plane is served by the same hub as the data plane (P13).
@@ -592,7 +596,7 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   // a healthy node its liveness window. One thread, poll-driven, is the
   // shape the whole project runs on; the control plane was the last
   // server still doing it the other way.
-  let hub = match tls_listener(flags) {
+  let hub = match tls_context {
     None => ConnectionHub::new(listener, POLL_TICK_MS)
     Some(context) =>
       ConnectionHub::new(listener, POLL_TICK_MS)
@@ -610,8 +614,15 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     on_ready: fn() { () },
   }
   note("serving connections concurrently (one thread, poll-driven)")
+  let rotator = RotationWatch::for_server(flags, data_dir)
+  let mut last_rotation : Int64 = -1L
   while true {
     let _ = hub.poll_once(handler, fn(_kind) { () })
+    let now_rotation = now_ms()
+    if last_rotation < 0L || now_rotation - last_rotation >= 1000L {
+      last_rotation = now_rotation
+      rotator.check(hub, handler.auth)
+    }
     // consumer-group members go silent on the same clock: the sweep
     // moves their groups' generations, which is what starts the next
     // rebalance (the survivors learn it in their heartbeat reply)

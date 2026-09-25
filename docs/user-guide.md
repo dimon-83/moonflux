@@ -59,6 +59,16 @@ cli.exe consume --topic events --remote 127.0.0.1:19420
 
 **MQTT 连接器（P19）**：spec 的源/汇可以是 MQTT——`{"type":"mqtt","url":"mqtt://[user:pass@]host[:port]/topic"}`。**源是订阅**：`pipeline run` 首拉建连并订阅，之后按批把消息追加进主题再出汇——与一次性源（file/stdin/http）不同，**它不会自己退出**（流式运行，Ctrl-C 停止）；`Quiet` 时安静等待，消息到了就交付。**汇是发布**：每条记录的值发到 URL 的 topic。边界（决策 43）：订阅与发布均 QoS 0（订阅 QoS 0 时 broker 按 min 降级送出）；不做 TLS / 遗嘱 / 保留消息 / 自动重连——断线是结构化错误，重启 run 即重连；URL 内嵌凭据会随 spec 落入 `topology.json`，请用受信网络或 broker 侧 ACL。本地自测可用任意 MQTT broker（如 mosquitto：`mosquitto -p 1884`）；`scripts/e2e-p19-mqtt.sh` 里的 `scripts/mqtt_test_broker.py` 就是最小可用的测试 broker。
 
+### 无重启轮转（P24）
+
+证书过期与凭据变更不需要重启：**替换磁盘上的文件**（证书/私钥/CA，或 `<data-dir>/auth.json`），服务端在下一秒的检查中自动换入新材料。
+
+- **新连接**用新证书与新凭据表；**已建立的连接**不受影响（保留其证书与已认证身份，直到自然断开）。
+- 换坏了的文件不会宕机：服务端保留旧材料继续服务，并在 stderr 警告（启动时才是 fail-fast）。
+- 观察重载：serve/sc/spu 的日志会出现 `TLS context rotated` / `credentials reloaded` 行。
+- **认证开启但监听是明文**时，启动日志会明确警告凭据走明文——请加 `--tls-cert/--tls-key` 或在受信本地目录去掉 auth.json。
+- 免信号垫片、跨平台，与 cert-manager 等"替换挂载密钥"的轮转流程天然契合。
+
 **Kafka 连接器（P20）**：spec 的源/汇可以是 Kafka——`{"type":"kafka","url":"kafka://host:port/topic[?partition=N&from=earliest|latest|<offset>]"}`。**源是消费**：`pipeline run` 首拉建连、解析元数据与起始偏移（默认 earliest），之后每拉一轮从 broker 取一批——同样是**流式运行**（Ctrl-C 停止），空应答是安静、不是结束。**汇是发布**：每批记录打成一个 RecordBatch v2 发到 URL 的分区（默认 0），acks=1。**边界（决策 44）**：无压缩（收到压缩批会**按 codec 名**拒绝）、**无消费组**（偏移在本进程内存里，重启按 `from` 重开）、无幂等/事务、无 TLS/SASL。连上先做版本探针：broker 不支持锁定的协议版本会在**连接期**按名报错。本地自测需一个真实 broker（本仓库门禁用 `scripts/kafka_test_broker.py` 这个最小实现）。
 
 **spec 形态**（`core/spec::parse_spec` 是唯一权威）：

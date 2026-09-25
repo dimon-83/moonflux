@@ -47,7 +47,7 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   // the credential table, announced at startup so an operator never has
   // to guess which mode this broker is in
   let auth_config = AuthConfig::load(data_dir)
-  announce_auth_mode(data_dir, auth_config)
+  announce_auth_mode(data_dir, auth_config, tls_context is Some(_))
   // consumer groups (P22): a standalone broker coordinates its own —
   // the same registry the control plane runs, pointed at the same data
   // dir that holds this broker's declarations and logs. Membership is
@@ -55,6 +55,9 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   // liveness clock is the node clock (a "silent member" and a "silent
   // node" mean the same amount of time everywhere)
   let groups = GroupRegistry::new(data_dir, NODE_TIMEOUT_MS.to_int64())
+  // rotation without restart (P24): the watcher rides the same 1s
+  // housekeeping beat — stat the material, swap what changed
+  let rotator = RotationWatch::for_server(flags, data_dir)
   // the address advertised as the leader of every partition: the one
   // this broker bound (the same one its startup line prints)
   let self_addr = "\{host}:\{actual}"
@@ -97,6 +100,7 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     }
     if last_housekeeping < 0L || now - last_housekeeping >= HOUSEKEEPING_MS {
       last_housekeeping = now
+      rotator.check(hub, handler.auth)
       // every partition the broker hosts: the serve-side equivalent of
       // the cluster node's "retain each hosted partition" (P9) — which
       // for a standalone broker is whatever lives under topics/. The

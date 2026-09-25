@@ -205,6 +205,20 @@ moonflux/
     远端模式切换不受档案影响（produce/consume/benchmark 的本地模式由是否带 --remote 决定，
     档案不隐式把人切进远端）。**`topic add-partition` 明确不做**：加分区是放置调和事件，
     属元数据面扩展，不混入命令面收口。门禁：`scripts/e2e-p23-cli.sh`（5 腿）。
+48. **无重启轮转：换文件即生效**（2026-09-25，P24）：决策 35 点名的"证书轮转"收口。机制是
+    **mtime 监视**而不是 SIGHUP——循环本就有一秒的 housekeeping 节拍，一次 stat 微秒级，
+    且"磁盘上的文件被换了"正是所有密钥轮转流程（cert-manager 在内）产生的统一事件，还免了
+    信号垫片。三条规则：① **只有新连接看见新材料**——已建立的连接保留其证书与已认证的身份
+    直到自然断开（这正是轮转想要的语义：不丢任何在途会话）；在途 TLS 握手用旧上下文走完。
+    ② **坏文件保旧并大声警告**——重载失败（半写的文件、损坏的 JSON）让前一份材料继续服务，
+    stderr 说清楚；**启动才是 fail-fast 的地方**（auth.json 损坏拒绝启动），把配置笔误变成
+    宕机是最坏的交换。③ **认证开启而无 TLS 启动即警告**——"凭据走明文线上"是操作员不该
+    无意做出的决定（P12"静默的安全模式本身就是漏洞"的延伸）。**SASL 顺势给出边界声明而非
+    留白**：自有面凭据以 token-over-TLS 交付，挑战-响应机制在强制 TLS 之下不新增保护，
+    明文端口的缓解是 TLS（或干脆不要凭据的受信本地目录），不是第二套机制；Kafka 连接器侧
+    的 SASL/TLS 是互操作候选（决策 44 边界）。门禁：`scripts/e2e-p24-rotation.sh`
+    （4 腿：新 CA 可用、旧 CA 被拒、旧凭据被拒、进程存活 + SC 同机制 + 明文警告）+
+    `rotation_wbtest` 3 条（损坏返回 Err 而非杀进程、热重载换表、文件消失不炸）。
 43. **连接器学会流式：三态 pull，和一只自己写的 MQTT 3.1.1 客户端**（2026-09-23，P19）：`pipeline run` 此前是严格一次性的——一次 `pull()` → append → transform → sink → 退出——订阅型源（MQTT）装不进去，而 `Source.pull` 的返回类型也没有「此刻没数据」与「源已耗尽」的区别。不做这个区分就有两种错法：流式源被当成耗尽（订阅一次就退出），或一次性源被反复重放（`file_source` 每次 pull 都重读整文件，循环会无限追加同一份数据）。修法是**三态 pull**（`Records` / `Quiet` / `Exhausted`）：一次性源记住"已交付"（第二次 pull 报 `Exhausted`，行为逐字节不变），流式源用 `Quiet` 表达静默；`pipeline run` 变成 `Records` → 处理并继续拉 / `Quiet` → 短睡再拉 / `Exhausted` → 退出 0 的循环。然后是 MQTT 客户端本身：**零依赖手写 MQTT 3.1.1**（依赖纪律下，"写客户端"是这笔交易便宜的一半——固定头 + 剩余长度 varint + 十余种控制包），跑在 `@net` 上；`mqtt_source` 首拉建连订阅、之后按读期限收消息（`Quiet` 语义），`mqtt_sink` 每批发布记录值；spec 增 `{"type":"mqtt","url":"mqtt://[user:pass@]host[:port]/topic"}`，**坏 url 在 apply 期拒绝**（连接器会拒绝打开的 URL，spec 不把它存下来）。**边界写成边界而不是 TODO**：订阅与发布均 QoS 0（订阅 QoS 0 ⇒ broker 按 min 降级，入站只需处理 QoS 0；防御性 PUBACK 防止 packet id 被读成 payload；出站 QoS 1 是明示的后续候选）；不做 TLS/遗嘱/保留消息/自动重连（断线 = 结构化错误）；URL 内嵌凭据会随 spec 落入 `topology.json`——受信网络或 broker 侧 ACL。顺带两处小修：stdout 汇每批 flush（被重定向的 stdout 是块缓冲的，流式 run 不会自己退出——P4 教训的重述），以及 `core/pipeline` 的 sink detail 不再对所有汇都写 "stdout sink"（对 http/mqtt 汇是说谎）。门禁 `scripts/e2e-p19-mqtt.sh`（5 腿），对端是 `scripts/mqtt_test_broker.py`——**独立第二实现按规范说话**（同 `mfs_probe.py` 的精神）：CONNECT 形状、SUBSCRIBE topic、PUBLISH 内容都在线上字节上断言；Kafka 协议面远大于 MQTT（ApiVersions/Metadata/Produce/Fetch/RecordBatch v2/压缩编解码），单独立票排后。
 
 ---

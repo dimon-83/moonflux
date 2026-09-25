@@ -125,8 +125,11 @@ pub struct ConnectionHub {
   listener : @net.TcpListener
   /// Present when this listener speaks TLS (P12). The hub does not care
   /// beyond "attach a session and drive it": TLS is a property of the
-  /// transport, and the protocol above is identical.
-  tls : @tls.TlsContext?
+  /// transport, and the protocol above is identical. Mutable so the
+  /// rotation watcher (P24) can swap in a fresh context for NEW
+  /// connections — sessions already established keep the context they
+  /// were built on until they close naturally.
+  mut tls : @tls.TlsContext?
   mut conns : Array[HubConnection]
   /// the longest frame header + the largest payload this server accepts
   max_frame : Int
@@ -168,6 +171,18 @@ pub fn ConnectionHub::with_tls(
     poll_timeout_ms: self.poll_timeout_ms,
     handshake_deadline_ms: self.handshake_deadline_ms,
   }
+}
+
+///|
+/// Swaps in a rotated TLS context (P24): only connections accepted
+/// AFTER this see the new certificate; handshakes already in flight
+/// finish on the context they started with, which is exactly the
+/// semantics a cert rotation wants — nothing existing is dropped.
+pub fn ConnectionHub::rotate_tls(
+  self : ConnectionHub,
+  next : @tls.TlsContext,
+) -> Unit {
+  self.tls = Some(next)
 }
 
 ///|

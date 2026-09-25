@@ -27,36 +27,40 @@ fn auth_path(data_dir : String) -> String {
 }
 
 ///|
-fn AuthConfig::load(data_dir : String) -> AuthConfig {
+/// Reads the credential table. All parse failures come back as Err —
+/// STARTUP turns them into fail-fast (a broken auth.json must not be
+/// silently ignored), while a RELOAD (P24) keeps the previous table
+/// serving and warns. One parser, two policies at the call sites.
+fn AuthConfig::load_result(data_dir : String) -> Result[AuthConfig, String] {
   let path = auth_path(data_dir)
   match @fs.exists(path) {
     Ok(true) => ()
-    _ => return AuthConfig::{ credentials: [] }
+    _ => return Ok(AuthConfig::{ credentials: [] })
   }
   let bytes = match @fs.read_file(path) {
     Ok(bytes) => bytes
-    Err(e) => fail("read \{path}: \{e}")
+    Err(e) => return Err("read \{path}: \{e}")
   }
   let text = @utf8.decode_lossy(bytes[0:bytes.length()])
   let json = @json.parse(text[0:text.length()]) catch {
-    e => fail("corrupt \{path}: \{e}")
+    e => return Err("corrupt \{path}: \{e}")
   }
   let entries = match json.value("credentials") {
     Some(Array(entries)) => entries
-    _ => fail("corrupt \{path}: missing credentials array")
+    _ => return Err("corrupt \{path}: missing credentials array")
   }
   let credentials : Array[@auth.Credential] = []
   for entry in entries {
     let name = match entry.value("name") {
       Some(String(name)) => name
-      _ => fail("corrupt \{path}: a credential has no name")
+      _ => return Err("corrupt \{path}: a credential has no name")
     }
     let token = match entry.value("token") {
       Some(String(token)) => token
-      _ => fail("corrupt \{path}: credential \{name} has no token")
+      _ => return Err("corrupt \{path}: credential \{name} has no token")
     }
     if token.length() < 8 {
-      fail(
+      return Err(
         "\{path}: credential \{name} has a token shorter than 8 characters; short secrets are not secrets",
       )
     }
@@ -64,9 +68,9 @@ fn AuthConfig::load(data_dir : String) -> AuthConfig {
       Some(String(role)) =>
         match @auth.parse_role(role) {
           Ok(role) => role
-          Err(e) => fail("\{path}: credential \{name}: \{e}")
+          Err(e) => return Err("\{path}: credential \{name}: \{e}")
         }
-      _ => fail("corrupt \{path}: credential \{name} has no role")
+      _ => return Err("corrupt \{path}: credential \{name} has no role")
     }
     // per-topic grants (P21): optional per credential. Presence narrows
     // the credential to the granted topics. Typos fail at load — a
@@ -77,40 +81,46 @@ fn AuthConfig::load(data_dir : String) -> AuthConfig {
         for grant in grant_entries {
           let obj = match grant {
             Object(obj) => obj
-            _ => fail("corrupt \{path}: a grant must be an object")
+            _ => return Err("corrupt \{path}: a grant must be an object")
           }
           for key, _ in obj {
             let known = key == "topic" || key == "read" || key == "write"
             if !known {
-              fail(
+              return Err(
                 "\{path}: unknown grant field \"\{key}\" (topic, read, write)",
               )
             }
           }
           let topic = match obj.get("topic") {
             Some(String(topic)) => topic
-            _ => fail("corrupt \{path}: a grant has no topic")
+            _ => return Err("corrupt \{path}: a grant has no topic")
           }
           if !valid_topic(topic) {
-            fail("\{path}: grant topic \{topic} is not a valid topic name")
+            return Err(
+              "\{path}: grant topic \{topic} is not a valid topic name",
+            )
           }
           for earlier in parsed {
             if earlier.topic == topic {
-              fail("\{path}: duplicate grant for topic \{topic}")
+              return Err("\{path}: duplicate grant for topic \{topic}")
             }
           }
           let read = match obj.get("read") {
             Some(True) => true
             Some(False) => false
-            _ => fail("corrupt \{path}: grant \{topic} needs a boolean read")
+            _ =>
+              return Err("corrupt \{path}: grant \{topic} needs a boolean read")
           }
           let write = match obj.get("write") {
             Some(True) => true
             Some(False) => false
-            _ => fail("corrupt \{path}: grant \{topic} needs a boolean write")
+            _ =>
+              return Err(
+                "corrupt \{path}: grant \{topic} needs a boolean write",
+              )
           }
           if !read && !write {
-            fail(
+            return Err(
               "\{path}: grant \{topic} grants neither read nor write — delete it instead",
             )
           }
@@ -118,12 +128,22 @@ fn AuthConfig::load(data_dir : String) -> AuthConfig {
         }
         parsed
       }
-      Some(_) => fail("corrupt \{path}: grants must be an array")
+      Some(_) => return Err("corrupt \{path}: grants must be an array")
       None => []
     }
     credentials.push(@auth.Credential::{ name, token, role, grants })
   }
-  AuthConfig::{ credentials, }
+  Ok(AuthConfig::{ credentials, })
+}
+
+///|
+/// The startup read: a broken auth.json is a refusal to boot, not a
+/// silent trust-everything (the whole point of the credentials file).
+fn AuthConfig::load(data_dir : String) -> AuthConfig {
+  match AuthConfig::load_result(data_dir) {
+    Ok(config) => config
+    Err(e) => fail(e)
+  }
 }
 
 ///|
@@ -142,7 +162,11 @@ fn AuthConfig::identify(self : AuthConfig, token : String) -> @auth.Identity? {
 /// Announces the mode at startup. A node running without authentication
 /// must say so — an operator should never have to guess which mode
 /// their cluster is in.
-fn announce_auth_mode(data_dir : String, config : AuthConfig) -> Unit {
+fn announce_auth_mode(
+  data_dir : String,
+  config : AuthConfig,
+  tls_enabled : Bool,
+) -> Unit {
   if config.required() {
     let with_grants = config.credentials
       .filter(credential => credential.grants.length() > 0)
@@ -150,6 +174,13 @@ fn announce_auth_mode(data_dir : String, config : AuthConfig) -> Unit {
     note(
       "authentication ENABLED (\{config.credentials.length()} credential(s), \{with_grants} with per-topic grants, from \{auth_path(data_dir)})",
     )
+    // the loud-cleartext warning (P24): a credential check that travels
+    // unprotected is a decision an operator must never make by accident
+    if !tls_enabled {
+      note(
+        "warning: authentication is ENABLED but this listener is PLAINTEXT — credentials travel in cleartext on this port; add --tls-cert/--tls-key or remove auth.json for a trusted local dev dir",
+      )
+    }
   } else {
     note(
       "authentication DISABLED (no credentials in \{auth_path(data_dir)}): every connection is trusted — intended for local development",
@@ -161,7 +192,10 @@ fn announce_auth_mode(data_dir : String, config : AuthConfig) -> Unit {
 /// The per-connection gate: what the transport handshake needs to know
 /// about this node's authentication, plus the identity it resolved.
 struct AuthGate {
-  config : AuthConfig
+  /// mutable so the rotation watcher (P24) can install a reloaded
+  /// credential table: connections that already authenticated keep
+  /// their identity; new handshakes answer to the new table
+  mut config : AuthConfig
   /// where this node's audit lines go (P21): the handshake is where
   /// authentication outcomes are decided, so it is where they are
   /// recorded
