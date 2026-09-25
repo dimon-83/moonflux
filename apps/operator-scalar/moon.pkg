@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-scalar: the ABI v2 fixture module (wasm guest) — the
+// v1 batch exports (identity process) PLUS the two optional scalar
+// exports with two named functions. It is both a working v1 operator
+// and a scalar server, which is what the gate's coexistence leg needs.
+
+import {
+  "moonflux/apps/operator-sdk" @sdk,
+}
+
+options(
+  "is-main": true,
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_scalar_abi_version",
+        "mf_op_eval",
+      ],
+    },
+  },
+)

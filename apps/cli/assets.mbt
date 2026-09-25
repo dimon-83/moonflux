@@ -103,9 +103,12 @@ fn ClusterAsset::publish(
   }
   // the same publish-time check the node applies, run where the
   // authority is: a pipeline that cannot compile anywhere must not
-  // become the cluster's desired state
+  // become the cluster's desired state. Scalar references resolve
+  // against THIS node's registry (the control plane's data dir) — the
+  // node re-checks with its own (P26: authority is a copy, not the
+  // only guard).
   for t in spec.transforms {
-    match compile_node(store, t) {
+    match compile_node(store, self.data_dir, t) {
       Ok(_) => ()
       Err(e) => return Err(e)
     }
@@ -294,6 +297,9 @@ fn adopt_cluster_pipeline(
     let set_name = match t {
       @spec.ExprTransform(_expr, functions) => functions
       @spec.WasmTransform(_module_id, _config) => ""
+      // a scalar transform references a name in the node's scalar
+      // registry, not a function set (P26): nothing to collect here
+      @spec.ScalarTransform(_function) => ""
     }
     if set_name == "" {
       continue
@@ -315,7 +321,7 @@ fn adopt_cluster_pipeline(
   }
   // then the publish-time check, here, against what this node will run
   for t in spec.transforms {
-    match compile_node(store, t) {
+    match compile_node(store, data_dir, t) {
       Ok(_) => ()
       Err(e) => {
         report_adoption_failure(

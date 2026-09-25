@@ -2,9 +2,21 @@
 """Probe the exported ABI surface of built operator modules.
 
 Reads the WAT emitted by `moon build --target wasm --output-wat` and
-verifies that every mf_op_* export exists with the expected i32
-signature (the buffered-call ABI v1). Ground truth over binary
-guesswork: the WAT is the compiler's own lowering.
+verifies, for every built operator module:
+
+  * NO import section — a guest cannot reach the world (no WASI, no
+    clock, no random source). This is the structural fact the host's
+    purity assumption rests on, and it is checked HERE because a
+    documented structural claim that no gate checks is folklore (P26
+    closed that gap: the claim predates the check).
+  * every ABI v1 export exists with its exact i32 signature (the
+    buffered-call protocol).
+  * ABI v2 (P26) is OPTIONAL but SYMMETRIC: a module exporting one of
+    `mf_op_scalar_abi_version` / `mf_op_eval` must export BOTH, with
+    the right signatures. A v1-only module (neither) stays valid.
+
+Ground truth over binary guesswork: the WAT is the compiler's own
+lowering.
 """
 import pathlib
 import re
@@ -22,9 +34,27 @@ EXPECTED = {
     "mf_op_last_error": "() -> (i32)",
 }
 
+# ABI v2 (P26): optional as a pair — a scalar-capable module must
+# export both, a v1-only module neither.
+SCALAR_EXPECTED = {
+    "mf_op_scalar_abi_version": "() -> (i32)",
+    "mf_op_eval": "(i32, i32) -> (i32)",
+}
+
 
 def probe(wat_path: pathlib.Path) -> list:
     problems = []
+    text = wat_path.read_text()
+    # 1. the structural fact: no import section. A guest with imports
+    #    could reach the world, and every purity claim would have to be
+    #    re-earned by inspection.
+    for line in text.split("\n"):
+        if re.match(r"\s*\(import ", line):
+            problems.append(
+                f"{wat_path.name}: has an import section ({line.strip()}) — "
+                "guests must have no imports"
+            )
+            break
     # Line-based parse (moonc WAT): definitions start at column 0 as
     # "(func $name (param ...) (result ...)"; export lines are
     # '(export "name" (func $name))' and would otherwise poison a
@@ -57,24 +87,41 @@ def probe(wat_path: pathlib.Path) -> list:
         if "(param " not in buffer and "(result " not in buffer:
             continue
         def vec(kind):
-            m2 = re.search(r"\(" + kind + r"[^)]*\)", buffer)
-            return re.findall(r"i32|i64|f32|f64", m2.group(0)) if m2 else []
+            # every group of that kind, not just the first: named
+            # params come one per parenthesized group
+            groups = re.findall(r"\(" + kind + r"[^)]*\)", buffer)
+            out = []
+            for group in groups:
+                out += re.findall(r"i32|i64|f32|f64", group)
+            return out
         sigs[name] = "({}) -> ({})".format(
             ", ".join(vec("param")), ", ".join(vec("result"))
         )
         continue
-    found = []
-    for name, expected_sig in EXPECTED.items():
-        fn = export_fn.get(name)
-        if fn is None:
-            problems.append(f"{wat_path.name}: missing export {name}")
-            continue
-        sig = sigs.get(fn, "signature-not-found")
-        found.append((name, sig))
-        if sig != expected_sig:
+    def check(table, optional_pair=False):
+        present = sum(1 for name in table if name in export_fn)
+        if optional_pair and present == 0:
+            return  # v1-only module: valid, and the pair stays absent
+        if optional_pair and present != len(table):
             problems.append(
-                f"{wat_path.name}: {name} has {sig}, expected {expected_sig}"
+                f"{wat_path.name}: scalar exports are a PAIR — "
+                f"{sorted(n for n in table if n in export_fn)} present, "
+                f"{sorted(n for n in table if n not in export_fn)} missing"
             )
+        for name, expected_sig in table.items():
+            fn = export_fn.get(name)
+            if fn is None:
+                if not optional_pair:
+                    problems.append(f"{wat_path.name}: missing export {name}")
+                continue
+            sig = sigs.get(fn, "signature-not-found")
+            if sig != expected_sig:
+                problems.append(
+                    f"{wat_path.name}: {name} has {sig}, expected {expected_sig}"
+                )
+
+    check(EXPECTED)
+    check(SCALAR_EXPECTED, optional_pair=True)
     return problems
 
 

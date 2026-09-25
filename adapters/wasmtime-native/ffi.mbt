@@ -130,3 +130,29 @@ pub extern "C" fn we_fuel_left(
   err : FixedArray[Byte],
   err_len : Int,
 ) -> Int = "mf_we_fuel_left"
+
+///|
+/// ABI v2 (P26): probes the guest's scalar ABI version. Returns 1 when
+/// the module has no scalar exports (a fact, not an error); otherwise
+/// 0 with the version in `out`.
+#borrow(out, err)
+pub extern "C" fn we_scalar_version(
+  session : Int64,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_scalar_version"
+
+///|
+/// ABI v2 (P26): one scalar evaluation over the request already
+/// written at `ptr`. The guest's i64 result packs (ptr << 32) | len on
+/// success, or a negative structured error code.
+#borrow(out, err)
+pub extern "C" fn we_scalar_eval(
+  session : Int64,
+  ptr : Int,
+  len : Int,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_scalar_eval"

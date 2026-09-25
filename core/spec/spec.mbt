@@ -52,6 +52,11 @@ pub(all) enum TransformSpec {
   ExprTransform(String, String)
   /// module path + operator config (compact JSON text, "{}" = none)
   WasmTransform(String, String)
+  /// ABI v2 scalar function name (P26): resolved through the node's
+  /// scalar registry at apply time. The record's value is passed as
+  /// one string argument; richer record-to-argument mapping awaits a
+  /// real use case (the design's record-mapping boundary).
+  ScalarTransform(String)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -418,7 +423,7 @@ fn parse_body(
           reject_unknown_keys(
             path,
             t,
-            ["type", "expr", "functions", "module", "config"],
+            ["type", "expr", "functions", "module", "config", "function"],
             errors,
           )
           match t.get("type") {
@@ -500,11 +505,30 @@ fn parse_body(
                     message: "wasm transforms require a module path",
                   })
               }
+            Some(String("scalar")) =>
+              match t.get("function") {
+                Some(String(fname)) =>
+                  if fname.length() == 0 {
+                    errors.push(SpecError::{
+                      path: "\{path}.function",
+                      code: "bad-value",
+                      message: "scalar transforms need a function name",
+                    })
+                  } else {
+                    out.push(ScalarTransform(fname))
+                  }
+                _ =>
+                  errors.push(SpecError::{
+                    path: "\{path}.function",
+                    code: "missing-field",
+                    message: "scalar transforms require a function name (resolved in the node's scalar registry)",
+                  })
+              }
             Some(String(other)) =>
               errors.push(SpecError::{
                 path: "\{path}.type",
                 code: "bad-value",
-                message: "unknown transform type \"\{other}\" (supported: expr, wasm)",
+                message: "unknown transform type \"\{other}\" (supported: expr, wasm, scalar)",
               })
             _ =>
               errors.push(SpecError::{

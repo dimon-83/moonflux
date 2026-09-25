@@ -10,6 +10,9 @@
 priv enum CompiledNode {
   Mbel(@transform.Transform)
   Wasm(@operator.OperatorInstance)
+  /// A v2 scalar binding (P26): the resolved function name, the live
+  /// module instance, and the per-batch call ceiling from the registry.
+  Scalar(String, @operator.OperatorInstance, Int)
 }
 
 ///|
@@ -40,6 +43,9 @@ fn resolved_function_sets(
     let name = match t {
       @spec.ExprTransform(_expr, functions) => functions
       @spec.WasmTransform(_module_id, _config) => ""
+      // a scalar transform references a name in the node's scalar
+      // registry, not a function set (P26): nothing to collect here
+      @spec.ScalarTransform(_function) => ""
     }
     if name != "" {
       let mut seen = false
@@ -72,6 +78,7 @@ fn resolved_function_sets(
 /// set does not define is rejected at apply (README 决策 30).
 fn compile_node(
   store : MetadataStore,
+  data_dir : String,
   t : @spec.TransformSpec,
 ) -> Result[CompiledNode, String] {
   match t {
@@ -111,6 +118,49 @@ fn compile_node(
         }) {
         Ok(instance) => Ok(Wasm(instance))
         Err(e) => Err("wasm operator \"\{module_id}\": \{e}")
+      }
+    }
+    ScalarTransform(function_name) => {
+      // the binding happens HERE, at compile/apply time: the name must
+      // resolve in the node's scalar registry, and the module must
+      // actually offer the v2 scalar exports — a v1-only module is a
+      // refusal with a reason, not a runtime surprise (P26)
+      let registry = match load_scalar_registry(data_dir) {
+        Ok(registry) => registry
+        Err(e) => return Err(e)
+      }
+      let binding = match registry.lookup(function_name) {
+        Some(binding) => binding
+        None =>
+          return Err(
+            "scalar function \"\{function_name}\" is not registered in \{scalar_registry_path(data_dir)}",
+          )
+      }
+      let engine = @wasmtime.operator_engine(fn(path) {
+        match @fs.read_file(path) {
+          Ok(bytes) => Ok(bytes)
+          Err(e) => Err("\{e}")
+        }
+      })
+      match
+        (engine.instantiate)(@operator.OperatorSpec::{
+          name: function_name,
+          module_path: binding.module_path,
+          budget: binding.tier,
+          config: "{}",
+        }) {
+        Ok(instance) =>
+          match instance.scalar_eval {
+            Some(_) =>
+              Ok(Scalar(function_name, instance, binding.max_calls_per_batch))
+            None => {
+              (instance.close)()
+              Err(
+                "scalar function \"\{function_name}\": module \{binding.module_path} is ABI v1-only (no mf_op_eval export)",
+              )
+            }
+          }
+        Err(e) => Err("scalar function \"\{function_name}\": \{e}")
       }
     }
   }
@@ -156,6 +206,43 @@ fn apply_nodes(
           }
           Err(e) => return Err("wasm: \{e}")
         }
+      Scalar(name, instance, max_calls) => {
+        // v2 (P26): one evaluation per record — the record's value
+        // crosses as a string (the design's record-mapping boundary;
+        // richer mappings await a use case), and the guest's declared
+        // parameter kinds judge whether that is acceptable. Failure is
+        // fail-closed: the record does not pass, and neither does the
+        // batch behind it.
+        if current.length() > max_calls {
+          return Err(
+            "scalar \{name}: batch of \{current.length()} records exceeds its registered ceiling of \{max_calls} calls per batch",
+          )
+        }
+        let eval = match instance.scalar_eval {
+          Some(eval) => eval
+          None =>
+            return Err("scalar \{name}: the instance lost its scalar binding")
+        }
+        let out : Array[@protocol.Record] = []
+        for r in current {
+          let value = @utf8.decode_lossy(r.value[0:r.value.length()])
+          match eval(name, [@operator.SStr(value)]) {
+            Ok(@operator.SStr(transformed)) =>
+              out.push(@protocol.Record::{
+                timestamp: r.timestamp,
+                key: r.key,
+                value: @utf8.encode(transformed[0:transformed.length()]),
+                headers: r.headers,
+              })
+            Ok(_) =>
+              return Err(
+                "scalar \{name}: returned a non-string for a record value (a scalar transform maps values to values)",
+              )
+            Err(e) => return Err("scalar \{name}: \{e}")
+          }
+        }
+        current = out
+      }
     }
   }
   Ok(current)
@@ -205,7 +292,7 @@ fn load_chain_from_topology(
   let store = file_metadata_store(data_dir)
   let chain : Array[CompiledNode] = []
   for t in applied.spec.transforms {
-    match compile_node(store, t) {
+    match compile_node(store, data_dir, t) {
       Ok(node) => chain.push(node)
       Err(e) => return Err(e)
     }

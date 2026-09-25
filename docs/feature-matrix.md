@@ -57,7 +57,7 @@
 | wasm 算子沙箱（ABI v1，guest 无导入，fail-closed） | ✅ | `scripts/crosscheck-operators.sh`（native vs wasm 字节级一致） |
 | 双预算（记录数 + fuel；墙钟仅观测） | ✅ | `core/operator` tier + 宿主 fuel；`operator verify/describe` |
 | 算子管理命令面（verify/describe/list） | ✅ | `scripts/e2e-p5-operator.sh` |
-| 不可信标量函数进沙箱（ABI v2 标量调用） | ⏳ | **只设计未实现**：`docs/operator-abi-v2-scalar.md`；触发条件=多租户提交函数的需求 |
+| 不可信标量函数进沙箱（ABI v2 标量调用，P26） | ✅ | 可选成对导出 `mf_op_scalar_abi_version`/`mf_op_eval`（返回指针、长度沿 v1 的 output_len）；节点注册表 `scalar-functions.json` + `{"type":"scalar"}` 变换；参数类型显式声明；燃料每调用、fail-closed；**与 mbel `upper()` 逐字节对拍**；`scripts/e2e-p26-scalar.sh`（6 腿）+ 设计稿 §7 落地实录（决策 50） |
 | 有状态算子 / 算子间 shuffle | ⏳ | 未立项（报告 §5 范围外） |
 
 ## 5. 接入与协议

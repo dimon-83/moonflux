@@ -118,6 +118,10 @@ pub(all) suberror OperatorError {
   GuestTrap(String)
   /// A payload did not decode as a batch frame.
   BadEnvelope(String)
+  /// A v2 scalar evaluation failed inside the guest (the function
+  /// refused its arguments or its own logic errored). The record does
+  /// not pass — the scalar path is fail-closed like the batch path.
+  EvalError(String)
 } derive(Debug, Eq)
 
 ///|
@@ -127,6 +131,7 @@ pub impl Show for OperatorError with fn output(self, logger) {
     AbiVersionMismatch(v) => logger.write_string("AbiVersionMismatch(\{v})")
     BudgetExceeded(msg) => logger.write_string("BudgetExceeded(\{msg})")
     GuestTrap(msg) => logger.write_string("GuestTrap(\{msg})")
+    EvalError(msg) => logger.write_string("EvalError(\{msg})")
     BadEnvelope(msg) => logger.write_string("BadEnvelope(\{msg})")
   }
 }
@@ -233,6 +238,13 @@ pub(all) struct OperatorInstance {
   /// engine has no clock and no need for one). The kernel only reports
   /// this; it never gates on it (README 决策 33).
   last_call_ms : () -> Int?
+  /// The v2 scalar entry (P26): present only when the module exports
+  /// `mf_op_scalar_abi_version` + `mf_op_eval`. A v1-only module keeps
+  /// None — its absence is a fact about the module, not an error.
+  scalar_eval : ((String, Array[ScalarValue]) -> Result[
+    ScalarValue,
+    OperatorError,
+  ])?
   close : () -> Unit
 }
 
@@ -248,6 +260,7 @@ pub fn passthrough_engine() -> OperatorEngine {
         Ok(_) => ()
       }
       Ok(OperatorInstance::{
+        scalar_eval: None,
         abi_version: ABI_VERSION,
         process: fn(records) {
           match check_budget(spec.budget, records.length()) {
@@ -284,6 +297,7 @@ pub fn fn_engine(
         Ok(_) => ()
       }
       Ok(OperatorInstance::{
+        scalar_eval: None,
         abi_version: ABI_VERSION,
         process: fn(records) {
           match check_budget(spec.budget, records.length()) {

@@ -69,6 +69,27 @@ cli.exe consume --topic events --remote 127.0.0.1:19420
 - **认证开启但监听是明文**时，启动日志会明确警告凭据走明文——请加 `--tls-cert/--tls-key` 或在受信本地目录去掉 auth.json。
 - 免信号垫片、跨平台，与 cert-manager 等"替换挂载密钥"的轮转流程天然契合。
 
+### 沙箱标量函数（ABI v2，P26）
+
+"用户提交的标量函数"跑在 WASM 沙箱里：模块导出可选的 v2 标量入口，节点注册表把函数名绑到模块，spec 用 `{"type":"scalar","function":"<名>"}` 变换逐记录调用。
+
+```bash
+# 1. 节点注册表：<data-dir>/scalar-functions.json
+cat > .moonflux-data/scalar-functions.json <<'JSON'
+{"revision":1,"functions":[
+  {"name":"shout","module":"/path/operator-scalar.wasm","tier":"user","max_calls_per_batch":100000}
+]}
+JSON
+
+# 2. spec 里引用函数名（apply 时解析绑定；未注册名或 v1-only 模块在这里被拒）
+#    transforms: [{"type":"scalar","function":"shout"}]
+```
+
+- 记录值以**字符串**传给函数；函数**显式声明参数类型**（string/number/bool/array），类型不符是结构化拒绝（fail-closed，无半批输出）。
+- **每批调用上限**按每次链调用拿到的记录数计（`pipeline run` 整批；serve 取数路径逐条目——上限在那条路上恒不触发，真正的界是每次一条）。
+- sandbox 无导入（无时钟/无 IO/无随机）：确定性是结构事实，探针按 WAT 真相源查。
+- 与 mbel 的差异：mbel 函数按调用点推断类型、属**可信资产**；标量函数必须**显式声明**类型，属**不受信输入**。两条路径的输出可互为参照（门禁里有逐字节对拍）。
+
 **Kafka 连接器（P20）**：spec 的源/汇可以是 Kafka——`{"type":"kafka","url":"kafka://host:port/topic[?partition=N&from=earliest|latest|<offset>]"}`。**源是消费**：`pipeline run` 首拉建连、解析元数据与起始偏移（默认 earliest），之后每拉一轮从 broker 取一批——同样是**流式运行**（Ctrl-C 停止），空应答是安静、不是结束。**汇是发布**：每批记录打成一个 RecordBatch v2 发到 URL 的分区（默认 0），acks=1。**压缩（P25）**：产生端可在 URL 加 `?compression=gzip`（RecordBatch 以 gzip 容器压缩，真实 broker 生产者的默认形态）；读取端按批的压缩列行动——gzip 批解压后解析，snappy/lz4/zstd **仍按 codec 名拒绝**，未知 codec 在 apply 期拒绝。解压输出以单一批预算为上界（炸弹防护）。**边界（决策 44）**：**无消费组**（偏移在本进程内存里，重启按 `from` 重开）、无幂等/事务、无 TLS/SASL。连上先做版本探针：broker 不支持锁定的协议版本会在**连接期**按名报错。本地自测需一个真实 broker（本仓库门禁用 `scripts/kafka_test_broker.py` 这个最小实现）。
 
 **spec 形态**（`core/spec::parse_spec` 是唯一权威）：

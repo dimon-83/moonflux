@@ -53,6 +53,7 @@ pub(all) struct TopicSpec {
 pub(all) enum TransformSpec {
   ExprTransform(String, String)
   WasmTransform(String, String)
+  ScalarTransform(String)
 } derive(Eq, Show, @debug.Debug)
 
 // Type aliases

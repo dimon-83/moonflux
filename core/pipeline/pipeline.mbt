@@ -71,6 +71,7 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
         }
       WasmTransform(module_id, config) =>
         ("wasm", "wasm operator: \{module_id} config=\{config}")
+      ScalarTransform(name) => ("wasm", "scalar fn: \{name} (v2, sandboxed)")
     }
     processes.push(Process::{
       name: "transform-\{i}",

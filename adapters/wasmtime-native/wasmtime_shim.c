@@ -97,6 +97,11 @@ typedef struct mf_session {
   wasmtime_func_t f_last_status;
   wasmtime_func_t f_last_error;
   wasmtime_func_t f_start;
+  /* ABI v2 scalar exports (P26): OPTIONAL — a v1-only module has
+     has_scalar = 0 and keeps working exactly as before. */
+  int has_scalar;
+  wasmtime_func_t f_scalar_version;
+  wasmtime_func_t f_scalar_eval;
 } mf_session_t;
 
 static wasmtime_context_t *mf_store_context(wasmtime_store_t *store) {
@@ -322,6 +327,25 @@ void *mf_we_session_new(const uint8_t *wasm, int wasm_len, char *err,
     mf_we_session_free(s);
     return NULL;
   }
+  wasmtime_extern_t ver_item;
+  wasmtime_extern_t eval_item;
+  /* ABI v2 scalar exports: optional by design. A missing export
+     leaves has_scalar = 0 (a v1-only module); a PRESENT export must
+     be a function. */
+  s->has_scalar = 0;
+  if (mf_get_extern(ctx, &s->instance, "mf_op_scalar_abi_version",
+                    &ver_item) &&
+      mf_get_extern(ctx, &s->instance, "mf_op_eval", &eval_item)) {
+    if (ver_item.kind != WASMTIME_EXTERN_FUNC ||
+        eval_item.kind != WASMTIME_EXTERN_FUNC) {
+      snprintf(err, err_len, "scalar exports are present but not functions");
+      mf_we_session_free(s);
+      return NULL;
+    }
+    s->f_scalar_version = ver_item.of.func;
+    s->f_scalar_eval = eval_item.of.func;
+    s->has_scalar = 1;
+  }
   /* the linear memory export */
   wasmtime_extern_t mem_item;
   if (!mf_get_extern(ctx, &s->instance, "memory", &mem_item)) {
@@ -497,6 +521,58 @@ int mf_we_fuel_left(void *session, int64_t *out, char *err, int err_len) {
 int mf_we_output_len(void *session, int32_t *out, char *err, int err_len) {
   mf_session_t *s = (mf_session_t *)session;
   return mf_call_0_1(s, &s->f_output_len, out, err, err_len);
+}
+
+/* ABI v2 (P26): the guest's scalar ABI version, or 0 when the module
+   offers no scalar exports (out is untouched). */
+int mf_we_scalar_version(void *session, int32_t *out, char *err,
+                         int err_len) {
+  mf_session_t *s = (mf_session_t *)session;
+  if (!s->has_scalar) {
+    return 1; /* no scalar exports: not an error, a fact */
+  }
+  return mf_call_0_1(s, &s->f_scalar_version, out, err, err_len);
+}
+
+/* ABI v2 (P26): one scalar evaluation. The caller installs fuel
+   first; the guest returns the ANSWER BUFFER's pointer (a guest Bytes,
+   lowered to i32 exactly like mf_op_process's return), the length
+   rides the existing mf_op_output_len, and failures ride
+   mf_op_last_status/last_error. Returns -3 when the module has no
+   scalar exports (a caller bug, not a guest failure). */
+int mf_we_scalar_eval(void *session, int32_t ptr, int32_t len,
+                      int32_t *out, char *err, int err_len) {
+  mf_session_t *s = (mf_session_t *)session;
+  if (!s->has_scalar) {
+    snprintf(err, err_len, "module has no scalar exports");
+    return -3;
+  }
+  mf_func_call_t func_call = (mf_func_call_t)mf_sym("wasmtime_func_call");
+  if (!func_call) {
+    snprintf(err, err_len,
+             "cannot resolve wasmtime symbols (set MOONFLUX_WASMTIME_LIB)");
+    return -1;
+  }
+  wasmtime_context_t *ctx = mf_store_context(s->store);
+  wasmtime_val_t args[2];
+  args[0].kind = WASMTIME_I32;
+  args[0].of.i32 = ptr;
+  args[1].kind = WASMTIME_I32;
+  args[1].of.i32 = len;
+  wasmtime_val_t results[1];
+  wasm_trap_t *trap = NULL;
+  wasmtime_error_t *e = func_call(ctx, &s->f_scalar_eval, args, 2, results,
+                                  1, &trap);
+  if (e != NULL) {
+    mf_write_error(e, err, err_len);
+    return -1;
+  }
+  if (trap != NULL) {
+    mf_write_trap(trap, err, err_len);
+    return -2;
+  }
+  *out = results[0].of.i32;
+  return 0;
 }
 
 int mf_we_last_status(void *session, int32_t *out, char *err, int err_len) {

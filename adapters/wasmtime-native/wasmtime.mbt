@@ -107,12 +107,30 @@ pub fn operator_engine(
           }
         }
       }
+      // ABI v2 scalar exports (P26): optional. Present means the
+      // version must be one this host speaks; absent means the module
+      // is v1-only and its scalar_eval stays None.
+      let scalar = match scalar_version(session, err) {
+        None => None
+        Some(version) =>
+          if version == @operator.SCALAR_ABI_VERSION {
+            Some(fn(name, args) { scalar_eval_call(session, name, args, err) })
+          } else {
+            we_session_free(session.handle)
+            return Err(
+              @operator.InvalidSpec(
+                "scalar ABI version \{version} (host speaks \{@operator.SCALAR_ABI_VERSION})",
+              ),
+            )
+          }
+      }
       // The wall clock lives here, in the adapter, and it is used for
       // *reporting* only: the enforceable budget is fuel, because fuel
       // is reproducible and a clock is not (README 决策 33).
       let last_ms : Array[Int?] = [None]
       Ok(@operator.OperatorInstance::{
         abi_version: out[0],
+        scalar_eval: scalar,
         process: fn(records) {
           let started = @env.now().reinterpret_as_int64()
           let result = process_batch(session, records)

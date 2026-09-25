@@ -220,7 +220,7 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
   // such a bad rule
   let store = file_metadata_store(data_dir)
   for t in spec.transforms {
-    match compile_node(store, t) {
+    match compile_node(store, data_dir, t) {
       Ok(_) => ()
       Err(e) => fail("transform rejected: \{e}")
     }
@@ -276,7 +276,7 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   let store = file_metadata_store(data_dir)
   let chain : Array[CompiledNode] = []
   for t in applied.spec.transforms {
-    match compile_node(store, t) {
+    match compile_node(store, data_dir, t) {
       Ok(node) => chain.push(node)
       Err(e) => fail("transform rejected: \{e}")
     }
@@ -324,20 +324,24 @@ fn pipeline_run(argv : Array[String]) -> Unit {
             Ok(base) => base
             Err(e) => fail("append: \{e}")
           }
-          // dynamic rules on the consumption path, then the sink
+          // dynamic rules on the consumption path, then the sink.
+          // The chain runs over the WHOLE pulled batch: mbel nodes
+          // filter per record, and batch-shaped nodes (wasm operators,
+          // v2 scalar ceilings) get the batch they were designed for —
+          // a per-record loop used to hand a wasm operator envelopes
+          // of one record and made a per-batch ceiling unenforceable
+          // (P26 found both by writing the ceiling's gate).
           let entries = match log.read(base, records.length()) {
             Ok(entries) => entries
             Err(e) => fail("read: \{e}")
           }
-          let out_records : Array[@protocol.Record] = []
+          let pulled : Array[@protocol.Record] = []
           for entry in entries {
-            match apply_nodes(chain, [entry.record]) {
-              Ok(out_one) =>
-                for r in out_one {
-                  out_records.push(r)
-                }
-              Err(e) => fail("transform: \{e}")
-            }
+            pulled.push(entry.record)
+          }
+          let out_records = match apply_nodes(chain, pulled) {
+            Ok(out) => out
+            Err(e) => fail("transform: \{e}")
           }
           match (sink.flush)(out_records) {
             Ok(_) => ()

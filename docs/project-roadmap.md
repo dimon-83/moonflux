@@ -36,6 +36,7 @@
 | **P23** | **命令面尾巴** | `partition list`（客户端组合，集群/单机同一实现）+ `cluster spu list`（承载计数；磁盘字节需节点上报留痕）+ `profile` 配置档案（resolve_remote 单点解析、档案不是凭据库）+ serve 补 `CMD_OFFSET_INFO` 臂 + usage() 补齐 | ✅ 达成（2026-09-25）：`scripts/e2e-p23-cli.sh` 5 条腿全绿——partition list 与 cluster offsets 逐分区一致（两种宿主）、自动建题列表 = max(index)+1、档案往返/优先级/移除拒绝、spu list 承载计数正确；`topic add-partition` 明确不做（放置调和事件，非命令面尾巴）（决策 47） |
 | **P24** | **无重启轮转** | TLS 上下文与 auth.json 按 mtime 监视热重载（新连接用新材料、在途不受影响、坏文件保旧警告）+ 明文+认证启动警告 + SASL 边界声明 | ✅ 达成（2026-09-25）：`scripts/e2e-p24-rotation.sh` 4 腿全绿——轮转后新 CA 可用/旧 CA 被拒/旧凭据被拒/进程存活、SC 同机制、明文警告；`rotation_wbtest` 3 条（决策 48） |
 | **P25** | **批压缩** | DEFLATE 进 `core/codec`（inflate 三块型 + deflate 固定 Huffman/LZ77 + zlib/gzip 容器 + 炸弹上界，外部锚 = Python zlib 金标语料）；Kafka 连接器 gzip 双向 + 按名拒绝；自有协议压缩保持显式边界 | ✅ 达成（2026-09-25）：`scripts/e2e-p25-compression.sh` 4 腿全绿（双向外部锚定 + 默认不变 + apply 期拒绝）+ codec wbtest 9 条；执行中自抓三个自身 bug（漏 BTYPE、块头次序、容器校验和覆盖错对象）（决策 49） |
+| **P26** | **ABI v2 标量调用** | 设计稿落地（可选成对导出、返回指针 + v1 的 output_len/last_status 拆分、guest SDK 显式参数类型、节点注册表 apply 绑定、`{"type":"scalar"}` 变换）；链改整批应用（逐记录调用曾让批算子只拿单条批、上限永不触发）；探针补无导入段检查 | ✅ 达成（2026-09-25）：`scripts/e2e-p26-scalar.sh` 6 腿全绿（与 mbel 逐字节对拍、四类结构化拒绝）+ 真 wasmtime wbtest 9 条；设计稿 §7 落地实录（决策 50） |
 > **为什么 Native 先行**（2026-09-15 修订，README 决策 3）：数据源（Source）与数据汇（Sink）需要**独立的外部读写能力**——网络 / 文件 / 协议 / MQ / 硬件直采，**WASM 沙箱不能自主 IO**；连接器与数据面是第一梯队能力，因此承载它们的 Native 先行。WASM 保留为"数据路径内算子沙箱"（P2 落地）；**内核全后端可编译的纪律由 CI 矩阵从第一天保持**。
 >
 > **K8s 与阶段的关系**：P0–P3 **不依赖 K8s**，全部在本地单机/多进程推进与验收；K8s 仅是部署目标之一，只贡献元数据后端（CRD）与生命周期自动化。数据面、复制、选主、元数据调和是**任何部署模型都需要**的架构能力（AGENTS.md §1.2）。
@@ -71,6 +72,8 @@
 - [x] P23 达成：命令面尾巴——`partition list` / `cluster spu list` / `profile` 三条挂账命令清账，serve 补 `CMD_OFFSET_INFO` 臂（`cluster offsets` 对 serve 此前从未通过）；`scripts/e2e-p23-cli.sh` 5 腿全绿（2026-09-25，决策 47）
 - [x] P24 达成：无重启轮转——TLS 上下文与凭据表 mtime 监视热重载（换文件即生效、坏文件保旧、明文+认证启动警告），SASL 给出边界声明；`scripts/e2e-p24-rotation.sh` 4 腿全绿（2026-09-25，决策 48）
 - [x] P25 达成：批压缩——DEFLATE 编解码进 core/codec（Python zlib 三容器金标语料锚定 + 炸弹上界）+ Kafka 连接器 gzip 双向；`scripts/e2e-p25-compression.sh` 4 腿全绿（2026-09-25，决策 49）
+- [x] P26 达成：ABI v2 标量调用（触发条件成立）——沙箱标量函数端到端、与 mbel 逐字节对拍、四类结构化拒绝；顺带修链的整批应用与探针的无导入段检查（2026-09-25，决策 50）
+- [x] 远端仓库 + CI 达成（2026-09-25，用户提供 `github.com/dimon-83/moonflux`）：全历史推送；CI = fast 门禁随推送（ubuntu）+ 全量门禁手动触发（macos runner，E2E 脚本为 BSD 惯用法）
 - [x] 生成项目规约 [`AGENTS.md`](../AGENTS.md)（2026-09-15）；随代码结构落地更新（2026-09-16 补 §10 文档规范）
 
 ## 3. 待办与排期

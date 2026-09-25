@@ -190,3 +190,142 @@ pub fn uppercase() -> GuestOperator {
     },
   }
 }
+
+///|
+/// Passthrough operator: every record through, unchanged (the batch
+/// face of a scalar-focused module).
+pub fn passthrough() -> GuestOperator {
+  GuestOperator::{ name: "passthrough", process: fn(records) { Ok(records) } }
+}
+
+///|
+/// ASCII-scope uppercase, mirroring mbel's upper() exactly — the
+/// crosscheck's byte-identity claim covers the same character range.
+pub fn uppercase_str(text : String) -> String {
+  let sb = StringBuilder::new()
+  for ch in text {
+    let code = ch.to_int()
+    if code >= 97 && code <= 122 {
+      sb.write_char((code - 32).unsafe_to_char())
+    } else {
+      sb.write_char(ch)
+    }
+  }
+  sb.to_string()
+}
+
+///|
+/// ABI entry: the scalar ABI version this SDK implements (drives
+/// mf_op_scalar_abi_version).
+pub fn scalar_abi_version() -> Int {
+  @operator.SCALAR_ABI_VERSION
+}
+
+// ---------------------------------------------------------------------------
+// ABI v2 scalar calls (P26): a guest may serve named scalar functions
+// over `mf_op_eval`. The request arrives as JSON ({"fn":name,"args":[...]}),
+// the answer leaves as JSON ({"v":...}); failures ride the same
+// last_status/last_error channel the batch path uses, so a failed
+// evaluation never returns a partial answer. Parameter kinds are
+// DECLARED here and checked explicitly — unlike mbel's call-site
+// inference, a sandbox function states what it accepts (the design's
+// open question 5).
+
+///|
+/// The parameter kinds a scalar function declares.
+pub(all) enum ScalarKind {
+  KStr
+  KNum
+  KBool
+  KArr
+} derive(Debug, Eq)
+
+///|
+/// One sandboxed scalar function: its name, its declared parameter
+/// kinds, and the pure evaluation itself. No IO, no clock — the guest
+/// has no imports, so determinism is structural.
+pub(all) struct GuestScalarFn {
+  name : String
+  params : Array[ScalarKind]
+  eval : (Array[@operator.ScalarValue]) -> Result[@operator.ScalarValue, String]
+}
+
+///|
+fn scalar_kind_ok(kind : ScalarKind, v : @operator.ScalarValue) -> Bool {
+  match (kind, v) {
+    (KStr, SStr(_)) => true
+    (KNum, SNum(_)) => true
+    (KBool, SBool(_)) => true
+    (KArr, SArr(_)) => true
+    (_, _) => false
+  }
+}
+
+///|
+fn scalar_kind_name(kind : ScalarKind) -> String {
+  match kind {
+    KStr => "string"
+    KNum => "number"
+    KBool => "bool"
+    KArr => "array"
+  }
+}
+
+///|
+/// Runs one scalar evaluation over the host's request bytes. The
+/// answer becomes the buffered output (read back through
+/// mf_op_output_len, exactly like a batch); a failure sets
+/// last_status/last_error and leaves the output empty.
+pub fn run_scalar(fns : Array[GuestScalarFn], payload : Bytes) -> Bytes {
+  match run_scalar_inner(fns, payload) {
+    Ok(answer) => {
+      call_state.output_buf = answer
+      call_state.last_status = 0
+      call_state.output_buf
+    }
+    Err(e) => {
+      call_state.output_buf = b""
+      call_state.last_status = 1
+      call_state.last_error = e
+      b""
+    }
+  }
+}
+
+///|
+fn run_scalar_inner(
+  fns : Array[GuestScalarFn],
+  payload : Bytes,
+) -> Result[Bytes, String] {
+  let (name, args) = match @operator.decode_scalar_request(payload) {
+    Ok(parsed) => parsed
+    Err(e) => return Err("request: \{e}")
+  }
+  let mut found : GuestScalarFn? = None
+  for f in fns {
+    if f.name == name {
+      found = Some(f)
+    }
+  }
+  let f = match found {
+    Some(f) => f
+    None => return Err("no scalar function '\{name}'")
+  }
+  if f.params.length() != args.length() {
+    return Err(
+      "\{name} expects \{f.params.length()} argument(s), got \{args.length()}",
+    )
+  }
+  for i = 0; i < f.params.length(); i = i + 1 {
+    if !scalar_kind_ok(f.params[i], args[i]) {
+      return Err(
+        "\{name}'s argument \{i} must be \{scalar_kind_name(f.params[i])}",
+      )
+    }
+  }
+  let value = match (f.eval)(args) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  Ok(@operator.encode_scalar_answer(value))
+}

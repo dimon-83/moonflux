@@ -162,3 +162,38 @@ test "the wall-clock hint reports, it does not enforce" {
   assert_eq(fuel_per_call(Tenant), fuel_per_call(Tenant))
   assert_true(fuel_per_call(Internal) > fuel_per_call(Tenant))
 }
+
+///|
+test "scalar request/answer round trip with the declared kind boundary" {
+  let request = encode_scalar_request("tax", [SNum(12.5), SNum(0.2)])
+  let (name, args) = match decode_scalar_request(request) {
+    Ok(parsed) => parsed
+    Err(e) => abort("decode: \{e}")
+  }
+  assert_eq(name, "tax")
+  assert_eq(args.length(), 2)
+  assert_true(args[0] is SNum(_))
+  // every scalar kind round-trips
+  let answer = encode_scalar_answer(
+    SArr([SStr("mixed"), SNum(1.5), SBool(true)]),
+  )
+  match decode_scalar_answer(answer) {
+    Ok(SArr(items)) => {
+      assert_eq(items.length(), 3)
+      assert_true(items[0] is SStr(_))
+      assert_true(items[2] is SBool(_))
+    }
+    Ok(_) => abort("the answer lost its array shape")
+    Err(e) => abort("decode answer: \{e}")
+  }
+  // objects are refused, not smuggled (the design's mapping boundary)
+  match decode_scalar_request(@utf8.encode("{\"fn\":\"x\",\"args\":[{}]}")) {
+    Err(e) => assert_true(e.contains("object"))
+    Ok(_) => abort("an object argument was accepted")
+  }
+  // a request without a name is refused
+  match decode_scalar_request(@utf8.encode("{\"args\":[]}")) {
+    Err(e) => assert_true(e.contains("fn"))
+    Ok(_) => abort("a nameless request was accepted")
+  }
+}

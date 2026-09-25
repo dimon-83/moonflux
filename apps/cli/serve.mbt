@@ -1165,7 +1165,7 @@ fn dispatch_apply(
   // function set it references resolved from this node's store
   let store = file_metadata_store(data_dir)
   for t in spec.transforms {
-    match compile_node(store, t) {
+    match compile_node(store, data_dir, t) {
       Ok(_) => ()
       Err(e) => return Err((@client.ERR_TRANSFORM, e))
     }

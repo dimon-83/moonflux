@@ -2,6 +2,8 @@
 package "moonflux/apps/operator-sdk"
 
 import {
+  "moonbitlang/core/debug",
+  "moonflux/core/operator",
   "moonflux/core/protocol",
 }
 
@@ -30,11 +32,19 @@ pub fn output_len() -> Int
 
 pub fn parse_config(Bytes) -> Result[Map[String, Json], String]
 
+pub fn passthrough() -> GuestOperator
+
 pub fn run_buffered(GuestOperator, Bytes) -> Int
 
 pub fn run_call(GuestOperator, Bytes) -> Result[Bytes, String]
 
+pub fn run_scalar(Array[GuestScalarFn], Bytes) -> Bytes
+
+pub fn scalar_abi_version() -> Int
+
 pub fn uppercase() -> GuestOperator
+
+pub fn uppercase_str(String) -> String
 
 // Errors
 
@@ -43,6 +53,19 @@ pub(all) struct GuestOperator {
   name : String
   process : (Array[@protocol.Record]) -> Result[Array[@protocol.Record], String]
 }
+
+pub(all) struct GuestScalarFn {
+  name : String
+  params : Array[ScalarKind]
+  eval : (Array[@operator.ScalarValue]) -> Result[@operator.ScalarValue, String]
+}
+
+pub(all) enum ScalarKind {
+  KStr
+  KNum
+  KBool
+  KArr
+} derive(Eq, @debug.Debug)
 
 // Type aliases
 

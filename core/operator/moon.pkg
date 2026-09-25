@@ -3,6 +3,8 @@
 // computation; compiles for every target.
 
 import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
   "moonflux/core/protocol",
 }
 
