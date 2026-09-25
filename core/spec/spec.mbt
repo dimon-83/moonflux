@@ -129,6 +129,14 @@ fn kafka_url_ok(url : String) -> Bool {
                     Err(_) => return false
                   }
               }
+            // compression (P25): gzip is the one codec both this
+            // platform and real brokers ship; unknown codecs are
+            // refused at apply time, not discovered at run time
+            "compression" =>
+              match value.to_owned() {
+                "gzip" | "none" => ()
+                _ => return false
+              }
             _ => return false
           }
         None => return false

@@ -338,7 +338,7 @@ test "a built batch parses back with offsets, keys, and timestamps" {
     krec("", "second", 1010L),
     krec("k3", "third", 1020L),
   ]
-  let batch = build_batch(records, 1000L)
+  let batch = build_batch(records, 1000L, false)
   // header shape: magic 2 at offset 16, CRC at 17, attributes at 21
   assert_eq(batch[16], 2)
   let parsed : Array[KafkaRecord] = []
@@ -356,7 +356,7 @@ test "a built batch parses back with offsets, keys, and timestamps" {
   assert_eq(parsed[1].record.value, @utf8.encode("second"))
   // empty batches are legal on the wire and parse to nothing
   let empty : Array[KafkaRecord] = []
-  match parse_batches(build_batch([], 5L), empty) {
+  match parse_batches(build_batch([], 5L, false), empty) {
     Ok(_) => assert_eq(empty.length(), 0)
     Err(e) => abort("empty batch failed: \{e}")
   }
@@ -364,7 +364,7 @@ test "a built batch parses back with offsets, keys, and timestamps" {
 
 ///|
 test "a corrupted batch fails its CRC instead of parsing" {
-  let batch = build_batch([krec("", "payload", 1L)], 1L)
+  let batch = build_batch([krec("", "payload", 1L)], 1L, false)
   // flip the last byte: inside the CRC-covered region, and never
   // already 0xFF (an earlier draft patched a baseSequence -1 and the
   // "corruption" was a no-op — a test that cannot fail is not a test)
@@ -377,20 +377,65 @@ test "a corrupted batch fails its CRC instead of parsing" {
 }
 
 ///|
-test "a compressed batch is refused by codec name" {
-  let batch = build_batch([krec("", "payload", 1L)], 1L)
+test "a batch that lies about gzip is refused at the container" {
+  let batch = build_batch([krec("", "payload", 1L)], 1L, false)
   // set the gzip codec bit in the attributes (covered offset 21) and
-  // recompute the CRC, so the ONLY objection left is the codec
+  // recompute the CRC, so the ONLY objection left is that the records
+  // section is not actually a compressed container
   let with_codec = patch_byte(batch, 22, 1)
   let covered = with_codec[21:with_codec.length()]
   let crc = @codec.crc32c_view(covered)
   let consistent = patch_u32(with_codec, 17, crc)
   let out : Array[KafkaRecord] = []
   match parse_batches(consistent, out) {
-    Ok(_) => abort("a compressed batch parsed")
+    Ok(_) => abort("a lying compressed batch parsed")
+    Err(e) => assert_true(e.contains("failed to decompress"))
+  }
+}
+
+///|
+test "a snappy batch is refused by codec name" {
+  let batch = build_batch([krec("", "payload", 1L)], 1L, false)
+  let with_codec = patch_byte(batch, 22, 2)
+  let covered = with_codec[21:with_codec.length()]
+  let crc = @codec.crc32c_view(covered)
+  let consistent = patch_u32(with_codec, 17, crc)
+  let out : Array[KafkaRecord] = []
+  match parse_batches(consistent, out) {
+    Ok(_) => abort("a snappy batch parsed")
     Err(e) => {
-      assert_true(e.contains("gzip"))
+      assert_true(e.contains("snappy"))
       assert_true(e.contains("not supported"))
     }
+  }
+}
+
+///|
+test "a gzip batch round trips through build and parse" {
+  let batch = build_batch(
+    [krec("key-one", "payload-one", 1L), krec("", "payload-two", 2L)],
+    1L,
+    true,
+  )
+  let out : Array[KafkaRecord] = []
+  match parse_batches(batch, out) {
+    Ok(_) => ()
+    Err(e) => abort("our own gzip batch failed to parse: \{e}")
+  }
+  assert_eq(out.length(), 2)
+  assert_eq(out[0].record.key, b"key-one")
+  assert_eq(out[0].record.value, b"payload-one")
+  assert_eq(out[1].record.value, b"payload-two")
+}
+
+///|
+test "the compression query param parses into the url" {
+  match parse_kafka_url("kafka://h:9092/t?compression=gzip") {
+    Ok(url) => assert_true(url.gzip)
+    Err(e) => abort("parse failed: \{e}")
+  }
+  match parse_kafka_url("kafka://h:9092/t") {
+    Ok(url) => assert_true(!url.gzip)
+    Err(e) => abort("parse failed: \{e}")
   }
 }

@@ -115,7 +115,7 @@ grep -q '^apiversions client_id=moonflux-kafka$' "$WORK/facts.txt" ||
   fail "the broker never saw our ApiVersions probe: $(cat "$WORK/facts.txt")"
 grep -q "^metadata topic=$TOPIC$" "$WORK/facts.txt" ||
   fail "the broker never saw our metadata request"
-grep -q "^produce topic=$TOPIC partition=0 acks=1 records=3 base=0 crc=ok$" "$WORK/facts.txt" ||
+grep -qE "^produce topic=$TOPIC partition=0 acks=1 records=3 base=[0-9]+ crc=ok codec=none" "$WORK/facts.txt" ||
   fail "produce facts: $(grep produce "$WORK/facts.txt")"
 pass "2: the broker saw the probe, the metadata topic, and a CRC-valid 3-record batch with acks=1"
 

@@ -69,7 +69,7 @@ cli.exe consume --topic events --remote 127.0.0.1:19420
 - **认证开启但监听是明文**时，启动日志会明确警告凭据走明文——请加 `--tls-cert/--tls-key` 或在受信本地目录去掉 auth.json。
 - 免信号垫片、跨平台，与 cert-manager 等"替换挂载密钥"的轮转流程天然契合。
 
-**Kafka 连接器（P20）**：spec 的源/汇可以是 Kafka——`{"type":"kafka","url":"kafka://host:port/topic[?partition=N&from=earliest|latest|<offset>]"}`。**源是消费**：`pipeline run` 首拉建连、解析元数据与起始偏移（默认 earliest），之后每拉一轮从 broker 取一批——同样是**流式运行**（Ctrl-C 停止），空应答是安静、不是结束。**汇是发布**：每批记录打成一个 RecordBatch v2 发到 URL 的分区（默认 0），acks=1。**边界（决策 44）**：无压缩（收到压缩批会**按 codec 名**拒绝）、**无消费组**（偏移在本进程内存里，重启按 `from` 重开）、无幂等/事务、无 TLS/SASL。连上先做版本探针：broker 不支持锁定的协议版本会在**连接期**按名报错。本地自测需一个真实 broker（本仓库门禁用 `scripts/kafka_test_broker.py` 这个最小实现）。
+**Kafka 连接器（P20）**：spec 的源/汇可以是 Kafka——`{"type":"kafka","url":"kafka://host:port/topic[?partition=N&from=earliest|latest|<offset>]"}`。**源是消费**：`pipeline run` 首拉建连、解析元数据与起始偏移（默认 earliest），之后每拉一轮从 broker 取一批——同样是**流式运行**（Ctrl-C 停止），空应答是安静、不是结束。**汇是发布**：每批记录打成一个 RecordBatch v2 发到 URL 的分区（默认 0），acks=1。**压缩（P25）**：产生端可在 URL 加 `?compression=gzip`（RecordBatch 以 gzip 容器压缩，真实 broker 生产者的默认形态）；读取端按批的压缩列行动——gzip 批解压后解析，snappy/lz4/zstd **仍按 codec 名拒绝**，未知 codec 在 apply 期拒绝。解压输出以单一批预算为上界（炸弹防护）。**边界（决策 44）**：**无消费组**（偏移在本进程内存里，重启按 `from` 重开）、无幂等/事务、无 TLS/SASL。连上先做版本探针：broker 不支持锁定的协议版本会在**连接期**按名报错。本地自测需一个真实 broker（本仓库门禁用 `scripts/kafka_test_broker.py` 这个最小实现）。
 
 **spec 形态**（`core/spec::parse_spec` 是唯一权威）：
 

@@ -6,6 +6,8 @@ import {
 }
 
 // Values
+pub fn adler32(Bytes) -> Int
+
 pub fn crc32(Bytes) -> UInt
 
 pub fn crc32_extend(UInt, Bytes) -> UInt
@@ -22,9 +24,21 @@ pub fn crc32c_extend_view(UInt, BytesView) -> UInt
 
 pub fn crc32c_view(BytesView) -> UInt
 
+pub fn deflate_raw(Bytes) -> Bytes
+
+pub fn gzip_wrap(Bytes, Bytes) -> Bytes
+
 pub fn hex_decode(String) -> Result[Bytes, DecodeError]
 
 pub fn hex_encode(Bytes) -> String
+
+pub fn inflate_raw(Bytes, Int) -> Result[Bytes, String]
+
+pub fn kafka_compress_gzip(Bytes) -> Bytes
+
+pub fn kafka_decompress(Bytes, Int) -> Result[Bytes, String]
+
+pub fn zlib_wrap(Bytes, Bytes) -> Bytes
 
 // Errors
 pub(all) suberror DecodeError {
@@ -36,6 +50,14 @@ pub(all) suberror DecodeError {
 pub impl Show for DecodeError
 
 // Types and methods
+type Container
+
+type DeflateBitReader
+
+type DeflateBitWriter
+
+type HuffmanTable
+
 pub struct Reader {
   bytes : Bytes
   mut pos : Int

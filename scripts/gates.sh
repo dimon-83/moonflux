@@ -108,6 +108,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p22-serve-groups.sh" scripts/e2e-p22-serve-groups.sh
   step "e2e-p23-cli.sh" scripts/e2e-p23-cli.sh
   step "e2e-p24-rotation.sh" scripts/e2e-p24-rotation.sh
+  step "e2e-p25-compression.sh" scripts/e2e-p25-compression.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

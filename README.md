@@ -219,6 +219,25 @@ moonflux/
     的 SASL/TLS 是互操作候选（决策 44 边界）。门禁：`scripts/e2e-p24-rotation.sh`
     （4 腿：新 CA 可用、旧 CA 被拒、旧凭据被拒、进程存活 + SC 同机制 + 明文警告）+
     `rotation_wbtest` 3 条（损坏返回 Err 而非杀进程、热重载换表、文件消失不炸）。
+49. **批压缩：编解码是平台能力，锚点必须在外部**（2026-09-25，P25）：feature-matrix 挂账的
+    "压缩编解码"收口。`core/codec/deflate.mbt`（纯 MoonBit，零依赖零时钟）：inflate 支持
+    RFC 1951 全部三种块型（stored/固定/动态 Huffman + LZ77 窗口的重叠逐字节复制），deflate
+    用固定 Huffman + 贪心 LZ77（确定性匹配，链深有界）——不追求最小输出，只要求**任何解码器
+    都能读**、且同输入同输出（内核红线）。容器两种：zlib（RFC 1950 + adler32）与 gzip
+    （RFC 1952，复用既有 IEEE CRC-32——真实 Kafka broker 的 GZIPOutputStream 产物）。
+    **外部锚点纪律再执行一次**：Python zlib 把每个样本按三容器两级别压缩存成金标语料
+    （`tools/gen_deflate_vectors.py` → `deflate_gen.mbt`），我们的解码器必须逐字节读回
+    Python 的输出；e2e 上再对向锚定——我们的压缩器产生的批由 Python 测试 broker 解压并
+    逐记录断言，Python gzip 压缩的批由我们的解码器逐字节读回。"两边都是自己写的"在
+    压缩上比在 CRC 上更危险：一个双方都容忍的位错误就是静默数据损坏。**炸弹上界**：解压
+    输出超 `MAX_BATCH_BYTES`（单一预算的真值，与 P15 合一）即结构化拒绝——几 KB 的压缩批
+    膨胀成 GB 分配是攻击面不是边界情况。**Kafka 连接器**按压缩列行动：gzip 解压后解析、
+    snappy/lz4/zstd 仍按名拒绝、产生端 `?compression=gzip` 可选（默认仍为未压缩，P20 的
+    字节一致形状不变）、未知 codec 在 apply 期按名拒绝。**自有协议不压缩**（显式边界）：
+    压自有 MFS 帧要先重定义预算语义（压前还是压后计），那是立项不是开关。执行中自抓三个
+    自身 bug：deflate 漏写 BTYPE 块头位、块头写在数据之后、容器校验和误覆盖 deflate 流
+    而非原文——都是自家解码器先红、金标语料后红的顺序，外部锚点的价值就在这。门禁：
+    `scripts/e2e-p25-compression.sh`（4 腿）+ codec wbtest 9 条。
 43. **连接器学会流式：三态 pull，和一只自己写的 MQTT 3.1.1 客户端**（2026-09-23，P19）：`pipeline run` 此前是严格一次性的——一次 `pull()` → append → transform → sink → 退出——订阅型源（MQTT）装不进去，而 `Source.pull` 的返回类型也没有「此刻没数据」与「源已耗尽」的区别。不做这个区分就有两种错法：流式源被当成耗尽（订阅一次就退出），或一次性源被反复重放（`file_source` 每次 pull 都重读整文件，循环会无限追加同一份数据）。修法是**三态 pull**（`Records` / `Quiet` / `Exhausted`）：一次性源记住"已交付"（第二次 pull 报 `Exhausted`，行为逐字节不变），流式源用 `Quiet` 表达静默；`pipeline run` 变成 `Records` → 处理并继续拉 / `Quiet` → 短睡再拉 / `Exhausted` → 退出 0 的循环。然后是 MQTT 客户端本身：**零依赖手写 MQTT 3.1.1**（依赖纪律下，"写客户端"是这笔交易便宜的一半——固定头 + 剩余长度 varint + 十余种控制包），跑在 `@net` 上；`mqtt_source` 首拉建连订阅、之后按读期限收消息（`Quiet` 语义），`mqtt_sink` 每批发布记录值；spec 增 `{"type":"mqtt","url":"mqtt://[user:pass@]host[:port]/topic"}`，**坏 url 在 apply 期拒绝**（连接器会拒绝打开的 URL，spec 不把它存下来）。**边界写成边界而不是 TODO**：订阅与发布均 QoS 0（订阅 QoS 0 ⇒ broker 按 min 降级，入站只需处理 QoS 0；防御性 PUBACK 防止 packet id 被读成 payload；出站 QoS 1 是明示的后续候选）；不做 TLS/遗嘱/保留消息/自动重连（断线 = 结构化错误）；URL 内嵌凭据会随 spec 落入 `topology.json`——受信网络或 broker 侧 ACL。顺带两处小修：stdout 汇每批 flush（被重定向的 stdout 是块缓冲的，流式 run 不会自己退出——P4 教训的重述），以及 `core/pipeline` 的 sink detail 不再对所有汇都写 "stdout sink"（对 http/mqtt 汇是说谎）。门禁 `scripts/e2e-p19-mqtt.sh`（5 腿），对端是 `scripts/mqtt_test_broker.py`——**独立第二实现按规范说话**（同 `mfs_probe.py` 的精神）：CONNECT 形状、SUBSCRIBE topic、PUBLISH 内容都在线上字节上断言；Kafka 协议面远大于 MQTT（ApiVersions/Metadata/Produce/Fetch/RecordBatch v2/压缩编解码），单独立票排后。
 
 ---

@@ -1,8 +1,8 @@
 # moonflux 进度看板（快照）
 
-> **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–48），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–92 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
+> **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–49），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–94 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
 
-**快照日期**：2026-09-25 · 状态：**P0–P24 全部达成** · 门禁全套 **41 步绿**（native 263 / wasm-gc 168 / 算子 6）
+**快照日期**：2026-09-25 · 状态：**P0–P25 全部达成** · 门禁全套 **42 步绿**（native 271 / wasm-gc 168 / 算子 6）
 
 ---
 
@@ -37,6 +37,7 @@
 | P22 | 单机消费组：serve 自任协调者（同一注册表/命令/围栏）+ 分区枚举 = 声明∪磁盘 + 地板接最慢消费者 | 09-25 | `e2e-p22-serve-groups.sh`（7 腿）+ `e2e-p0` 翻转的 group 腿 |
 | P23 | 命令面尾巴：`partition list` / `cluster spu list` / `profile` 档案；serve 补 OFFSET_INFO | 09-25 | `e2e-p23-cli.sh`（5 腿）+ profile wbtest 4 条 |
 | P24 | 无重启轮转：TLS/凭据表 mtime 监视热重载 + 明文警告 + SASL 边界声明 | 09-25 | `e2e-p24-rotation.sh`（4 腿）+ rotation wbtest 3 条 |
+| P25 | 批压缩：DEFLATE 进 core/codec（Python zlib 锚定 + 炸弹上界）+ Kafka gzip 双向 | 09-25 | `e2e-p25-compression.sh`（4 腿）+ codec wbtest 9 条 |
 
 ### 📋 待办（按优先级）
 
@@ -47,7 +48,7 @@
 | 3 | ~~serve 的 group 协调~~ **已达成**（P22，09-25）· ~~命令面尾巴（partition list / profile / spu list）~~ **已达成**（P23，09-25） | — | serve 自任协调者：同一注册表/命令/围栏（决策 46）；三条挂账命令清账（决策 47）。P18 的解释性拒绝退役（`e2e-p0` group 腿翻转为协调断言） |
 | 4 | ~~gates.sh 补 `.mbti` 新鲜度检查~~ **已达成**（2026-09-24） | — | stale `.mbti`（含已 staged 未提交的）会红全量门禁 |
 | 5 | ~~cli-roadmap §3.3.1 过时注~~ **已达成**（P23，09-25） | — | §3.3.4 回填：三条命令清账、`--help` 非错误退出留痕、`topic add-partition` 明确不做（放置调和事件） |
-| 7 | 批压缩（gzip/snappy） | 低（未立项） | feature-matrix ⏳ 行 |
+| 7 | ~~批压缩~~ **已达成**（P25，09-25） | — | DEFLATE 进 core/codec + Kafka gzip 双向；自有 MFS 帧仍为未压缩（显式边界，决策 49） |
 | 8 | ~~细粒度 ACL / 审计日志~~ **已达成**（P21）· ~~证书轮转~~ **已达成**（P24）· SASL **边界声明**（决策 48：token-over-TLS 已覆盖；Kafka 连接器侧 SASL/TLS 为互操作候选）；剩余压缩 | 低 | 见决策 45/48 |
 | 9 | K8s 部署形态 | **最后（用户裁定）** | 弱门禁让位强门禁（roadmap §3 留痕）；真需要时先清单 + PVC 跑文件后端 |
 | 10 | ABI v2 标量调用 / 多语言 SDK / 编辑器函数集 UI | 条件触发 | 触发条件未出现（决策 28 / 未立项 / 有需求再启） |

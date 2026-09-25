@@ -1,11 +1,16 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "moonflux/core/codec_test"
 
+import {
+  "moonbitlang/core/debug",
+}
+
 // Values
 
 // Errors
 
 // Types and methods
+type DeflateCase derive(Eq, @debug.Debug)
 
 // Type aliases
 

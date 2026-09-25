@@ -49,6 +49,10 @@ pub(all) struct KafkaUrl {
   topic : String
   partition : Int
   from : KafkaFrom
+  /// `?compression=gzip` (P25): outgoing batches carry the gzip
+  /// container, the codec real brokers' producers use. Absent means
+  /// uncompressed — the byte-identical default P20's gate pins.
+  gzip : Bool
 } derive(Debug)
 
 ///|
@@ -91,6 +95,7 @@ pub fn parse_kafka_url(url : String) -> Result[KafkaUrl, String] {
   }
   let mut partition = 0
   let mut from = Earliest
+  let mut gzip = false
   if query.length() > 0 {
     for pair in query.split("&") {
       let pair = pair.to_owned()
@@ -106,6 +111,15 @@ pub fn parse_kafka_url(url : String) -> Result[KafkaUrl, String] {
                     partition = n
                   }
                 Err(_) => return Err("bad partition in kafka url: \{value}")
+              }
+            "compression" =>
+              match value.to_owned() {
+                "gzip" => gzip = true
+                "none" => gzip = false
+                other =>
+                  return Err(
+                    "unsupported compression '\{other}' in kafka url (gzip or none)",
+                  )
               }
             "from" =>
               match value.to_owned() {
@@ -131,7 +145,7 @@ pub fn parse_kafka_url(url : String) -> Result[KafkaUrl, String] {
       }
     }
   }
-  Ok(KafkaUrl::{ host, port, topic, partition, from })
+  Ok(KafkaUrl::{ host, port, topic, partition, from, gzip })
 }
 
 // ---------------------------------------------------------------------------
@@ -355,10 +369,18 @@ fn read_zigzag_varint(reader : @codec.Reader) -> Result[Int64, String] {
 const BATCH_HEADER_BYTES : Int = 61
 
 ///|
-/// Builds one uncompressed v2 batch from records. Offsets are deltas
-/// 0..n-1 relative to the batch's base offset (the broker assigns the
-/// base); timestamps are deltas relative to the first record's.
-fn build_batch(records : Array[@protocol.Record], now_ms : Int64) -> Bytes {
+/// Builds one v2 batch from records. Offsets are deltas 0..n-1
+/// relative to the batch's base offset (the broker assigns the base);
+/// timestamps are deltas relative to the first record's. With `gzip`
+/// the records section is compressed with the gzip container — what a
+/// real broker's producer path emits — and the CRC (which covers from
+/// attributes to the end) is computed over the COMPRESSED bytes, so a
+/// broker can verify the batch before it ever inflates it.
+fn build_batch(
+  records : Array[@protocol.Record],
+  now_ms : Int64,
+  gzip : Bool,
+) -> Bytes {
   let base_ts = if records.length() > 0 { records[0].timestamp } else { now_ms }
   let mut max_ts = base_ts
   let records_bytes = Buffer::Buffer()
@@ -385,7 +407,7 @@ fn build_batch(records : Array[@protocol.Record], now_ms : Int64) -> Bytes {
   }
   // the CRC-covered section: attributes .. end
   let covered = Buffer::Buffer()
-  kw_i16(covered, 0) // attributes: no compression, create-time timestamps
+  kw_i16(covered, if gzip { 1 } else { 0 }) // attributes: bit 0 = gzip codec
   kw_i32(covered, records.length() - 1) // lastOffsetDelta
   kw_i64(covered, base_ts)
   kw_i64(covered, max_ts)
@@ -393,7 +415,12 @@ fn build_batch(records : Array[@protocol.Record], now_ms : Int64) -> Bytes {
   kw_i16(covered, -1) // producerEpoch
   kw_i32(covered, -1) // baseSequence
   kw_i32(covered, records.length())
-  covered.write_bytes(records_bytes.to_bytes())
+  let records_plain = records_bytes.to_bytes()
+  if gzip {
+    covered.write_bytes(@codec.kafka_compress_gzip(records_plain))
+  } else {
+    covered.write_bytes(records_plain)
+  }
   let covered_bytes = covered.to_bytes()
   let crc = @codec.crc32c(covered_bytes)
   let batch = Buffer::Buffer()
@@ -468,17 +495,20 @@ fn parse_batches(
       Ok(v) => v
       Err(e) => return Err(e)
     }
+    // the compression column (P25): gzip inflates (the codec real
+    // producers and brokers ship); everything else is refused BY NAME
+    // — a silent misread of compressed bytes would be worse than a
+    // refusal, and pretending to decompress would be a lie
     let codec = attributes & 0x07
-    if codec != 0 {
+    if codec == 2 || codec == 3 || codec == 4 || (codec != 0 && codec != 1) {
       let name = match codec {
-        1 => "gzip"
         2 => "snappy"
         3 => "lz4"
         4 => "zstd"
-        _ => "unknown"
+        other => "unknown (\{other})"
       }
       return Err(
-        "compressed batches are not supported (codec \{name}); produce uncompressed or let the broker re-compress",
+        "batch at offset \{base_offset} uses the \{name} codec, which is not supported; only gzip and uncompressed batches are readable",
       )
     }
     let log_append_time = (attributes & 0x08) != 0
@@ -513,81 +543,99 @@ fn parse_batches(
     if count < 0 {
       return Err("negative record count in batch")
     }
+    // the records section: raw from here for uncompressed batches, or
+    // the whole remaining slice inflated first (the cap is the one
+    // batch budget — a decompressed batch that large is refused, not
+    // allocated; the decompression-bomb boundary lives here too)
+    let records_reader = if codec == 1 {
+      let compressed = covered[covered_reader.position():covered.length()].to_owned()
+      let plain = match
+        @codec.kafka_decompress(compressed, @protocol.MAX_BATCH_BYTES) {
+        Ok(plain) => plain
+        Err(e) =>
+          return Err(
+            "batch at offset \{base_offset} failed to decompress: \{e}",
+          )
+      }
+      @codec.Reader::new(plain)
+    } else {
+      covered_reader
+    }
     for _i in 0..<count {
-      let record_len = match read_zigzag_varint(covered_reader) {
+      let record_len = match read_zigzag_varint(records_reader) {
         Ok(v) => v
         Err(e) => return Err(e)
       }
-      if record_len < 0 || record_len.to_int() > covered_reader.remaining() {
+      if record_len < 0 || record_len.to_int() > records_reader.remaining() {
         return Err("record length does not fit its batch")
       }
-      let record_end = covered_reader.position() + record_len.to_int()
-      let _attributes = match covered_reader.read_byte() {
+      let record_end = records_reader.position() + record_len.to_int()
+      let _attributes = match records_reader.read_byte() {
         Ok(b) => b
         Err(_) => return Err("truncated record attributes")
       }
-      let ts_delta = match read_zigzag_varint(covered_reader) {
+      let ts_delta = match read_zigzag_varint(records_reader) {
         Ok(v) => v
         Err(e) => return Err(e)
       }
-      let offset_delta = match read_zigzag_varint(covered_reader) {
+      let offset_delta = match read_zigzag_varint(records_reader) {
         Ok(v) => v
         Err(e) => return Err(e)
       }
-      let key_len = match read_zigzag_varint(covered_reader) {
+      let key_len = match read_zigzag_varint(records_reader) {
         Ok(v) => v
         Err(e) => return Err(e)
       }
       let key = if key_len < 0 {
         b""
       } else {
-        match covered_reader.read_bytes(key_len.to_int()) {
+        match records_reader.read_bytes(key_len.to_int()) {
           Ok(bytes) => bytes
           Err(_) => return Err("truncated record key")
         }
       }
-      let value_len = match read_zigzag_varint(covered_reader) {
+      let value_len = match read_zigzag_varint(records_reader) {
         Ok(v) => v
         Err(e) => return Err(e)
       }
       let value = if value_len < 0 {
         b""
       } else {
-        match covered_reader.read_bytes(value_len.to_int()) {
+        match records_reader.read_bytes(value_len.to_int()) {
           Ok(bytes) => bytes
           Err(_) => return Err("truncated record value")
         }
       }
-      let header_count = match read_zigzag_varint(covered_reader) {
+      let header_count = match read_zigzag_varint(records_reader) {
         Ok(v) => v
         Err(e) => return Err(e)
       }
       for _h in 0..<header_count.to_int() {
-        let h_key_len = match read_zigzag_varint(covered_reader) {
+        let h_key_len = match read_zigzag_varint(records_reader) {
           Ok(v) => v
           Err(e) => return Err(e)
         }
         if h_key_len > 0L {
-          let _ = covered_reader.read_bytes(h_key_len.to_int())
+          let _ = records_reader.read_bytes(h_key_len.to_int())
         }
-        let h_value_len = match read_zigzag_varint(covered_reader) {
+        let h_value_len = match read_zigzag_varint(records_reader) {
           Ok(v) => v
           Err(e) => return Err(e)
         }
         if h_value_len > 0L {
-          let _ = covered_reader.read_bytes(h_value_len.to_int())
+          let _ = records_reader.read_bytes(h_value_len.to_int())
         }
       }
       // the record's own length is authoritative: seek to its end
       // rather than trusting this field list — a parser that trusts
       // its own list over the wire's count drifts the moment the
       // format grows
-      let overshoot = covered_reader.position() - record_end
+      let overshoot = records_reader.position() - record_end
       if overshoot > 0 {
         return Err("record parsed \{overshoot} bytes past its own length")
       }
       if overshoot < 0 {
-        let _ = covered_reader.read_bytes(-overshoot)
+        let _ = records_reader.read_bytes(-overshoot)
       }
       out.push(KafkaRecord::{
         offset: base_offset + offset_delta,
@@ -1253,7 +1301,11 @@ pub fn kafka_sink(url : String) -> Sink {
         Some(session) => session.conn
         None => return Err("kafka session lost")
       }
-      let batch = build_batch(records, @env.now().reinterpret_as_int64())
+      let batch = build_batch(
+        records,
+        @env.now().reinterpret_as_int64(),
+        target.gzip,
+      )
       match kafka_produce(conn, stream, target.topic, target.partition, batch) {
         Ok(_) => Ok(())
         Err(e) => {

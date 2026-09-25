@@ -20,6 +20,8 @@ Usage:
       [--produce-version-max N]   # advertise a lower Produce ceiling
 """
 import argparse
+import gzip
+import zlib
 import socket
 import struct
 import sys
@@ -143,6 +145,66 @@ def read_frame(conn):
     return body
 
 
+def zigzag_encode(value):
+    return (value << 1) ^ (value >> 63) if value < 0 else (value << 1)
+
+
+def write_varint(out, value):
+    value &= 0xFFFFFFFFFFFFFFFF
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return
+
+
+def build_compressed_batch(records, base):
+    """Rebuilds one batch from parsed records with a GZIP-compressed
+    records section (codec 1) — what a real broker's compaction or a
+    producer with compression.type=gzip would store. The CRC-32C covers
+    attributes..end, i.e. the COMPRESSED bytes, exactly as the protocol
+    says."""
+    base_ts = records[0]["timestamp"] if records else 0
+    max_ts = max((r["timestamp"] for r in records), default=base_ts)
+    raw = bytearray()
+    for i, rec in enumerate(records):
+        body = bytearray()
+        body.append(0)  # record attributes
+        write_varint(body, zigzag_encode(rec["timestamp"] - base_ts))
+        write_varint(body, zigzag_encode(i))
+        if rec["key"]:
+            write_varint(body, zigzag_encode(len(rec["key"])))
+            body += rec["key"]
+        else:
+            write_varint(body, zigzag_encode(-1))
+        write_varint(body, zigzag_encode(len(rec["value"])))
+        body += rec["value"]
+        write_varint(body, zigzag_encode(0))  # headers
+        write_varint(raw, zigzag_encode(len(body)))
+        raw += body
+    compressed = gzip.compress(bytes(raw))
+    covered = struct.pack(">h", 1)  # attributes: codec 1 (gzip)
+    covered += struct.pack(">i", len(records) - 1)
+    covered += struct.pack(">q", base_ts)
+    covered += struct.pack(">q", max_ts)
+    covered += struct.pack(">q", -1)
+    covered += struct.pack(">h", -1)
+    covered += struct.pack(">i", -1)
+    covered += struct.pack(">i", len(records))
+    covered += compressed
+    crc = crc32c(covered)
+    out = struct.pack(">q", base)
+    out += struct.pack(">i", 9 + len(covered))
+    out += struct.pack(">i", -1)
+    out += struct.pack(">B", 2)
+    out += struct.pack(">I", crc)
+    out += covered
+    return out
+
+
 def zigzag_decode(value):
     return (value >> 1) ^ -(value & 1)
 
@@ -162,7 +224,7 @@ def read_varint(reader):
 # RecordBatch v2 parsing (the broker verifies what it is handed)
 
 def parse_batch(blob):
-    """Returns (base_offset, [{"key","value","timestamp"}]) or raises."""
+    """Returns (base_offset, records, codec) or raises."""
     if len(blob) < 61:
         raise ValueError("batch shorter than its header")
     base = struct.unpack(">q", blob[0:8])[0]
@@ -179,8 +241,10 @@ def parse_batch(blob):
         raise ValueError("CRC-32C mismatch")
     r = Reader(covered)
     attrs = r.i16()
-    if attrs & 0x07:
-        raise ValueError("compressed batch (codec %d)" % (attrs & 0x07))
+    codec = attrs & 0x07
+    if codec not in (0, 1):
+        raise ValueError("batch uses codec %d, which is not supported "
+                         "(only gzip and uncompressed are readable)" % codec)
     _last_offset_delta = r.i32()
     first_ts = r.i64()
     _max_ts = r.i64()
@@ -188,6 +252,15 @@ def parse_batch(blob):
     _producer_epoch = r.i16()
     _base_sequence = r.i32()
     count = r.i32()
+    if codec == 1:
+        # the records section is compressed; the CRC (verified above)
+        # covered the COMPRESSED bytes, so inflate only after it passed
+        compressed = covered[r.pos:]
+        try:
+            plain = gzip.decompress(compressed)
+        except OSError:
+            plain = zlib.decompress(compressed)
+        r = Reader(plain)
     records = []
     for _ in range(count):
         rlen = zigzag_decode(read_varint(r))
@@ -213,7 +286,7 @@ def parse_batch(blob):
             "value": value,
             "timestamp": first_ts + ts_delta,
         })
-    return base, records
+    return base, records, codec
 
 
 class Partition:
@@ -224,7 +297,7 @@ class Partition:
 
 class Broker:
     def __init__(self, host, port, topic, facts_path, received_path,
-                 produce_version_max, dump_path=None):
+                 produce_version_max, dump_path=None, compress_gzip=False):
         self.host = host
         self.port = port
         self.topic = topic
@@ -232,6 +305,11 @@ class Broker:
         self.received_path = received_path
         self.produce_version_max = produce_version_max
         self.dump_path = dump_path
+        # --compress-gzip: every batch accepted uncompressed is
+        # REBUILT compressed (codec 1) before storage, so readers
+        # receive gzip batches exactly like a real broker storing
+        # compressed segments
+        self.compress_gzip = compress_gzip
         self.lock = threading.Lock()
         self.partition = Partition()
 
@@ -311,19 +389,25 @@ class Broker:
             for _ in range(parts):
                 index = reader.i32()
                 blob = reader.bytes_field()
-                base, records = parse_batch(blob)  # raises on bad CRC/shape
+                base, records, codec = parse_batch(blob)  # raises on bad CRC/shape
                 with self.lock:
                     assigned = self.partition.next_offset
-                    # the base offset is outside the CRC on purpose: the
-                    # broker assigns it by rewriting eight bytes
-                    patched = struct.pack(">q", assigned) + blob[8:]
-                    self.partition.batches.append((assigned, patched))
+                    if self.compress_gzip:
+                        stored = build_compressed_batch(records, assigned)
+                    else:
+                        # the base offset is outside the CRC on purpose: the
+                        # broker assigns it by rewriting eight bytes
+                        stored = struct.pack(">q", assigned) + blob[8:]
+                    self.partition.batches.append((assigned, stored))
                     self.partition.next_offset += len(records)
                 for record in records:
                     self.received(record)
                 self.fact(
-                    "produce topic=%s partition=%d acks=%d records=%d base=%d crc=ok"
-                    % (name, index, acks, len(records), assigned)
+                    "produce topic=%s partition=%d acks=%d records=%d base=%d "
+                    "crc=ok codec=%s stored=%s"
+                    % (name, index, acks, len(records), assigned,
+                       "gzip" if codec == 1 else "none",
+                       "gzip" if self.compress_gzip else "none")
                 )
                 responses.append((name, index, 0, assigned))
         # group by topic (there is exactly one in this fixture)
@@ -425,10 +509,13 @@ def main():
     ap.add_argument("--received", default=None)
     ap.add_argument("--produce-version-max", type=int, default=3)
     ap.add_argument("--dump", default=None, help="append raw request frames here")
+    ap.add_argument("--compress-gzip", action="store_true",
+                    help="rebuild every stored batch with gzip codec 1")
     args = ap.parse_args()
     host, port = args.listen.rsplit(":", 1)
     Broker(host, int(port), args.topic, args.facts, args.received,
-           args.produce_version_max, args.dump).serve()
+           args.produce_version_max, args.dump,
+           args.compress_gzip).serve()
 
 
 if __name__ == "__main__":
