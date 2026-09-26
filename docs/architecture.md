@@ -2,7 +2,7 @@
 
 > **定位**：面向工程师的系统架构说明——分层与包结构、事件循环模型、线协议、存储、复制与控制面、安全面、算子沙箱，以及"为什么是这个形状"。**规约依据**：AGENTS.md §1（金规则）、§3（目录与包结构）、§5（内核红线）；**边界声明**：本文描述的是**已实现并经门禁验证**的架构，设计意向与对标语义的验证状态分别见 [`feature-matrix.md`](feature-matrix.md) 与 [`compatibility-matrix.md`](compatibility-matrix.md)；对标事实的技术依据见立项评估报告 `fluvio-moonbit-evaluation.md`（下称「报告」）。
 >
-> **日期**：2026-09-17 · 覆盖 P0–P13（决策 1–36）
+> **日期**：2026-09-25 · 覆盖 P0–P17 的架构形状 + P21/P24 的安全面与轮转小节（决策 1–48 中被本文引用者）；P18–P20、P22–P23、P25–P26 的行为细节以 [`feature-matrix.md`](feature-matrix.md) 与 [`user-guide.md`](user-guide.md) 为准
 
 ## 1. 一屏总览
 
@@ -223,7 +223,7 @@ flowchart TB
 
 ## 10. 验证体系（架构的执行者）
 
-架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**37 步**）：
+架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**43 步**）：
 
 | 层 | 机制 |
 | :--- | :--- |

@@ -2,7 +2,7 @@
 
 > **定位**：面向使用者与运维——从源码构建到跑通第一个管道，到多节点集群、安全配置与故障排查。**规约依据**：AGENTS.md §10（引用与证据规范）；**边界声明**：本文只讲"怎么用"；架构原理见 [`architecture.md`](architecture.md)，能力与状态的完整清单见 [`feature-matrix.md`](feature-matrix.md)。所有示例在 macOS/Linux + OpenSSL 环境可复现。
 >
-> **日期**：2026-09-17 · 对应版本：P0–P13
+> **日期**：2026-09-25 · 对应版本：P0–P26
 
 ## 1. 构建与自检
 
@@ -540,7 +540,7 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
-| 一切（37 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| 一切（43 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
 | 多分区复制与隔离 | `scripts/e2e-p7-partitions.sh` |
@@ -555,6 +555,11 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 | 消费组 | `scripts/e2e-p9-groups.sh` |
 | 安全面 | `scripts/e2e-p12-security.sh` |
 | 控制面并发与停摆 | `scripts/e2e-p13-control-plane.sh` |
+| 单机 `serve` 自任协调者的消费组 | `scripts/e2e-p22-serve-groups.sh` |
+| 命令面尾巴（`partition list` / `cluster spu list` / `profile`） | `scripts/e2e-p23-cli.sh` |
+| 无重启轮转（TLS 上下文与凭据表 mtime 热重载） | `scripts/e2e-p24-rotation.sh` |
+| 批压缩（DEFLATE 双向外部锚定 + Kafka gzip） | `scripts/e2e-p25-compression.sh` |
+| ABI v2 标量调用（沙箱标量与 mbel 逐字节对拍） | `scripts/e2e-p26-scalar.sh` |
 | 协议/算子对拍 | `scripts/crosscheck-protocol.sh` · `crosscheck-operators.sh` |
 | §9 实战示例覆盖的语义 | §9.1 函数集与发布期拦截：`scripts/e2e-p6-functions.sh`；§9.2 算子失败语义：`crosscheck-operators.sh`；§9.3 消费组：`scripts/e2e-p9-groups.sh`；§9.4 容错：`scripts/e2e-p3-failover.sh` · `e2e-p7-partitions.sh`；§9.5 安全：`scripts/e2e-p12-security.sh` |
 

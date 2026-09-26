@@ -50,9 +50,18 @@ step "moon info: interfaces are current" bash -c '
   fi'
 
 for target in wasm wasm-gc js native; do
+  # A missing toolchain must not read as a passing build. Matching the
+  # output for '^Error' alone silently passed whenever moon failed some
+  # other way (no PATH entry, bad flag, killed by the OS) — the compile
+  # matrix is the one leg whose whole job is "did this backend build",
+  # so the exit status is the answer and the output is printed, not
+  # swallowed.
   step "moon build --target $target" bash -c "
-    out=\$(moon build --target $target 2>&1)
-    echo \"\$out\" | grep -E '^Error' && exit 1
+    if ! out=\$(moon build --target $target 2>&1); then
+      printf '%s\n' \"\$out\" >&2
+      exit 1
+    fi
+    printf '%s\n' \"\$out\" | grep -E '^Error' && exit 1
     exit 0"
 done
 

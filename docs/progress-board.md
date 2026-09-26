@@ -2,13 +2,13 @@
 
 > **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–50），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–96 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
 
-**快照日期**：2026-09-25 · 状态：**P0–P26 全部达成** · 门禁全套 **43 步绿**（native 274 / wasm-gc 174 / 算子 6）· **历史已推送 GitHub，CI 已接线**
+**快照日期**：2026-09-25（同一日复核） · 状态：**P0–P26 全部达成** · 门禁全套 **43 步绿**（native 274 / wasm-gc 174 / 算子 6；`fast` 子集 12 步于复核时实跑复现）· **94 笔提交全历史已推送 GitHub；CI 工作流仍暂存待凭据**（缺 `workflow` scope，见 `.scratch/moonflux-ci/`）
 
 ---
 
 ## 看板
 
-### ✅ 已完成（19 个里程碑全部收口，证据可复现）
+### ✅ 已完成（P0–P26 全部收口，27 行，证据可复现）
 
 | 里程碑 | 功能点一句话 | 收口 | 证据 |
 | :--- | :--- | :--- | :--- |
@@ -33,7 +33,7 @@
 | P18 | 真偏移（fetch 应答按连续段分帧）+ serve 命令面（topic 家族 + group 拒绝） | 09-23 | `e2e-p14` 腿 9–11 · `e2e-p0` 新腿 |
 | P19 | 连接器流式语义（三态 pull）+ MQTT 3.1.1 连接器（零依赖手写、QoS 0 边界） | 09-23 | `e2e-p19-mqtt.sh`（5 腿，对端 = 独立 Python broker） |
 | P20 | Kafka 连接器（手写五 API + RecordBatch v2 + CRC-32C；对接生态对象而非对标参考） | 09-23 | `e2e-p20-kafka.sh`（5 腿，对端校验收到的批 CRC）+ kafka-python 开发期对拍 |
-| P21 | 细粒度授权（per-topic grants，只收窄不放宽）+ 安全审计日志（认证/拒绝/主题生命周期 JSON 行） | 09-24 | `e2e-p12-security.sh`（10 腿；腿 8–10 为新增） |
+| P21 | 细粒度授权（per-topic grants，只收窄不放宽）+ 安全审计日志（认证/拒绝/主题生命周期 JSON 行） | 09-25 | `e2e-p12-security.sh`（10 腿；腿 8–10 为新增） |
 | P22 | 单机消费组：serve 自任协调者（同一注册表/命令/围栏）+ 分区枚举 = 声明∪磁盘 + 地板接最慢消费者 | 09-25 | `e2e-p22-serve-groups.sh`（7 腿）+ `e2e-p0` 翻转的 group 腿 |
 | P23 | 命令面尾巴：`partition list` / `cluster spu list` / `profile` 档案；serve 补 OFFSET_INFO | 09-25 | `e2e-p23-cli.sh`（5 腿）+ profile wbtest 4 条 |
 | P24 | 无重启轮转：TLS/凭据表 mtime 监视热重载 + 明文警告 + SASL 边界声明 | 09-25 | `e2e-p24-rotation.sh`（4 腿）+ rotation wbtest 3 条 |
@@ -44,7 +44,8 @@
 
 | # | 项 | 优先级 | 说明 / 依据 |
 | :--- | :--- | :--- | :--- |
-| 1 | **远端仓库 + CI** | **高（工程风险）** | 全部历史（12+ 笔提交）只在单机；`gh` 未安装、无 remote。**等待外部输入**：仓库地址或装好 gh 后一条命令收口 |
+| 1 | **远端仓库** | **已达成** | 94 笔提交全历史推送到 `github.com/dimon-83/moonflux`（本地 `main` 与 `origin/main` 同步） |
+| 1b | **CI 接线** | 待凭据 | 工作流内容（fast 门禁 Linux 随推送 + 全量门禁 macOS 手动触发）暂存 [`.scratch/moonflux-ci/ci.yml`](../.scratch/moonflux-ci/ci.yml)：GitHub 拒绝用缺 `workflow` scope 的凭据推送 `.github/workflows/`。**等待外部输入**：带该 scope 的凭据 |
 | 2 | ~~Kafka 连接器~~ **已达成**（P20，09-23） | — | 五个锁定版本 API + RecordBatch v2 + CRC-32C；见决策 44。P1 尾巴的 MQTT/Kafka 两半均收口 |
 | 3 | ~~serve 的 group 协调~~ **已达成**（P22，09-25）· ~~命令面尾巴（partition list / profile / spu list）~~ **已达成**（P23，09-25） | — | serve 自任协调者：同一注册表/命令/围栏（决策 46）；三条挂账命令清账（决策 47）。P18 的解释性拒绝退役（`e2e-p0` group 腿翻转为协调断言） |
 | 4 | ~~gates.sh 补 `.mbti` 新鲜度检查~~ **已达成**（2026-09-24） | — | stale `.mbti`（含已 staged 未提交的）会红全量门禁 |
@@ -58,9 +59,9 @@
 
 | 项 | 阻塞原因 | 解法 |
 | :--- | :--- | :--- |
-| 远端 + CI | 缺仓库地址；`gh` CLI 未安装 | **等用户一句话**（给地址或装 gh）——其余工作不受影响 |
+| CI 接线 | GitHub 凭据缺 `workflow` scope（GitHub 原话：`refusing to allow an OAuth App to create or update workflow … without workflow scope`）；仓库与推送本身没有问题 | **等用户一句话**（`gh auth refresh -s workflow` 或换 PAT）——其余工作不受影响 |
 
-（除此无阻塞：待办 2–10 均可随时开工。）
+（除此无阻塞：其余待办均可随时开工。）
 
 ### 🔁 返工台账（对已完成工作的修正与补档——诚实记录）
 
@@ -75,6 +76,7 @@
 | 7 | **roadmap 两处陈旧项**：门禁卫生已落地仍挂待办；benchmark 重复行 | P17 提交前核对 | 随 P17 提交修正 |
 | 8 | **小缺陷两枚**：① `core/pipeline` 的 sink detail 对所有汇都写 "stdout sink"（对 http/mqtt 汇是说谎）；② `spec_wbtest` 用 `"mqtt"` 当「未知类型」的例子，P19 让它变成已知——测试例子随之失效 | P19 实现时发现 | 当场修（sink detail 按 spec 取；测试改用 `amqp`）。**该地雷在 P20 三度踩响**：spec 单测与金标语料里的「未知类型」示例恰好又用了 `"kafka"`——两处改 `kinesis` 并重生成语料。教训已写进 `main_wbtest`/语料的改动本身：**新增已知类型时，先 grep 全部把该名字当「未知例子」的夹具**。 |
 | 9 | **e2e-p12 腿 7 假阳性**：门禁自己的 awk 把 `hw=?`（leader 不可达哨兵）当 settled——awk 对 `"?"` 与 `"2"` 做字符串比较且 `"?"` 更大；负载波峰下 p0 同步链接慢一个节拍 → 状态查询超时进 `hw=?` → SETTLED 假通过 → 立刻字节比对空 follower → FAIL。追了三轮（先疑审计 fsync、再疑 P21 数据路径改动），全部排除 | P21 提交前循环压测 | awk 只认 `hw=[0-9]+`（哨兵在解析处显式拒绝）；修复后 10/10 稳定。教训入 AGENTS P17 纪律块：**门禁自己的解析器也是不可信输入的解析器**。p3/p7 的单分区精确断言（`[ "$HW" = "3" ]`）天然免疫 |
+| 10 | **盘点浮出两类旧账**：① `gates.sh` 四条编译矩阵腿对**非 "Error" 的失败**报 PASS（实测：把 `moon` 移出 PATH，四条腿全绿——CI runner 装不上工具链时会假装通过）；② 文档漂移——board 头部称「CI 已接线」而自身待办/阻塞仍挂在待办、P21 收口日期写成 09-24（实为 09-25）、README 缺决策 50 且决策 43 错序、architecture/feature-matrix/user-guide/production-readiness 仍写 37 步、roadmap 头部停在「P0–P20 · 37 步」、user-guide 脚本索引缺 P22–P26 五行 | 用户问「当前进度」时的全量盘点（不是门禁抓到的） | 本轮一并修：矩阵腿改看退出码并打印输出（缺工具链 / 编译错 / 成功三路各自实跑验证）；文档计数与 CI 叙事全量对齐；README 补决策 50、43 归位；production-readiness 按维护规则回填 P21–P26 已交付项并改写分级结论 |
 
 ---
 
@@ -90,7 +92,7 @@
 
 **客户端与工具**：单二进制多子命令 CLI（produce / consume / serve / spu / sc / topic / group / cluster / operator / benchmark / pipeline / function-set）；WebSocket 网关（同端口同协议）；浏览器编辑器（拖拽 → 部署 → 消费）；**基准工具**（produce 吞吐 + 逐批延迟、consume 抽干与序号完整性校验、latency 端到端可见性——本地铁环回 ack ~4 ms / e2e p50 ~189 µs）；**MQTT 连接器**（P19）与 **Kafka 连接器**（P20：消费源 + 生产汇，手写锁定版本协议与 RecordBatch v2，CRC-32C 外部锚点验证）。
 
-**工程面**：一内核多后端（core 在 wasm / wasm-gc / js / native 四后端编译矩阵下保持可编译）；37 步门禁（故障注入、对拍、结构断言）；golden vectors + 独立 Python 协议第二实现；45 条关键决策记录全程留痕。
+**工程面**：一内核多后端（core 在 wasm / wasm-gc / js / native 四后端编译矩阵下保持可编译）；43 步门禁（故障注入、对拍、结构断言）；golden vectors + 独立 Python 协议第二实现；50 条关键决策记录全程留痕。
 
 ---
 
