@@ -4,6 +4,11 @@
 // (brew install wasmtime); the shim resolves symbols at runtime and
 // honours MOONFLUX_WASMTIME_LIB for non-standard locations.
 //
+// The stub-cc include list is a fixed string (moon.pkg expands no env
+// vars) and names both the Homebrew prefix and /usr/local, where CI
+// installs the Linux C API. clang ignores -I paths that do not exist,
+// so the two hosts share one code path instead of forking the config.
+//
 // Imports for tests live in the "wbtest" section.
 
 supported_targets = "native"
@@ -22,6 +27,9 @@ import {
 options(
   "native-stub": [ "wasmtime_shim.c" ],
   link: {
-    "native": { "stub-cc": "clang", "stub-cc-flags": "-I/opt/homebrew/include" },
+    "native": {
+      "stub-cc": "clang",
+      "stub-cc-flags": "-I/opt/homebrew/include -I/usr/local/include",
+    },
   },
 )

@@ -26,7 +26,13 @@ static void *mf_sym(const char *name) {
   if (mf_lib == NULL) {
     const char *path = getenv("MOONFLUX_WASMTIME_LIB");
     if (path == NULL || path[0] == 0) {
+#ifdef __APPLE__
       path = "/opt/homebrew/lib/libwasmtime.dylib";
+#else
+      /* Linux: resolve through the loader (install the C API under
+       * /usr/local + ldconfig, or set MOONFLUX_WASMTIME_LIB). */
+      path = "libwasmtime.so";
+#endif
     }
     mf_lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (mf_lib == NULL) {
