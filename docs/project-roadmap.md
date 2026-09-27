@@ -74,7 +74,7 @@
 - [x] P25 达成：批压缩——DEFLATE 编解码进 core/codec（Python zlib 三容器金标语料锚定 + 炸弹上界）+ Kafka 连接器 gzip 双向；`scripts/e2e-p25-compression.sh` 4 腿全绿（2026-09-25，决策 49）
 - [x] P26 达成：ABI v2 标量调用（触发条件成立）——沙箱标量函数端到端、与 mbel 逐字节对拍、四类结构化拒绝；顺带修链的整批应用与探针的无导入段检查（2026-09-25，决策 50）
 - [x] 远端仓库达成（2026-09-25，用户提供 `github.com/dimon-83/moonflux`）：94 笔提交全历史推送
-- [x] **CI 接线达成（2026-09-27）**：工作流落在 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（`.scratch/moonflux-ci/` 那份暂存副本已退休——线上有了权威副本，留着就是第二真相）。`fast`（12 步）随推送在 **ubuntu-latest** 首绿（run `36324100660`，1 分 41 秒，**本仓首次 Linux 验证**：四后端编译 + 双测试套件）；`full`（43 步 E2E）手动触发于 macos-14。接线过程抓出五件事（registry 索引前置、wasmtime 与 `st_mtimespec` 两处 macOS-only、两个门禁假绿）与工具链版本政策，见决策 51 与看板返工台账第 11 条
+- [x] **CI 接线达成（2026-09-27）**：工作流落在 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（`.scratch/moonflux-ci/` 那份暂存副本已退休——线上有了权威副本，留着就是第二真相）。`fast`（12 步）随推送在 **ubuntu-latest** 首绿（run `36324100660`，1 分 41 秒，**本仓首次 Linux 验证**：四后端编译 + 双测试套件）；`full`（43 步 E2E）手动触发于 macos-14，2026-09-27 **首次跑满 43/43**（run `36325414560`，5 分 13 秒）。接线过程抓出五件事（registry 索引前置、wasmtime 与 `st_mtimespec` 两处 macOS-only、两个门禁假绿）与工具链版本政策，见决策 51 与看板返工台账第 11 条；full 首跑另暴露两处**门禁自身的启动时序假设**（p12/p13），修法与证据见同表第 13 条
 - [x] 生成项目规约 [`AGENTS.md`](../AGENTS.md)（2026-09-15）；随代码结构落地更新（2026-09-16 补 §10 文档规范）
 
 ## 3. 待办与排期

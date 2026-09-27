@@ -2,7 +2,7 @@
 
 > **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–51），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–96 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
 
-**快照日期**：2026-09-27 · 状态：**P0–P26 全部达成** · 门禁全套 **43 步绿**（native 274 / wasm-gc 174 / 算子 6）· **CI 已接线**：`fast`（12 步）随推送在 **Linux** 上首绿（run `36324100660`，1 分 41 秒——本仓**首次 Linux 验证**）；`full`（43 步 E2E）手动触发于 macOS
+**快照日期**：2026-09-27 · 状态：**P0–P26 全部达成** · 门禁全套 **43 步绿**（native 274 / wasm-gc 174 / 算子 6）· **CI 已接线且两腿均绿**：`fast`（12 步）随推送在 **Linux**（run `36324100660`，1 分 41 秒——本仓**首次 Linux 验证**）；`full`（43 步 E2E）手动在 macOS **首次跑满 43/43**（run `36325414560`，5 分 13 秒）
 
 ---
 
@@ -79,6 +79,7 @@
 | 10 | **盘点浮出两类旧账**：① `gates.sh` 四条编译矩阵腿对**非 "Error" 的失败**报 PASS（实测：把 `moon` 移出 PATH，四条腿全绿——CI runner 装不上工具链时会假装通过）；② 文档漂移——board 头部称「CI 已接线」而自身待办/阻塞仍挂在待办、P21 收口日期写成 09-24（实为 09-25）、README 缺决策 50 且决策 43 错序、architecture/feature-matrix/user-guide/production-readiness 仍写 37 步、roadmap 头部停在「P0–P20 · 37 步」、user-guide 脚本索引缺 P22–P26 五行 | 用户问「当前进度」时的全量盘点（不是门禁抓到的） | 本轮一并修：矩阵腿改看退出码并打印输出（缺工具链 / 编译错 / 成功三路各自实跑验证）；文档计数与 CI 叙事全量对齐；README 补决策 50、43 归位；production-readiness 按维护规则回填 P21–P26 已交付项并改写分级结论 |
 | 11 | **CI 首跑抓出的五件事**（没有一件是读文档能发现的）：① 新机器没有 registry 索引 → `dimon-83/mbel` 解析失败，**十条腿全红**（源码明明已 vendored 在 `.mooncakes/`）；② wasmtime 的头/库路径硬编码 Homebrew → Linux 上 **native 后端根本编不出来**；③ `fs_shim.c` 的 `st_mtimespec` 是 macOS 独有（glibc 为 `st_mtim`）；④ 编译矩阵对"非 `^Error` 的失败"报 PASS（`moon` 移出 PATH 后四条腿全绿）；⑤ `moon info` 吞掉 stderr、只看 `git status` → 依赖图坏掉时照样报"接口新鲜" | 用户提供带 `workflow` scope 的凭据、CI 真跑起来。**注意 ④⑤ 是门禁自己的假绿**——抓它们的是 CI，而 CI 用的正是这两条腿 | ① `moon update` + 索引缓存；② `-I/usr/local/include` + 平台化 dlopen 兜底 + CI 装官方 48.0.2 C API（与本地同版本，决策 14/T15 的镜像尺寸前提）；③ `__APPLE__` 分支；④⑤ 看退出码并打印输出（各自三路/日志实测）。**工具链漂移**（CI 装 latest vs 本地 `0.1.20260629`，而 CDN 拒版本化 URL）在决策 51 给出政策：仓库采纳 CI 那一版，`moon fmt` + `moon info` 重排 59+7+27 个文件（`.mbti` 非空行零变化），本地须 `moon upgrade` |
 | 12 | **决策 50 被插进了决策 49 的段落中间**（我上一轮补决策 50 时，用"行首编号"匹配插入点，而 49 是**多行**段落，于是 50 那行落进了 49 的第一行之后，把 49 截成两半——编号顺序看起来是对的，因为顺序检查也只看了行首） | 写决策 51 时读回文件，发现 49 的段落少了尾巴 | 把 50 移到 49 段落**之后**（按"49 的结尾行"定位，不按行首编号），再追加 51；顺带记教训：**多行段落不要用行首前缀做插入锚点** |
+| 13 | **门禁的启动时序假设**（full 首跑 43 步里 2 红：p12/p13）：两个门禁从**端口**学"服务起来了"，然后立刻 `grep` 一次日志；而 `sc` 是先打印 `listening`、**再**加载凭据表与 OpenSSL 上下文/证书（`apps/cli/node.mbt` 的 `sc` 启动序列）。runner 冷缓存下这个窗口比一次 grep 长——失败输出里的日志只有 `listening` 一行，**距该行出现仅 0.34 ms**（日志时间戳） | 首次手动 full 跑。**注意这是门禁的假设错，不是产品缺陷** | 新增有界等待 `wait_log`（默认 10 s，TLS 处 15 s；超时仍失败并打印日志，断言不减弱），并改掉同类站点（p12 腿 1、p12 腿 2、p13 三处、p24 明文警告）；`p5` 那条不动——它在服务跑完整场之后才查，不存在该竞态。三路单测 + 三条门禁本地回归（p12 10 腿 / p13 5 腿 / p24 4 腿）。**产品无缺陷的证据同在一次跑里**：`e2e-p24-rotation` 做完整 mTLS 轮转（换 CA、旧 CA 被拒、凭据轮换）4 腿全绿——说明 TLS 在 runner 上可用、控制面确实起来了。顺带修掉一个隐藏前置：`scripts/mfs_probe.py` 的 `str | None` 注解没有 `from __future__ import annotations`，等于**隐式要求 Python ≥3.10**（macOS 自带 3.9 直接 TypeError） |
 
 ---
 
