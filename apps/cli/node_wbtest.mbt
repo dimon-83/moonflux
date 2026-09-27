@@ -6,7 +6,7 @@
 
 ///|
 fn rec(id : String, role : @client.NodeRole, leo : Int64) -> @client.NodeRecord {
-  @client.NodeRecord::{ id, role, address: "127.0.0.1:1", leo }
+  @client.NodeRecord::{ id, role, address: "127.0.0.1:1", leo, }
 }
 
 ///|
@@ -113,14 +113,16 @@ test "the ledger yardstick is the best surviving copy" {
   // this mirrors what elect_fallen_leaders does: measure lag against
   // the furthest-along replica, not against the vanished leader
   let progress : Array[@replica.ReplicaProgress] = [
-    @replica.ReplicaProgress::{ spu: "a", leo: 3L },
-    @replica.ReplicaProgress::{ spu: "b", leo: 1200L },
+    @replica.ReplicaProgress::{ spu: "a", leo: 3L, },
+    @replica.ReplicaProgress::{ spu: "b", leo: 1200L, },
   ]
   let ledger = match @replica.ProgressLedger::new("b", progress) {
     Ok(ledger) => ledger
     Err(e) => abort("ledger: \{e}")
   }
-  let policy = @replica.LrsPolicy::{ max_lag_records: @replica.DEFAULT_MAX_LAG }
+  let policy = @replica.LrsPolicy::{
+    max_lag_records: @replica.DEFAULT_MAX_LAG,
+  }
   // asking with a as the reference would call b "caught up" and
   // measure nothing; with b as the yardstick, a is far behind
   assert_eq(@replica.lag_of(ledger, "a"), Some(1197L))

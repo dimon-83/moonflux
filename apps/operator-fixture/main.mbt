@@ -16,7 +16,7 @@ priv struct FixtureState {
 }
 
 ///|
-let state : FixtureState = FixtureState::{ mode: "identity" }
+let state : FixtureState = FixtureState::{ mode: "identity", }
 
 ///|
 pub fn mf_op_abi_version() -> Int {

@@ -159,7 +159,7 @@ pub fn TlsContext::attach(
   if ssl == 0L {
     return Err("cannot create a TLS session: \{shim_error()}")
   }
-  Ok(TlsSession::{ ssl, fd })
+  Ok(TlsSession::{ ssl, fd, })
 }
 
 ///|

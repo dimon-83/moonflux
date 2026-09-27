@@ -63,7 +63,7 @@ fn load_applied(data_dir : String) -> Applied? {
   }
   let spec_text = spec_json.stringify()
   match @spec.parse_spec(spec_text) {
-    Ok(spec) => Some(Applied::{ pipeline: name, spec })
+    Ok(spec) => Some(Applied::{ pipeline: name, spec, })
     Err(errors) => {
       let sb = StringBuilder::new()
       sb.write_string("corrupt \{path}: stored spec no longer valid: ")
@@ -255,7 +255,7 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   let applied = match flags.get("spec") {
     Some(path) => {
       let (spec, _) = load_spec_doc(path)
-      Applied::{ pipeline: spec.metadata_name, spec }
+      Applied::{ pipeline: spec.metadata_name, spec, }
     }
     None =>
       match load_applied(data_dir) {

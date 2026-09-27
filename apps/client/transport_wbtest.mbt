@@ -18,7 +18,7 @@ fn scripted_source(
   pieces : Array[Int],
   bytes : Bytes,
 ) -> (FixedArray[Byte], Int) -> Result[Int, String] {
-  let cursor = ReadCursor::{ at: 0, piece: 0 }
+  let cursor = ReadCursor::{ at: 0, piece: 0, }
   fn(buf, want) {
     if cursor.at >= bytes.length() {
       return Ok(0)

@@ -47,7 +47,7 @@ fn ScalarRegistry::lookup(
 fn load_scalar_registry(data_dir : String) -> Result[ScalarRegistry, String] {
   let path = scalar_registry_path(data_dir)
   match @fs.exists(path) {
-    Ok(false) => Ok(ScalarRegistry::{ revision: 0L, functions: {} })
+    Ok(false) => Ok(ScalarRegistry::{ revision: 0L, functions: {}, })
     _ => {
       let bytes = match @fs.read_file(path) {
         Ok(bytes) => bytes
@@ -137,7 +137,7 @@ fn load_scalar_registry(data_dir : String) -> Result[ScalarRegistry, String] {
           return Err("corrupt \{path}: unknown field \"\{key}\"")
         }
       }
-      Ok(ScalarRegistry::{ revision, functions })
+      Ok(ScalarRegistry::{ revision, functions, })
     }
   }
 }

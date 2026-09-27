@@ -80,4 +80,3 @@ pub fn Reader::remaining(Self) -> Int
 // Type aliases
 
 // Traits
-

@@ -67,7 +67,7 @@ fn RotationWatch::new(tls : TlsWatch?, auth_path : String?) -> RotationWatch {
     Some(path) => auth_mtime = file_mtime_or_zero(path)
     None => ()
   }
-  RotationWatch::{ tls: watch, auth: auth_path, auth_mtime }
+  RotationWatch::{ tls: watch, auth: auth_path, auth_mtime, }
 }
 
 ///|

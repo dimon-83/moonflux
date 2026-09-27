@@ -714,7 +714,7 @@ fn next_frame(conn : HubConnection) -> Result[@client.Frame?, String] {
   head[8].to_uint()).to_int()
   let payload = source[13:13 + payload_len].to_owned()
   conn.consume(13 + payload_len)
-  Ok(Some(@client.Frame::{ cmd, rid, payload }))
+  Ok(Some(@client.Frame::{ cmd, rid, payload, }))
 }
 
 ///|

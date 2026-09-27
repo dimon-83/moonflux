@@ -3,6 +3,4 @@ import {
   "moonflux/core/protocol",
 }
 
-options(
-  "is-main": true,
-)
+pkgtype(kind: "executable")

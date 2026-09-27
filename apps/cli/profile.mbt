@@ -51,7 +51,7 @@ struct ProfileConfig {
 fn ProfileConfig::load() -> Result[ProfileConfig, String] {
   let path = profile_path()
   match @fs.exists(path) {
-    Ok(false) => Ok(ProfileConfig::{ current: None, profiles: {} })
+    Ok(false) => Ok(ProfileConfig::{ current: None, profiles: {}, })
     _ => {
       let bytes = match @fs.read_file(path) {
         Ok(bytes) => bytes
@@ -101,7 +101,7 @@ fn ProfileConfig::load() -> Result[ProfileConfig, String] {
         Some(_) => return Err("corrupt \{path}: \"profiles\" must be an object")
         None => ()
       }
-      Ok(ProfileConfig::{ current, profiles })
+      Ok(ProfileConfig::{ current, profiles, })
     }
   }
 }

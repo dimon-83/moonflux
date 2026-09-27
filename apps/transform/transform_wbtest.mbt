@@ -136,7 +136,7 @@ test "apply_chain composes in order and stops at first failure" {
 
 ///|
 fn userfn(name : String, params : Array[String], body : String) -> RuleFunction {
-  RuleFunction::{ name, params, body }
+  RuleFunction::{ name, params, body, }
 }
 
 ///|

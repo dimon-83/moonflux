@@ -163,4 +163,3 @@ pub(all) struct TruncateReport {
 // Type aliases
 
 // Traits
-

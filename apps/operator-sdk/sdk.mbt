@@ -166,7 +166,7 @@ pub fn config_string(config : Map[String, Json], key : String) -> String? {
 ///|
 /// Identity operator: records pass through unchanged.
 pub fn identity() -> GuestOperator {
-  GuestOperator::{ name: "identity", process: fn(records) { Ok(records) } }
+  GuestOperator::{ name: "identity", process: fn(records) { Ok(records) }, }
 }
 
 ///|
@@ -195,7 +195,7 @@ pub fn uppercase() -> GuestOperator {
 /// Passthrough operator: every record through, unchanged (the batch
 /// face of a scalar-focused module).
 pub fn passthrough() -> GuestOperator {
-  GuestOperator::{ name: "passthrough", process: fn(records) { Ok(records) } }
+  GuestOperator::{ name: "passthrough", process: fn(records) { Ok(records) }, }
 }
 
 ///|

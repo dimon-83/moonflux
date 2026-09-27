@@ -6,12 +6,12 @@
 
 ///|
 fn member(id : String, at : Int64) -> @group.GroupMember {
-  @group.GroupMember::{ id, address: "127.0.0.1:1", last_seen_ms: at }
+  @group.GroupMember::{ id, address: "127.0.0.1:1", last_seen_ms: at, }
 }
 
 ///|
 fn part(topic : String, index : Int) -> @cluster.PartitionId {
-  @cluster.PartitionId::{ topic, index }
+  @cluster.PartitionId::{ topic, index, }
 }
 
 ///|

@@ -316,7 +316,7 @@ pub fn ws_read_frame(conn : @client.Conn) -> Result[WsFrame, String] {
   for i in 0..<len {
     unmasked[i] = (payload[i].to_uint() ^ mask[i % 4].to_uint()).to_byte()
   }
-  Ok(WsFrame::{ opcode, payload: Bytes::from_array(unmasked) })
+  Ok(WsFrame::{ opcode, payload: Bytes::from_array(unmasked), })
 }
 
 ///|
@@ -362,7 +362,7 @@ pub fn ws_write_frame(
 /// Fragmented messages (continuation frames) are reassembled; control
 /// frames are answered here (ping → pong) or end the session (close).
 pub fn ws_transport(conn : @client.Conn) -> @client.Conn {
-  let pending : DuplexBuffer = DuplexBuffer::{ data: b"" }
+  let pending : DuplexBuffer = DuplexBuffer::{ data: b"", }
   @client.Conn::{
     send: fn(bytes) { ws_write_frame(conn, WS_BINARY, bytes) },
     recv_exact: fn(n) {
@@ -411,7 +411,7 @@ priv struct DuplexBuffer {
 /// to tell a browser from a CLI: the sniff consumes them, and they must
 /// not be lost.
 pub fn prefixed_transport(head : Bytes, rest : @client.Conn) -> @client.Conn {
-  let pending = DuplexBuffer::{ data: head }
+  let pending = DuplexBuffer::{ data: head, }
   @client.Conn::{
     send: fn(bytes) { (rest.send)(bytes) },
     recv_exact: fn(n) {

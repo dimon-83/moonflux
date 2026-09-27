@@ -28,7 +28,7 @@ fn group_request(
 /// member that dialled without presenting a credential would look
 /// exactly like a member that meant to.
 fn group_link(token : String?) -> PeerLink {
-  PeerLink::{ token, tls: env_tls_options() }
+  PeerLink::{ token, tls: env_tls_options(), }
 }
 
 ///|
@@ -256,7 +256,10 @@ fn consume_group(
 ) -> Unit {
   let join = @client.GroupJoin::{
     group,
-    member: @client.WireGroupMember::{ id: member, address: "cli:\{cli_pid()}" },
+    member: @client.WireGroupMember::{
+      id: member,
+      address: "cli:\{cli_pid()}",
+    },
     topics,
   }
   let view = match
@@ -528,7 +531,10 @@ fn leave_group(
 ) -> Unit {
   let beat = @client.GroupHeartbeat::{
     group,
-    member: @client.WireGroupMember::{ id: member, address: "cli:\{cli_pid()}" },
+    member: @client.WireGroupMember::{
+      id: member,
+      address: "cli:\{cli_pid()}",
+    },
   }
   match
     group_request(
@@ -551,7 +557,7 @@ fn leader_of(
   partition : Int,
   token : String?,
 ) -> String? {
-  let ref = @client.PartitionRef::{ topic, partition }
+  let ref = @client.PartitionRef::{ topic, partition, }
   let payload = match
     group_request(
       sc_addr,

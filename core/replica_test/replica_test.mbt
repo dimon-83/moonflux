@@ -4,7 +4,7 @@
 
 ///|
 fn progress(spu : String, leo : Int64) -> @replica.ReplicaProgress {
-  @replica.ReplicaProgress::{ spu, leo }
+  @replica.ReplicaProgress::{ spu, leo, }
 }
 
 ///|
@@ -20,7 +20,7 @@ fn ledger(
 
 ///|
 fn policy(max_lag : Int64) -> @replica.LrsPolicy {
-  @replica.LrsPolicy::{ max_lag_records: max_lag }
+  @replica.LrsPolicy::{ max_lag_records: max_lag, }
 }
 
 ///|
@@ -136,9 +136,9 @@ test "read mode clamps at the watermark or the log end" {
 test "nomination is required to become leader" {
   let follower = @replica.ReplicaState::follower("b", "a")
   // self-promotion without a nomination is refused: no split brain
-  let bogus = @replica.Nomination::{ partition_leader: "a", candidate: "c" }
+  let bogus = @replica.Nomination::{ partition_leader: "a", candidate: "c", }
   assert_true(@replica.promote(follower, bogus) is Err(IllegalTransition(_)))
-  let mine = @replica.Nomination::{ partition_leader: "a", candidate: "b" }
+  let mine = @replica.Nomination::{ partition_leader: "a", candidate: "b", }
   let leader = match @replica.promote(follower, mine) {
     Ok(s) => s
     Err(e) => abort("promote: \{e}")

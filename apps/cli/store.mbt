@@ -76,7 +76,7 @@ fn retention_policy() -> @log.RetentionPolicy {
       }
     None => 0L
   }
-  @log.RetentionPolicy::{ max_bytes, max_age_ms }
+  @log.RetentionPolicy::{ max_bytes, max_age_ms, }
 }
 
 ///|

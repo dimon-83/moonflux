@@ -35,7 +35,7 @@ fn AuthConfig::load_result(data_dir : String) -> Result[AuthConfig, String] {
   let path = auth_path(data_dir)
   match @fs.exists(path) {
     Ok(true) => ()
-    _ => return Ok(AuthConfig::{ credentials: [] })
+    _ => return Ok(AuthConfig::{ credentials: [], })
   }
   let bytes = match @fs.read_file(path) {
     Ok(bytes) => bytes
@@ -124,14 +124,14 @@ fn AuthConfig::load_result(data_dir : String) -> Result[AuthConfig, String] {
               "\{path}: grant \{topic} grants neither read nor write — delete it instead",
             )
           }
-          parsed.push(@auth.TopicGrant::{ topic, read, write })
+          parsed.push(@auth.TopicGrant::{ topic, read, write, })
         }
         parsed
       }
       Some(_) => return Err("corrupt \{path}: grants must be an array")
       None => []
     }
-    credentials.push(@auth.Credential::{ name, token, role, grants })
+    credentials.push(@auth.Credential::{ name, token, role, grants, })
   }
   Ok(AuthConfig::{ credentials, })
 }
@@ -301,7 +301,7 @@ fn env_tls_options() -> TlsOptions? {
 fn tls_options_from(ca : String?, cert : String?, key : String?) -> TlsOptions? {
   match ca {
     None => None
-    Some(ca) => Some(TlsOptions::{ ca, cert, key })
+    Some(ca) => Some(TlsOptions::{ ca, cert, key, })
   }
 }
 
@@ -390,7 +390,7 @@ pub(all) struct PeerLink {
 /// TLS). The same flags a client reads, because it is the same question:
 /// a node is a client of its peers.
 fn peer_link(flags : Flags) -> PeerLink {
-  PeerLink::{ token: client_token(flags), tls: tls_options(flags) }
+  PeerLink::{ token: client_token(flags), tls: tls_options(flags), }
 }
 
 ///|

@@ -5,7 +5,7 @@
 
 ///|
 fn cred(name : String, token : String, role : @auth.Role) -> @auth.Credential {
-  @auth.Credential::{ name, token, role, grants: [] }
+  @auth.Credential::{ name, token, role, grants: [], }
 }
 
 ///|
@@ -18,7 +18,7 @@ test "roles resolve from tokens, and nothing else does" {
   ]
   assert_eq(
     @auth.authenticate(table, "s3cret-app"),
-    Some(@auth.Identity::{ name: "app", role: ReadWrite, grants: [] }),
+    Some(@auth.Identity::{ name: "app", role: ReadWrite, grants: [], }),
   )
   assert_eq(@auth.authenticate(table, "wrong"), None)
   assert_eq(@auth.authenticate(table, ""), None)
@@ -129,10 +129,10 @@ test "token comparison does not leak where a difference is" {
 
 ///|
 test "authorize_topic: no grants means the role alone governs" {
-  let identity = @auth.Identity::{ name: "app", role: ReadWrite, grants: [] }
+  let identity = @auth.Identity::{ name: "app", role: ReadWrite, grants: [], }
   assert_true(@auth.authorize_topic(identity, "events", write=true) is Ok(_))
   assert_true(@auth.authorize_topic(identity, "events", write=false) is Ok(_))
-  let reader = @auth.Identity::{ name: "ro", role: ReadOnly, grants: [] }
+  let reader = @auth.Identity::{ name: "ro", role: ReadOnly, grants: [], }
   // the ROLE table still governs kind: this second gate narrows, it
   // does not widen (the runner checks permit first)
   assert_true(@auth.authorize_topic(reader, "events", write=true) is Ok(_))
@@ -141,8 +141,8 @@ test "authorize_topic: no grants means the role alone governs" {
 ///|
 test "authorize_topic: grants narrow to their topics" {
   let granted = [
-    @auth.TopicGrant::{ topic: "orders", read: true, write: true },
-    @auth.TopicGrant::{ topic: "audit", read: true, write: false },
+    @auth.TopicGrant::{ topic: "orders", read: true, write: true, },
+    @auth.TopicGrant::{ topic: "audit", read: true, write: false, },
   ]
   let identity = @auth.Identity::{
     name: "svc",
@@ -171,12 +171,12 @@ test "authorize_topic: grants narrow to their topics" {
 
 ///|
 test "authorize_topic: nodes and root are infrastructure, not tenants" {
-  let node = @auth.Identity::{ name: "spu-a", role: Node, grants: [] }
+  let node = @auth.Identity::{ name: "spu-a", role: Node, grants: [], }
   assert_true(@auth.authorize_topic(node, "anything", write=true) is Ok(_))
   let root = @auth.Identity::{
     name: "root",
     role: Root,
-    grants: [@auth.TopicGrant::{ topic: "narrow", read: true, write: false }],
+    grants: [@auth.TopicGrant::{ topic: "narrow", read: true, write: false, }],
   }
   // even a Root whose grants would narrow it stays Root: grants narrow
   // tenants, and the operator is not one

@@ -24,7 +24,7 @@ struct RuleState {
 
 ///|
 fn RuleState::new() -> RuleState {
-  RuleState::{ chain: [], pipeline: "", stamp: -1L }
+  RuleState::{ chain: [], pipeline: "", stamp: -1L, }
 }
 
 ///|

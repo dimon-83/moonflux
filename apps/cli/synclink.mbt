@@ -212,7 +212,7 @@ fn SyncLink::call(
     send_all(
       pump,
       self.stream,
-      @client.encode_frame(@client.Frame::{ cmd, rid: 1, payload }),
+      @client.encode_frame(@client.Frame::{ cmd, rid: 1, payload, }),
       deadline,
     ) {
     Ok(_) => ()
@@ -325,7 +325,7 @@ fn await_frame(
         for b in rest {
           inbox.push(b)
         }
-        return Ok(@client.Frame::{ cmd, rid, payload })
+        return Ok(@client.Frame::{ cmd, rid, payload, })
       }
     }
     if closed {

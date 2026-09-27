@@ -136,7 +136,7 @@ pub fn compile_with(
   let compiled = engine.compile(expr) catch {
     e => return Err(bounded("compile: \{error_text(e)}"))
   }
-  Ok(Transform::{ source: expr, expr: compiled })
+  Ok(Transform::{ source: expr, expr: compiled, })
 }
 
 ///|

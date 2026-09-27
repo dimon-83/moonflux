@@ -5,8 +5,9 @@ import {
   "moonflux/apps/operator-sdk" @sdk,
 }
 
+pkgtype(kind: "executable")
+
 options(
-  "is-main": true,
   link: {
     "wasm": {
       "exports": [

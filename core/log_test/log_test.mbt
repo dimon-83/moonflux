@@ -14,7 +14,7 @@ fn rec(value : String) -> @protocol.Record {
 
 ///|
 fn entry(offset : Int64, value : String) -> @log.LogEntry {
-  @log.LogEntry::{ offset, record: rec(value) }
+  @log.LogEntry::{ offset, record: rec(value), }
 }
 
 ///|
@@ -615,8 +615,8 @@ test "a store that is not one log is refused, not repaired" {
     open_index: fn(_base) { Ok(@log.MemorySegment::new().handle()) },
     list: fn() {
       Ok([
-        @log.SegmentInfo::{ base: 0L, size: 0, created_ms: 0L },
-        @log.SegmentInfo::{ base: 0L, size: 0, created_ms: 0L },
+        @log.SegmentInfo::{ base: 0L, size: 0, created_ms: 0L, },
+        @log.SegmentInfo::{ base: 0L, size: 0, created_ms: 0L, },
       ])
     },
     remove: fn(_base) { Ok(()) },
@@ -997,7 +997,7 @@ fn offsets_of(entries : Array[@log.LogEntry]) -> Array[Int64] {
 
 ///|
 fn compaction_on() -> @log.CompactionPolicy {
-  @log.CompactionPolicy::{ min_dirty_bytes: 0 }
+  @log.CompactionPolicy::{ min_dirty_bytes: 0, }
 }
 
 ///|

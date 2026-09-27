@@ -101,7 +101,7 @@ pub fn ProgressLedger::new(
   if !has_leader {
     return Err(BadReplicaSet("leader \{leader} is not in the replica set"))
   }
-  Ok(ProgressLedger::{ leader, replicas })
+  Ok(ProgressLedger::{ leader, replicas, })
 }
 
 ///|
@@ -122,7 +122,7 @@ pub fn ProgressLedger::observe(
   for i in 0..<self.replicas.length() {
     if self.replicas[i].spu == spu {
       if leo > self.replicas[i].leo {
-        self.replicas[i] = ReplicaProgress::{ spu, leo }
+        self.replicas[i] = ReplicaProgress::{ spu, leo, }
       }
       return Ok(())
     }
@@ -286,7 +286,7 @@ pub(all) struct ReplicaState {
 
 ///|
 pub fn ReplicaState::follower(spu : String, leader : String) -> ReplicaState {
-  ReplicaState::{ spu, role: Follower, leader: Some(leader) }
+  ReplicaState::{ spu, role: Follower, leader: Some(leader), }
 }
 
 ///|
@@ -320,7 +320,7 @@ pub fn promote(
   if state.role is Leader {
     return Err(IllegalTransition("\{state.spu} is already leader"))
   }
-  Ok(ReplicaState::{ spu: state.spu, role: Leader, leader: Some(state.spu) })
+  Ok(ReplicaState::{ spu: state.spu, role: Leader, leader: Some(state.spu), })
 }
 
 ///|
@@ -334,7 +334,7 @@ pub fn follow(state : ReplicaState, leader : String) -> ReplicaState {
     // surface rather than silently accept
     return state
   }
-  ReplicaState::{ spu: state.spu, role: Follower, leader: Some(leader) }
+  ReplicaState::{ spu: state.spu, role: Follower, leader: Some(leader), }
 }
 
 ///|

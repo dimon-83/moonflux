@@ -244,5 +244,5 @@ fn segment_info_for(
     Ok(stamp) => stamp / 1000000L
     Err(_) => 0L
   }
-  Ok(@log.SegmentInfo::{ base, size, created_ms })
+  Ok(@log.SegmentInfo::{ base, size, created_ms, })
 }

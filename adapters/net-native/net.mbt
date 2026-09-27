@@ -249,7 +249,7 @@ pub fn TcpListener::bind_listen(
     Err(e) => return Err(e)
   }
   match io_result(net_bind_listen(h, h.length(), port), "bind") {
-    Ok(fd) => Ok(TcpListener::{ fd, accept_timeout_ms: 0 })
+    Ok(fd) => Ok(TcpListener::{ fd, accept_timeout_ms: 0, })
     Err(e) => Err(e)
   }
 }
@@ -291,7 +291,7 @@ pub fn TcpListener::close(self : TcpListener) -> Result[Unit, NetError] {
 pub fn socketpair() -> Result[(TcpStream, TcpStream), NetError] {
   let pair : FixedArray[Int] = FixedArray::make(2, 0)
   match io_result(net_socketpair(pair), "socketpair") {
-    Ok(_) => Ok((TcpStream::{ fd: pair[0] }, TcpStream::{ fd: pair[1] }))
+    Ok(_) => Ok((TcpStream::{ fd: pair[0], }, TcpStream::{ fd: pair[1], }))
     Err(e) => Err(e)
   }
 }

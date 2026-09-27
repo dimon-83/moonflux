@@ -129,7 +129,7 @@ pub fn text_records_keyed(
       }
     }
   }
-  ShapedText::{ records, skipped }
+  ShapedText::{ records, skipped, }
 }
 
 ///|
@@ -160,7 +160,7 @@ pub fn value_text(r : @protocol.Record) -> String {
 /// the first pull reads the whole file, the second says `Exhausted` —
 /// the path is not tailed (a re-read would replay it).
 pub fn file_source(path : String, timestamp : Int64) -> Source {
-  let state = OnceState::{ delivered: false }
+  let state = OnceState::{ delivered: false, }
   Source::{
     name: "file:\{path}",
     pull: fn() {
@@ -182,7 +182,7 @@ pub fn file_source(path : String, timestamp : Int64) -> Source {
 /// Stdin source: newline-delimited text from standard input to EOF.
 /// One-shot, same contract as the file source.
 pub fn stdin_source(timestamp : Int64) -> Source {
-  let state = OnceState::{ delivered: false }
+  let state = OnceState::{ delivered: false, }
   Source::{
     name: "stdin",
     pull: fn() {
@@ -204,7 +204,7 @@ pub fn stdin_source(timestamp : Int64) -> Source {
 /// HTTP GET source: fetch a URL, split the response body into lines.
 /// One-shot: HTTP GET is a question, not a subscription.
 pub fn http_source(url : String, timestamp : Int64) -> Source {
-  let state = OnceState::{ delivered: false }
+  let state = OnceState::{ delivered: false, }
   Source::{
     name: "http-get:\{url}",
     pull: fn() {

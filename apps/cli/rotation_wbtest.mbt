@@ -46,7 +46,7 @@ test "load_result answers Err for a corrupt table instead of exiting" {
 test "a changed auth.json is swapped in on the next check" {
   let dir = rotation_dir("swap")
   write_credentials(dir, "before")
-  let gate = AuthGate::{ config: AuthConfig::load(dir), data_dir: dir }
+  let gate = AuthGate::{ config: AuthConfig::load(dir), data_dir: dir, }
   assert_eq(gate.config.credentials[0].name, "before")
   let watch = RotationWatch::new(None, Some(auth_path(dir)))
   let hub = ConnectionHub::new(
@@ -72,7 +72,7 @@ test "a changed auth.json is swapped in on the next check" {
 test "a vanished auth.json does not crash the watcher" {
   let dir = rotation_dir("vanished")
   write_credentials(dir, "temp")
-  let gate = AuthGate::{ config: AuthConfig::load(dir), data_dir: dir }
+  let gate = AuthGate::{ config: AuthConfig::load(dir), data_dir: dir, }
   let watch = RotationWatch::new(None, Some(auth_path(dir)))
   let _ = @fs.remove_file("\{dir}/auth.json")
   let hub = ConnectionHub::new(

@@ -37,7 +37,7 @@ fn record_from_json(j : Json) -> Record {
       }
     }
   }
-  Record::{ timestamp, key, value, headers }
+  Record::{ timestamp, key, value, headers, }
 }
 
 ///|

@@ -205,7 +205,7 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
   let json = @json.parse(text[0:text.length()]) catch {
     e =>
       return Err([
-        SpecError::{ path: "$", code: "invalid-json", message: "\{e}" },
+        SpecError::{ path: "$", code: "invalid-json", message: "\{e}", },
       ])
   }
   if json is Object(root) {

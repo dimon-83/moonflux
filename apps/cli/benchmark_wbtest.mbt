@@ -65,7 +65,7 @@ test "bench_entry_ok trusts only values that carry a header" {
   fn entry_at(offset : Int64, value : Bytes) -> @log.LogEntry {
     @log.LogEntry::{
       offset,
-      record: @protocol.Record::{ timestamp: 0L, key: b"", value, headers: [] },
+      record: @protocol.Record::{ timestamp: 0L, key: b"", value, headers: [], },
     }
   }
   // header matches the offset: intact

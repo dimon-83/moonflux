@@ -24,7 +24,8 @@ import {
   "moonflux/adapters/wasmtime-native" @wasmtime,
 }
 
+pkgtype(kind: "executable")
+
 options(
-  "is-main": true,
   "native-stub": [ "cli_shim.c" ],
 )

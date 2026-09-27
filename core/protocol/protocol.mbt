@@ -346,7 +346,7 @@ fn decode_record(reader : @codec.Reader) -> Result[Record, ProtocolError] {
   if br.remaining() != 0 {
     return Err(MalformedLength)
   }
-  Ok(Record::{ timestamp, key, value, headers })
+  Ok(Record::{ timestamp, key, value, headers, })
 }
 
 ///|
@@ -424,7 +424,7 @@ pub fn decode_frame(
   if br.remaining() != 0 {
     return Err(MalformedLength)
   }
-  Ok(DecodedBatch::{ base_offset, records })
+  Ok(DecodedBatch::{ base_offset, records, })
 }
 
 ///|

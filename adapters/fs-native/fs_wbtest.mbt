@@ -79,7 +79,7 @@ test "segment file survives reopen with committed prefix intact" {
     }
   }
   let entry = fn(offset : Int64, value : String) -> @log.LogEntry {
-    @log.LogEntry::{ offset, record: records(value) }
+    @log.LogEntry::{ offset, record: records(value), }
   }
   let first = match open_segment_file(path) {
     Ok(h) => h

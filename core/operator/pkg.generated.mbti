@@ -107,4 +107,3 @@ pub(all) enum ScalarValue {
 // Type aliases
 
 // Traits
-

@@ -29,7 +29,7 @@ fn ClusterAsset::load(data_dir : String) -> ClusterAsset {
   let path = cluster_pipeline_path(data_dir)
   match @fs.exists(path) {
     Ok(true) => ()
-    _ => return ClusterAsset::{ data_dir, revision: 0L, spec_json: "" }
+    _ => return ClusterAsset::{ data_dir, revision: 0L, spec_json: "", }
   }
   let bytes = match @fs.read_file(path) {
     Ok(bytes) => bytes
@@ -47,7 +47,7 @@ fn ClusterAsset::load(data_dir : String) -> ClusterAsset {
     Some(spec) => spec.stringify()
     None => ""
   }
-  ClusterAsset::{ data_dir, revision, spec_json }
+  ClusterAsset::{ data_dir, revision, spec_json, }
 }
 
 ///|

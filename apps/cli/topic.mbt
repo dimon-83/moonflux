@@ -39,7 +39,7 @@ fn topic_create(argv : Array[String]) -> Unit {
     Some(text) => parse_positive(text, "replication-factor")
     None => 1
   }
-  let wire = @client.WireTopic::{ name, partitions, replication_factor: rf }
+  let wire = @client.WireTopic::{ name, partitions, replication_factor: rf, }
   let payload = match
     control_call_secure(
       remote,
@@ -88,7 +88,7 @@ fn topic_delete(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let remote = resolve_remote(flags)
   let name = flags.require("name")
-  let wire = @client.WireTopic::{ name, partitions: 0, replication_factor: 0 }
+  let wire = @client.WireTopic::{ name, partitions: 0, replication_factor: 0, }
   match
     control_call_secure(
       remote,

@@ -81,7 +81,7 @@ priv struct LogCache {
 
 ///|
 fn LogCache::new() -> LogCache {
-  LogCache::{ entries: [], clock: 0 }
+  LogCache::{ entries: [], clock: 0, }
 }
 
 ///|

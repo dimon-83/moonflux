@@ -84,7 +84,7 @@ fn GroupRegistry::new(data_dir : String, timeout_ms : Int64) -> GroupRegistry {
     }
     _ => ()
   }
-  GroupRegistry::{ data_dir, timeout_ms, groups }
+  GroupRegistry::{ data_dir, timeout_ms, groups, }
 }
 
 ///|
@@ -250,7 +250,7 @@ fn group_partitions(
       count = disk
     }
     for i = 0; i < count; i = i + 1 {
-      out.push(@cluster.PartitionId::{ topic, index: i })
+      out.push(@cluster.PartitionId::{ topic, index: i, })
     }
   }
   out

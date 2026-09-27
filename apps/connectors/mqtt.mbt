@@ -77,7 +77,7 @@ pub fn parse_mqtt_url(url : String) -> Result[MqttUrl, String] {
   if host.length() == 0 {
     return Err("mqtt url needs a host")
   }
-  Ok(MqttUrl::{ host, port, topic, user, password })
+  Ok(MqttUrl::{ host, port, topic, user, password, })
 }
 
 // ---------------------------------------------------------------------------
@@ -307,7 +307,7 @@ priv struct MqttSourceState {
 /// run's start — a subscription outlives any single instant.
 pub fn mqtt_source(url : String) -> Source {
   let parsed = parse_mqtt_url(url)
-  let state = MqttSourceState::{ stream: None, last_io_ms: 0L }
+  let state = MqttSourceState::{ stream: None, last_io_ms: 0L, }
   Source::{
     name: "mqtt:\{url}",
     pull: fn() {
@@ -402,7 +402,7 @@ priv struct MqttSinkState {
 /// a reconnect loop.
 pub fn mqtt_sink(url : String) -> Sink {
   let parsed = parse_mqtt_url(url)
-  let state = MqttSinkState::{ stream: None }
+  let state = MqttSinkState::{ stream: None, }
   Sink::{
     name: "mqtt-publish:\{url}",
     flush: fn(records) {

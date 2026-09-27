@@ -64,14 +64,14 @@ fn load_or_create_identity(
         Some(String(a)) => a
         _ => address
       }
-      Ok(NodeIdentity::{ id, role: stored_role, address: stored_address })
+      Ok(NodeIdentity::{ id, role: stored_role, address: stored_address, })
     }
     Err(_) => {
       match @fs.mkdirs(data_dir) {
         Ok(_) => ()
         Err(e) => return Err("mkdir \{data_dir}: \{e}")
       }
-      let identity = NodeIdentity::{ id: default_id, role, address }
+      let identity = NodeIdentity::{ id: default_id, role, address, }
       let doc_map : Map[String, Json] = {}
       doc_map["id"] = Json::string(identity.id)
       doc_map["role"] = Json::string(@client.role_name(identity.role))
@@ -218,7 +218,7 @@ fn control_call_on(
     }
     None => ()
   }
-  match conn.send_frame(@client.Frame::{ cmd, rid: 1, payload }) {
+  match conn.send_frame(@client.Frame::{ cmd, rid: 1, payload, }) {
     Ok(_) => ()
     Err(e) => return Err("send: \{e}")
   }
@@ -425,9 +425,9 @@ fn cmd_spu(argv : Array[String]) -> Unit {
       let reply = dispatch_data_frame(
         frame, data_dir, rules, hosts, sc_addr, identity,
       )
-      @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1 }
+      @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1, }
     },
-    auth: AuthGate::{ config: auth_config, data_dir },
+    auth: AuthGate::{ config: auth_config, data_dir, },
     on_ready: fn() { () },
   }
   // the pump: what every outbound call does first. It is the same
@@ -439,7 +439,7 @@ fn cmd_spu(argv : Array[String]) -> Unit {
   let mut registered = false
   let mut last_assignment_count = -1
   // adoption failures are reported once per revision, not per heartbeat
-  let adoption = AdoptionState::{ failed_revision: -1L, reported: false }
+  let adoption = AdoptionState::{ failed_revision: -1L, reported: false, }
   while true {
     let _ = hub.poll_once(handler, fn(_kind) { () })
     match sc {
@@ -608,9 +608,9 @@ fn cmd_sc(argv : Array[String]) -> Unit {
       let reply = dispatch_control_frame(
         frame, data_dir, table, placement, store, groups, asset, identity,
       )
-      @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1 }
+      @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1, }
     },
-    auth: AuthGate::{ config: control_auth, data_dir },
+    auth: AuthGate::{ config: control_auth, data_dir, },
     on_ready: fn() { () },
   }
   note("serving connections concurrently (one thread, poll-driven)")
@@ -734,7 +734,7 @@ struct NodeTable {
 
 ///|
 fn NodeTable::new(timeout_ms : Int) -> NodeTable {
-  NodeTable::{ entries: [], timeout_ms }
+  NodeTable::{ entries: [], timeout_ms, }
 }
 
 ///|
@@ -1178,7 +1178,7 @@ fn dispatch_control_frame(
   }
   let frame_out = match reply {
     Ok(payload) =>
-      @client.Frame::{ cmd: @client.CMD_OK, rid: frame.rid, payload }
+      @client.Frame::{ cmd: @client.CMD_OK, rid: frame.rid, payload, }
     Err((code, message)) =>
       @client.Frame::{
         cmd: @client.CMD_ERR,
@@ -1364,7 +1364,7 @@ fn PartitionHost::adopt_view(
             None => 0L
           }
         }
-        progress.push(@replica.ReplicaProgress::{ spu: address, leo })
+        progress.push(@replica.ReplicaProgress::{ spu: address, leo, })
       }
       match @replica.ProgressLedger::new(self.address, progress) {
         Ok(ledger) => {
@@ -1616,7 +1616,7 @@ fn sync_fetch(
   max_records : Int,
 ) -> Result[@client.SyncResponse, String] {
   let request = @client.SyncRequest::{
-    partition: @client.PartitionRef::{ topic, partition },
+    partition: @client.PartitionRef::{ topic, partition, },
     from,
     max_records,
   }
@@ -1645,7 +1645,7 @@ fn sync_ack(
   leo : Int64,
 ) -> Result[(Int64, Int64), String] {
   let ack = @client.SyncAck::{
-    partition: @client.PartitionRef::{ topic, partition },
+    partition: @client.PartitionRef::{ topic, partition, },
     from,
     leo,
   }
@@ -1674,7 +1674,7 @@ fn ask_leader(
   partition : Int,
   link : PeerLink,
 ) -> Result[@client.PartitionView, String] {
-  let ref = @client.PartitionRef::{ topic, partition }
+  let ref = @client.PartitionRef::{ topic, partition, }
   let payload = match
     control_call_secure(
       sc_addr,
@@ -1777,7 +1777,7 @@ fn PartitionHost::take_nomination(
   }
   for replica in replicas {
     let leo = if replica == self.address { self.leo() } else { 0L }
-    progress.push(@replica.ReplicaProgress::{ spu: replica, leo })
+    progress.push(@replica.ReplicaProgress::{ spu: replica, leo, })
   }
   match @replica.ProgressLedger::new(self.address, progress) {
     Ok(ledger) => self.ledger = Some(ledger)
@@ -1800,7 +1800,7 @@ fn confirm_leadership(
   link : PeerLink,
 ) -> Result[Unit, String] {
   let confirmation = @client.Confirmation::{
-    partition: @client.PartitionRef::{ topic, partition },
+    partition: @client.PartitionRef::{ topic, partition, },
     candidate,
   }
   match
@@ -1848,7 +1848,7 @@ fn HostTable::new(
   address : String,
   link : PeerLink,
 ) -> HostTable {
-  HostTable::{ data_dir, node_id, address, link, applied_topic: "", hosts: [] }
+  HostTable::{ data_dir, node_id, address, link, applied_topic: "", hosts: [], }
 }
 
 ///|
@@ -2163,7 +2163,7 @@ fn peek_committed_ref(payload : Bytes) -> Result[@client.PartitionRef, String] {
     Ok(topic) => topic
     Err(e) => return Err(e)
   }
-  Ok(@client.PartitionRef::{ topic, partition: 0 })
+  Ok(@client.PartitionRef::{ topic, partition: 0, })
 }
 
 ///|
@@ -2386,7 +2386,7 @@ fn dispatch_data_frame(
       let ref = match @client.decode_partitioned_produce(frame.payload) {
         Ok(parts) => {
           let (topic, partition, _frame) = parts
-          @client.PartitionRef::{ topic, partition }
+          @client.PartitionRef::{ topic, partition, }
         }
         Err(e) =>
           return (
@@ -2744,7 +2744,7 @@ fn cluster_state_path(data_dir : String) -> String {
 fn PlacementState::new(data_dir : String) -> PlacementState {
   let empty = PlacementState::{
     data_dir,
-    state: @cluster.ClusterState::{ partitions: [] },
+    state: @cluster.ClusterState::{ partitions: [], },
     declarations: [],
     assigned: [],
     nominated: [],
@@ -2838,7 +2838,7 @@ fn parse_replica_set(json : Json) -> @cluster.ReplicaSet? {
     return None
   }
   Some(@cluster.ReplicaSet::{
-    partition: @cluster.PartitionId::{ topic, index },
+    partition: @cluster.PartitionId::{ topic, index, },
     leader,
     replicas,
   })
@@ -2911,7 +2911,7 @@ fn PlacementState::tick(self : PlacementState, table : NodeTable) -> Unit {
   }
   let spus : Array[@cluster.SpuSpec] = []
   for address in pool {
-    spus.push(@cluster.SpuSpec::{ id: address, address })
+    spus.push(@cluster.SpuSpec::{ id: address, address, })
   }
   let topics : Array[@cluster.TopicSpec] = []
   for decl in declarations {
@@ -2921,7 +2921,7 @@ fn PlacementState::tick(self : PlacementState, table : NodeTable) -> Unit {
       replication_factor: decl.replication_factor,
     })
   }
-  let spec = @cluster.ClusterSpec::{ topics, spus }
+  let spec = @cluster.ClusterSpec::{ topics, spus, }
   match @cluster.reconcile(self.state, spec) {
     Err(e) =>
       // a refused reconcile is a steady state, not an event storm:
@@ -3001,7 +3001,7 @@ fn PlacementState::elect_fallen_leaders(
       // (P7): a node that is far along on another partition is not
       // therefore a good candidate for this one
       let leo = table.leo_of(replica, rs.partition.topic, rs.partition.index)
-      progress.push(@replica.ReplicaProgress::{ spu: replica, leo })
+      progress.push(@replica.ReplicaProgress::{ spu: replica, leo, })
     }
     // the yardstick is the best *surviving* copy, not the vanished
     // leader's last number: measuring "too far behind" against a node
@@ -3127,7 +3127,7 @@ fn PlacementState::confirm(
       updated.push(rs)
     }
   }
-  self.state = @cluster.ClusterState::{ partitions: updated }
+  self.state = @cluster.ClusterState::{ partitions: updated, }
   self.clear_nomination(label)
   let kept : Array[String] = []
   for seen in self.reported_offline {
@@ -3195,10 +3195,14 @@ fn PlacementState::view(
       // a leader that has gone silent leads nothing: report nobody
       // (the nomination still travels, so a candidate can take over)
       let leader = if self.online.contains(rs.leader) { rs.leader } else { "" }
-      return @client.PartitionView::{ leader, replicas: rs.replicas, nominated }
+      return @client.PartitionView::{
+        leader,
+        replicas: rs.replicas,
+        nominated,
+      }
     }
   }
-  @client.PartitionView::{ leader: "", replicas: [], nominated }
+  @client.PartitionView::{ leader: "", replicas: [], nominated, }
 }
 
 ///|

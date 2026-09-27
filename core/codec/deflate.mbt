@@ -30,7 +30,7 @@ struct DeflateBitReader {
 
 ///|
 fn DeflateBitReader::new(bytes : Bytes) -> DeflateBitReader {
-  { bytes, pos: 0, bit: 0 }
+  { bytes, pos: 0, bit: 0, }
 }
 
 ///|
@@ -114,7 +114,7 @@ fn huffman_build(lengths : Array[Int]) -> HuffmanTable? {
       offs[lengths[symbol]] = offs[lengths[symbol]] + 1
     }
   }
-  Some({ counts, symbols })
+  Some({ counts, symbols, })
 }
 
 ///|
@@ -426,7 +426,7 @@ struct DeflateBitWriter {
 
 ///|
 fn DeflateBitWriter::new() -> DeflateBitWriter {
-  { out: Buffer::Buffer(), acc: 0, nbits: 0 }
+  { out: Buffer::Buffer(), acc: 0, nbits: 0, }
 }
 
 ///|

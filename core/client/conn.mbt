@@ -58,7 +58,7 @@ pub fn Conn::recv_first(self : Conn) -> FirstRead {
     Ok(payload) => payload
     Err(e) => return Garbage(e)
   }
-  Got(Frame::{ cmd, rid, payload })
+  Got(Frame::{ cmd, rid, payload, })
 }
 
 ///|
@@ -87,7 +87,7 @@ pub fn Conn::recv_frame(self : Conn) -> Result[Frame?, String] {
     Ok(payload) => payload
     Err(e) => return Err(e)
   }
-  Ok(Some(Frame::{ cmd, rid, payload }))
+  Ok(Some(Frame::{ cmd, rid, payload, }))
 }
 
 ///|
@@ -108,8 +108,8 @@ priv struct DuplexCell {
 /// it, and a read that would block is an error — the same contract the
 /// socket transports have, minus the OS.
 pub fn Conn::memory_pair() -> (Conn, Conn) {
-  let a_inbox = DuplexCell::{ pending: b"" }
-  let b_inbox = DuplexCell::{ pending: b"" }
+  let a_inbox = DuplexCell::{ pending: b"", }
+  let b_inbox = DuplexCell::{ pending: b"", }
   fn make(inbox : DuplexCell, outbox : DuplexCell) -> Conn {
     Conn::{
       send: fn(bytes) {

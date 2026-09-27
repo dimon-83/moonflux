@@ -27,4 +27,3 @@ pub fn mf_editor_validate(String) -> String
 // Type aliases
 
 // Traits
-

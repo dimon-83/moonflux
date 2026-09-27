@@ -148,7 +148,7 @@ pub fn file_metadata_store(data_dir : String) -> MetadataStore {
           return Err(Corrupt("\{path}: function_sets must be an array"))
         None => ()
       }
-      Ok(ClusterMetadata::{ topics, function_sets, version })
+      Ok(ClusterMetadata::{ topics, function_sets, version, })
     },
     save: fn(metadata) {
       let items : Array[Json] = []
@@ -193,7 +193,7 @@ pub fn file_metadata_store(data_dir : String) -> MetadataStore {
 /// without a data dir.
 pub fn memory_metadata_store() -> MetadataStore {
   let cell : Array[ClusterMetadata] = [
-    ClusterMetadata::{ topics: [], function_sets: [], version: 0L },
+    ClusterMetadata::{ topics: [], function_sets: [], version: 0L, },
   ]
   MetadataStore::{
     load: fn() { Ok(cell[0]) },
@@ -222,7 +222,7 @@ fn decode_topic_doc(json : Json) -> Result[ClusterMetadataTopic, MetadataError] 
     Some(Number(n)) => n.to_int()
     _ => 1
   }
-  Ok(ClusterMetadataTopic::{ name, partitions, replication_factor: rf })
+  Ok(ClusterMetadataTopic::{ name, partitions, replication_factor: rf, })
 }
 
 ///|
@@ -406,7 +406,7 @@ fn decode_function_doc(
       return Err(Corrupt("function \{name}: description must be a string"))
     None => None
   }
-  Ok(ClusterMetadataFunction::{ name, params, body, description })
+  Ok(ClusterMetadataFunction::{ name, params, body, description, })
 }
 
 ///|
@@ -440,7 +440,7 @@ fn decode_function_set_doc(
       return Err(Corrupt("function set \{name}: functions must be an array"))
     None => return Err(Corrupt("function set \{name} needs a functions array"))
   }
-  Ok(ClusterMetadataFunctionSet::{ name, revision, functions })
+  Ok(ClusterMetadataFunctionSet::{ name, revision, functions, })
 }
 
 ///|
@@ -628,7 +628,7 @@ pub fn adopt_function_set(
       sets.push(set)
     }
   }
-  let adopted = ClusterMetadataFunctionSet::{ name, revision, functions }
+  let adopted = ClusterMetadataFunctionSet::{ name, revision, functions, }
   sets.push(adopted)
   let next = ClusterMetadata::{
     topics: current.topics,
@@ -681,7 +681,7 @@ pub fn create_function_set(
       sets.push(set)
     }
   }
-  let created = ClusterMetadataFunctionSet::{ name, revision, functions }
+  let created = ClusterMetadataFunctionSet::{ name, revision, functions, }
   sets.push(created)
   let next = ClusterMetadata::{
     topics: current.topics,

@@ -123,7 +123,7 @@ fn request(
   cmd : Int,
   payload : Bytes,
 ) -> Result[Frame, ClientError] {
-  match conn.send_frame(Frame::{ cmd, rid, payload }) {
+  match conn.send_frame(Frame::{ cmd, rid, payload, }) {
     Ok(_) => ()
     Err(e) => return Err(Transport(e))
   }
@@ -149,7 +149,7 @@ pub fn Producer::from_conn_with(
     Ok(session) => session
     Err(e) => return Err(e)
   }
-  Ok(Producer::{ conn, next_rid: 2, session })
+  Ok(Producer::{ conn, next_rid: 2, session, })
 }
 
 ///|
@@ -159,7 +159,7 @@ pub fn Producer::from_conn(conn : Conn) -> Result[Producer, ClientError] {
     Ok(session) => session
     Err(e) => return Err(e)
   }
-  Ok(Producer::{ conn, next_rid: 1, session })
+  Ok(Producer::{ conn, next_rid: 1, session, })
 }
 
 ///|
@@ -296,7 +296,7 @@ pub fn Consumer::from_conn_with(
     Ok(session) => session
     Err(e) => return Err(e)
   }
-  Ok(Consumer::{ conn, next_rid: 2, session })
+  Ok(Consumer::{ conn, next_rid: 2, session, })
 }
 
 ///|
@@ -306,7 +306,7 @@ pub fn Consumer::from_conn(conn : Conn) -> Result[Consumer, ClientError] {
     Ok(session) => session
     Err(e) => return Err(e)
   }
-  Ok(Consumer::{ conn, next_rid: 1, session })
+  Ok(Consumer::{ conn, next_rid: 1, session, })
 }
 
 ///|
@@ -428,7 +428,7 @@ fn decode_frames(
       Ok(batch) => {
         let mut offset = batch.base_offset
         for record in batch.records {
-          entries.push(@log.LogEntry::{ offset, record })
+          entries.push(@log.LogEntry::{ offset, record, })
           offset += 1L
         }
       }
@@ -481,7 +481,7 @@ fn decode_fetch_reply(
       Ok(batch) => {
         let mut offset = batch.base_offset
         for record in batch.records {
-          entries.push(@log.LogEntry::{ offset, record })
+          entries.push(@log.LogEntry::{ offset, record, })
           offset += 1L
         }
       }
@@ -497,7 +497,7 @@ fn decode_fetch_reply(
   } else {
     fallback
   }
-  Ok(FetchWindow::{ entries, scan_end })
+  Ok(FetchWindow::{ entries, scan_end, })
 }
 
 ///|

@@ -30,7 +30,7 @@ fn seed_welcome(server : Conn) -> Unit {
 
 ///|
 test "frame codec round trip" {
-  let frame = Frame::{ cmd: CMD_PRODUCE, rid: 42, payload: b"payload" }
+  let frame = Frame::{ cmd: CMD_PRODUCE, rid: 42, payload: b"payload", }
   let encoded = encode_frame(frame)
   match decode_header(encoded[0:13].to_owned()) {
     Ok((cmd, rid, len)) => {
@@ -150,7 +150,7 @@ test "request id echo is enforced" {
   }
   // reply echoes the wrong rid: the client must refuse it
   match
-    server_conn.send_frame(Frame::{ cmd: CMD_OK, rid: 99, payload: b"\x00" }) {
+    server_conn.send_frame(Frame::{ cmd: CMD_OK, rid: 99, payload: b"\x00", }) {
     Ok(_) => ()
     Err(e) => abort("seed reply: \{e}")
   }
@@ -264,9 +264,9 @@ test "node record round trips and rejects malformed input" {
   // an unknown role name is refused, not defaulted to a data node
   // (hand-built: id="x", role="node", address="a:1", leo=0)
   assert_true(decode_node(b"\x01x\x04node\x03a:1\x00") is Err(_))
-  let zero_id = NodeRecord::{ id: "", role: Sc, address: "a:1", leo: 0L }
+  let zero_id = NodeRecord::{ id: "", role: Sc, address: "a:1", leo: 0L, }
   assert_true(decode_node(encode_node(zero_id)) is Err(_))
-  let empty_addr = NodeRecord::{ id: "x", role: Sc, address: "", leo: 0L }
+  let empty_addr = NodeRecord::{ id: "x", role: Sc, address: "", leo: 0L, }
   assert_true(decode_node(encode_node(empty_addr)) is Err(_))
   // truncated payloads never yield a partial record
   assert_true(decode_node(b"\x03spu") is Err(_))
@@ -276,8 +276,8 @@ test "node record round trips and rejects malformed input" {
 ///|
 test "the control plane's node table round trips" {
   let nodes = [
-    NodeRecord::{ id: "spu-a", role: Spu, address: "127.0.0.1:19001", leo: 7L },
-    NodeRecord::{ id: "spu-b", role: Spu, address: "127.0.0.1:19002", leo: 0L },
+    NodeRecord::{ id: "spu-a", role: Spu, address: "127.0.0.1:19001", leo: 7L, },
+    NodeRecord::{ id: "spu-b", role: Spu, address: "127.0.0.1:19002", leo: 0L, },
   ]
   match decode_nodes(encode_nodes(nodes)) {
     Ok(decoded) => assert_eq(decoded, nodes)
@@ -294,8 +294,8 @@ test "the control plane's node table round trips" {
 
 ///|
 test "replication payloads round trip and reject malformed input" {
-  let ref_ = PartitionRef::{ topic: "events", partition: 0 }
-  let request = SyncRequest::{ partition: ref_, from: 12L, max_records: 64 }
+  let ref_ = PartitionRef::{ topic: "events", partition: 0, }
+  let request = SyncRequest::{ partition: ref_, from: 12L, max_records: 64, }
   match decode_sync_request(encode_sync_request(request)) {
     Ok(decoded) => assert_eq(decoded, request)
     Err(e) => abort("sync request: \{e}")
@@ -325,7 +325,7 @@ test "replication payloads round trip and reject malformed input" {
   assert_true(
     decode_sync_request(
       encode_sync_request(SyncRequest::{
-        partition: PartitionRef::{ topic: "Bad Name", partition: 0 },
+        partition: PartitionRef::{ topic: "Bad Name", partition: 0, },
         from: 0L,
         max_records: 8,
       }),
@@ -352,7 +352,7 @@ test "replication payloads round trip and reject malformed input" {
     is Err(_),
   )
 
-  let ack = SyncAck::{ partition: ref_, from: "127.0.0.1:1", leo: 7L }
+  let ack = SyncAck::{ partition: ref_, from: "127.0.0.1:1", leo: 7L, }
   match decode_sync_ack(encode_sync_ack(ack)) {
     Ok(decoded) => assert_eq(decoded, ack)
     Err(e) => abort("sync ack: \{e}")
@@ -360,7 +360,7 @@ test "replication payloads round trip and reject malformed input" {
   // an ack with no sender cannot be attributed to a replica
   assert_true(
     decode_sync_ack(
-      encode_sync_ack(SyncAck::{ partition: ref_, from: "", leo: 1L }),
+      encode_sync_ack(SyncAck::{ partition: ref_, from: "", leo: 1L, }),
     )
     is Err(_),
   )
@@ -489,8 +489,8 @@ test "a node record carries per-partition reports, and older readers still read 
     leo: 42L,
   }
   let reports = [
-    PartitionReport::{ topic: "events", partition: 0, leo: 42L },
-    PartitionReport::{ topic: "events", partition: 2, leo: 9L },
+    PartitionReport::{ topic: "events", partition: 0, leo: 42L, },
+    PartitionReport::{ topic: "events", partition: 2, leo: 9L, },
   ]
   let bytes = encode_node_full(record, reports)
   // the full decoder sees both halves

@@ -61,7 +61,7 @@ pub struct MemorySegment {
 
 ///|
 pub fn MemorySegment::new() -> MemorySegment {
-  MemorySegment::{ data: @buffer.Buffer::Buffer() }
+  MemorySegment::{ data: @buffer.Buffer::Buffer(), }
 }
 
 ///|
@@ -159,7 +159,7 @@ pub struct MemorySegmentStore {
 
 ///|
 pub fn MemorySegmentStore::new() -> MemorySegmentStore {
-  MemorySegmentStore::{ bases: [], segments: [], indexes: [], created: [] }
+  MemorySegmentStore::{ bases: [], segments: [], indexes: [], created: [], }
 }
 
 ///|
@@ -429,7 +429,7 @@ fn decode_index(
     if position >= segment_size {
       return None
     }
-    anchors.push(IndexAnchor::{ offset, position })
+    anchors.push(IndexAnchor::{ offset, position, })
     previous_offset = offset
     previous_position = position
   }
@@ -511,7 +511,7 @@ pub fn SegmentedLog::open(file : SegmentFile) -> Result[SegmentedLog, LogError] 
         Err(Storage("this store holds a single segment"))
       }
     },
-    list: fn() { Ok([SegmentInfo::{ base: 0L, size, created_ms: 0L }]) },
+    list: fn() { Ok([SegmentInfo::{ base: 0L, size, created_ms: 0L, }]) },
     open_index: fn(_base) { Err(Storage("this store holds a single segment")) },
     remove: fn(_base) { Err(Storage("this store holds a single segment")) },
     replace: fn(_base, _bytes) {
@@ -583,7 +583,7 @@ pub fn SegmentedLog::open_store_configured(
           file,
           size: 0,
           created_ms: 0L,
-          anchors: [IndexAnchor::{ offset: 0L, position: 0 }],
+          anchors: [IndexAnchor::{ offset: 0L, position: 0, }],
           // nothing has been written to disk yet: `index_saved` means
           // "the stored index matches `anchors`", and a fresh segment
           // has no stored index at all. Marking it saved was invisible
@@ -839,7 +839,7 @@ fn SegmentedLog::roll_if_full(self : SegmentedLog) -> Result[Unit, LogError] {
     file,
     size: 0,
     created_ms: 0L,
-    anchors: [IndexAnchor::{ offset: self.next_offset, position: 0 }],
+    anchors: [IndexAnchor::{ offset: self.next_offset, position: 0, }],
     // same as above: this segment's index is written when *it* is
     // sealed, which is exactly the "index is worth writing only once
     // the segment cannot change" rule the file comments claim
@@ -881,7 +881,7 @@ fn rebuild_index_static(
   index_every_records : Int,
 ) -> Result[Unit, LogError] {
   let anchors : Array[IndexAnchor] = [
-    IndexAnchor::{ offset: seg.base, position: 0 },
+    IndexAnchor::{ offset: seg.base, position: 0, },
   ]
   if seg.size > 0 {
     let bytes = match (seg.file.read)(0, seg.size) {
@@ -978,7 +978,7 @@ fn SegmentedLog::rebuild_index(
   seg : LogSegment,
 ) -> Result[Unit, LogError] {
   let anchors : Array[IndexAnchor] = [
-    IndexAnchor::{ offset: seg.base, position: 0 },
+    IndexAnchor::{ offset: seg.base, position: 0, },
   ]
   let bytes = match (seg.file.read)(0, seg.size) {
     Ok(bytes) => bytes
@@ -1013,7 +1013,7 @@ fn SegmentedLog::rebuild_index(
 /// it. Never returns None for a segment that exists (anchor [0] is the
 /// segment base), so readers cannot end up anchorless.
 fn anchor_for(seg : LogSegment, from : Int64) -> IndexAnchor {
-  let mut best = IndexAnchor::{ offset: seg.base, position: 0 }
+  let mut best = IndexAnchor::{ offset: seg.base, position: 0, }
   for anchor in seg.anchors {
     if anchor.offset <= from {
       best = anchor
@@ -1029,7 +1029,7 @@ fn anchor_for(seg : LogSegment, from : Int64) -> IndexAnchor {
 fn SegmentedLog::maybe_anchor(self : SegmentedLog) -> Unit {
   let seg = self.active()
   if seg.anchors.length() == 0 {
-    seg.anchors.push(IndexAnchor::{ offset: seg.base, position: 0 })
+    seg.anchors.push(IndexAnchor::{ offset: seg.base, position: 0, })
   }
   let last = seg.anchors[seg.anchors.length() - 1]
   if seg.size - last.position >= INDEX_EVERY_BYTES {
@@ -1271,7 +1271,7 @@ pub fn SegmentedLog::read_raw_bounded(
   if from < self.first_offset() {
     return Err(OffsetOutOfRange)
   }
-  let empty = RawWindow::{ base_offset: from, record_count: 0, bytes: b"" }
+  let empty = RawWindow::{ base_offset: from, record_count: 0, bytes: b"", }
   if from == self.next_offset || max_records == 0 {
     return Ok(empty)
   }
@@ -1581,7 +1581,7 @@ pub fn SegmentedLog::apply_retention(
       self.segments.push(kept_seg)
     }
   }
-  Ok(RetainReport::{ removed, removed_records, removed_bytes })
+  Ok(RetainReport::{ removed, removed_records, removed_bytes, })
 }
 
 ///|
@@ -1673,7 +1673,7 @@ pub fn SegmentedLog::apply_compaction(
   now_ms : Int64,
   policy : CompactionPolicy,
 ) -> Result[CompactionReport, LogError] {
-  let report = CompactionReport::{ rewritten: [] }
+  let report = CompactionReport::{ rewritten: [], }
   if floor <= 0L {
     return Ok(report)
   }
@@ -1736,7 +1736,7 @@ pub fn SegmentedLog::apply_compaction(
     // the base is the chain link (the previous segment's end), not a
     // promise that a record exists at that offset
     let anchors : Array[IndexAnchor] = [
-      IndexAnchor::{ offset: seg.base, position: 0 },
+      IndexAnchor::{ offset: seg.base, position: 0, },
     ]
     let mut expected = seg.base
     let mut frames_before = 0
@@ -1777,7 +1777,10 @@ pub fn SegmentedLog::apply_compaction(
         if rebuilt.length() > 0 &&
           rebuilt.length() - anchors[anchors.length() - 1].position >=
           INDEX_EVERY_BYTES {
-          anchors.push(IndexAnchor::{ offset: base, position: rebuilt.length() })
+          anchors.push(IndexAnchor::{
+            offset: base,
+            position: rebuilt.length(),
+          })
         }
         rebuilt.write_bytes(bytes[before:after].to_owned())
         frames_after += 1
@@ -1946,7 +1949,7 @@ pub fn SegmentedLog::roll_due(
     file,
     size: 0,
     created_ms: now_ms,
-    anchors: [IndexAnchor::{ offset: self.next_offset, position: 0 }],
+    anchors: [IndexAnchor::{ offset: self.next_offset, position: 0, }],
     index_saved: true,
   })
   Ok(true)
@@ -2000,7 +2003,7 @@ fn SegmentedLog::drop_segments_after_checked(
     return Err(OffsetOutOfRange)
   }
   if offset == self.next_offset {
-    return Ok(TruncateReport::{ dropped_records: 0, dropped_bytes: 0 })
+    return Ok(TruncateReport::{ dropped_records: 0, dropped_bytes: 0, })
   }
   let target = match self.segment_index_for(offset) {
     Some(i) => i

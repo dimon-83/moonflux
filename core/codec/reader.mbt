@@ -44,7 +44,7 @@ pub struct Reader {
 ///|
 /// Creates a cursor positioned at the start of `bytes`.
 pub fn Reader::new(bytes : Bytes) -> Reader {
-  Reader::{ bytes, pos: 0 }
+  Reader::{ bytes, pos: 0, }
 }
 
 ///|

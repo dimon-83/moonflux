@@ -17,9 +17,9 @@ fn profile_fixture(tag : String) -> String {
 ///|
 test "profiles round trip with the current marker" {
   let _ = profile_fixture("roundtrip")
-  let config = ProfileConfig::{ current: None, profiles: {} }
-  config.profiles["local"] = ProfileEntry::{ remote: "127.0.0.1:19451" }
-  config.profiles["staging"] = ProfileEntry::{ remote: "10.0.0.7:19451" }
+  let config = ProfileConfig::{ current: None, profiles: {}, }
+  config.profiles["local"] = ProfileEntry::{ remote: "127.0.0.1:19451", }
+  config.profiles["staging"] = ProfileEntry::{ remote: "10.0.0.7:19451", }
   config.current = Some("staging")
   assert_true(config.save() is Ok(_))
   let loaded = match ProfileConfig::load() {
@@ -28,11 +28,11 @@ test "profiles round trip with the current marker" {
   }
   assert_eq(
     loaded.profiles.get("local"),
-    Some(ProfileEntry::{ remote: "127.0.0.1:19451" }),
+    Some(ProfileEntry::{ remote: "127.0.0.1:19451", }),
   )
   assert_eq(
     loaded.profiles.get("staging"),
-    Some(ProfileEntry::{ remote: "10.0.0.7:19451" }),
+    Some(ProfileEntry::{ remote: "10.0.0.7:19451", }),
   )
   assert_eq(loaded.current, Some("staging"))
 }

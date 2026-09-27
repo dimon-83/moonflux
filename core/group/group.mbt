@@ -78,7 +78,7 @@ pub(all) struct MemberAssignment {
 
 ///|
 pub fn new_group(group : String) -> GroupState {
-  GroupState::{ group, epoch: 0L, members: [], topics: [], committed: [] }
+  GroupState::{ group, epoch: 0L, members: [], topics: [], committed: [], }
 }
 
 ///|
@@ -193,7 +193,7 @@ pub fn assign(
       }
     }
     cursor += take
-    out.push(MemberAssignment::{ member: id, partitions: share })
+    out.push(MemberAssignment::{ member: id, partitions: share, })
   }
   out
 }

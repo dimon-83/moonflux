@@ -245,7 +245,7 @@ pub fn decode_group_join(payload : Bytes) -> Result[GroupJoin, String] {
     }
     topics.push(topic)
   }
-  Ok(GroupJoin::{ group, member: WireGroupMember::{ id, address }, topics })
+  Ok(GroupJoin::{ group, member: WireGroupMember::{ id, address, }, topics, })
 }
 
 ///|
@@ -283,7 +283,7 @@ pub fn decode_group_heartbeat(
     Ok(v) => v
     Err(e) => return Err(e)
   }
-  Ok(GroupHeartbeat::{ group, member: WireGroupMember::{ id, address } })
+  Ok(GroupHeartbeat::{ group, member: WireGroupMember::{ id, address, }, })
 }
 
 ///|
@@ -338,7 +338,7 @@ pub fn decode_group_commit(payload : Bytes) -> Result[GroupCommit, String] {
     Ok(v) => v.reinterpret_as_int64()
     Err(_) => return Err("truncated offset")
   }
-  Ok(GroupCommit::{ group, member, epoch, topic, partition, offset })
+  Ok(GroupCommit::{ group, member, epoch, topic, partition, offset, })
 }
 
 ///|
@@ -415,9 +415,9 @@ pub fn decode_group_view(payload : Bytes) -> Result[GroupView, String] {
       Ok(v) => v.reinterpret_as_int64()
       Err(_) => return Err("truncated committed offset")
     }
-    partitions.push(WireGroupPartition::{ topic, partition, committed })
+    partitions.push(WireGroupPartition::{ topic, partition, committed, })
   }
-  Ok(GroupView::{ group, epoch, timeout_ms, partitions, members })
+  Ok(GroupView::{ group, epoch, timeout_ms, partitions, members, })
 }
 
 ///|
@@ -476,7 +476,7 @@ pub fn decode_group_description(
       Ok(v) => v
       Err(e) => return Err(e)
     }
-    members.push(WireGroupMember::{ id, address })
+    members.push(WireGroupMember::{ id, address, })
   }
   let commit_count = match reader.read_uleb128_len() {
     Ok(count) => count
@@ -496,9 +496,9 @@ pub fn decode_group_description(
       Ok(v) => v.reinterpret_as_int64()
       Err(_) => return Err("truncated committed offset")
     }
-    commits.push(WireGroupPartition::{ topic, partition, committed })
+    commits.push(WireGroupPartition::{ topic, partition, committed, })
   }
-  Ok(GroupDescription::{ group, epoch, members, commits })
+  Ok(GroupDescription::{ group, epoch, members, commits, })
 }
 
 ///|
@@ -544,7 +544,7 @@ pub fn decode_wire_segments(
       Ok(bytes) => bytes
       Err(_) => return Err("truncated segment byte count")
     }
-    out.push(WireSegment::{ base, records, bytes })
+    out.push(WireSegment::{ base, records, bytes, })
   }
   Ok(out)
 }
@@ -1002,7 +1002,7 @@ pub fn decode_sync_request(payload : Bytes) -> Result[SyncRequest, String] {
     return Err("negative offset or non-positive record count")
   }
   Ok(SyncRequest::{
-    partition: PartitionRef::{ topic, partition },
+    partition: PartitionRef::{ topic, partition, },
     from,
     max_records,
   })
@@ -1119,7 +1119,7 @@ pub fn decode_sync_ack(payload : Bytes) -> Result[SyncAck, String] {
   if leo < 0L {
     return Err("negative leo")
   }
-  Ok(SyncAck::{ partition: PartitionRef::{ topic, partition }, from, leo })
+  Ok(SyncAck::{ partition: PartitionRef::{ topic, partition, }, from, leo, })
 }
 
 ///|
@@ -1198,7 +1198,7 @@ pub fn decode_assignments(
       Ok(nominated) => nominated
       Err(e) => return Err(e)
     }
-    out.push(AssignmentView::{ topic, partition, leader, replicas, nominated })
+    out.push(AssignmentView::{ topic, partition, leader, replicas, nominated, })
   }
   Ok(out)
 }
@@ -1255,7 +1255,7 @@ pub fn decode_cluster_pipeline(
     Ok(spec_json) => spec_json
     Err(e) => return Err(e)
   }
-  Ok(ClusterPipeline::{ revision, spec_json })
+  Ok(ClusterPipeline::{ revision, spec_json, })
 }
 
 ///|
@@ -1362,7 +1362,7 @@ pub fn decode_assignments_full(
           Ok(v) => v.reinterpret_as_int64()
           Err(_) => return Err("truncated floor offset")
         }
-        floors.push(GroupFloor::{ topic, partition, floor })
+        floors.push(GroupFloor::{ topic, partition, floor, })
       }
       // and the pipeline revision after them, if this peer sends one
       let revision = match reader.read_uleb128() {
@@ -1458,10 +1458,10 @@ pub fn decode_node_full(
           Ok(leo) => leo.reinterpret_as_int64()
           Err(_) => return Err("truncated partition report leo")
         }
-        reports.push(PartitionReport::{ topic, partition, leo })
+        reports.push(PartitionReport::{ topic, partition, leo, })
       }
   }
-  Ok((NodeRecord::{ id, role, address, leo }, reports))
+  Ok((NodeRecord::{ id, role, address, leo, }, reports))
 }
 
 ///|
@@ -1484,7 +1484,7 @@ pub fn decode_partition_ref(payload : Bytes) -> Result[PartitionRef, String] {
     Ok(partition) => partition
     Err(_) => return Err("truncated partition index")
   }
-  Ok(PartitionRef::{ topic, partition })
+  Ok(PartitionRef::{ topic, partition, })
 }
 
 ///|
@@ -1541,7 +1541,7 @@ pub fn decode_partition_view(payload : Bytes) -> Result[PartitionView, String] {
   if !reader.is_empty() {
     return Err("trailing bytes after partition view")
   }
-  Ok(PartitionView::{ leader, replicas, nominated })
+  Ok(PartitionView::{ leader, replicas, nominated, })
 }
 
 ///|
@@ -1610,7 +1610,10 @@ pub fn decode_confirmation(payload : Bytes) -> Result[Confirmation, String] {
   if !reader.is_empty() {
     return Err("trailing bytes after confirmation")
   }
-  Ok(Confirmation::{ partition: PartitionRef::{ topic, partition }, candidate })
+  Ok(Confirmation::{
+    partition: PartitionRef::{ topic, partition, },
+    candidate,
+  })
 }
 
 ///|
@@ -1649,7 +1652,7 @@ pub fn decode_wire_topic(payload : Bytes) -> Result[WireTopic, String] {
   if !reader.is_empty() {
     return Err("trailing bytes after topic declaration")
   }
-  Ok(WireTopic::{ name, partitions, replication_factor })
+  Ok(WireTopic::{ name, partitions, replication_factor, })
 }
 
 ///|
@@ -1786,7 +1789,7 @@ pub fn decode_partition_ref_opt(
   payload : Bytes,
 ) -> Result[PartitionRef, String] {
   if payload.length() == 0 {
-    return Ok(PartitionRef::{ topic: "", partition: 0 })
+    return Ok(PartitionRef::{ topic: "", partition: 0, })
   }
   decode_partition_ref(payload)
 }

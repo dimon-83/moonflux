@@ -73,7 +73,7 @@ fn cluster_leader(argv : Array[String]) -> Unit {
     Some(text) => parse_partition_flag(text)
     None => 0
   }
-  let ref = @client.PartitionRef::{ topic, partition }
+  let ref = @client.PartitionRef::{ topic, partition, }
   let payload = match
     control_call_secure(
       remote,
@@ -158,7 +158,7 @@ fn cluster_compact(argv : Array[String]) -> Unit {
     Some(text) => parse_partition_flag(text)
     None => 0
   }
-  let ref = @client.PartitionRef::{ topic, partition }
+  let ref = @client.PartitionRef::{ topic, partition, }
   let payload = match
     control_call_secure(
       remote,
@@ -201,7 +201,7 @@ fn cluster_segments(argv : Array[String]) -> Unit {
     Some(text) => parse_partition_flag(text)
     None => 0
   }
-  let ref = @client.PartitionRef::{ topic, partition }
+  let ref = @client.PartitionRef::{ topic, partition, }
   let payload = match
     control_call_secure(
       remote,
@@ -270,7 +270,7 @@ fn cluster_status(argv : Array[String]) -> Unit {
     // placement and watermarks per partition: what an operator
     // actually needs to answer "is this topic healthy?"
     for index in 0..<topic.partitions {
-      let ref = @client.PartitionRef::{ topic: topic.name, partition: index }
+      let ref = @client.PartitionRef::{ topic: topic.name, partition: index, }
       let view_payload = match
         control_call_secure(
           remote,
@@ -354,7 +354,7 @@ fn partition_list(argv : Array[String]) -> Unit {
   }
   println("partition\tleader\treplicas\thw\tleo")
   for index in 0..<count {
-    let ref = @client.PartitionRef::{ topic, partition: index }
+    let ref = @client.PartitionRef::{ topic, partition: index, }
     let (leader, replicas) = match
       control_call_secure(
         remote,
@@ -433,7 +433,7 @@ fn cluster_spu_list(argv : Array[String]) -> Unit {
   let topic_names : Map[String, Map[String, Bool]] = {}
   for topic in topics {
     for index in 0..<topic.partitions {
-      let ref = @client.PartitionRef::{ topic: topic.name, partition: index }
+      let ref = @client.PartitionRef::{ topic: topic.name, partition: index, }
       let view = match
         control_call_secure(
           remote,

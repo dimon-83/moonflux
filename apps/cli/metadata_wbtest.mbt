@@ -5,7 +5,7 @@
 
 ///|
 fn decl(name : String, partitions : Int, rf : Int) -> ClusterMetadataTopic {
-  ClusterMetadataTopic::{ name, partitions, replication_factor: rf }
+  ClusterMetadataTopic::{ name, partitions, replication_factor: rf, }
 }
 
 ///|
@@ -112,7 +112,7 @@ fn fn_def(
   params : Array[String],
   body : String,
 ) -> ClusterMetadataFunction {
-  ClusterMetadataFunction::{ name, params, body, description: None }
+  ClusterMetadataFunction::{ name, params, body, description: None, }
 }
 
 ///|
@@ -306,7 +306,7 @@ fn join_req(
 ) -> @client.GroupJoin {
   @client.GroupJoin::{
     group,
-    member: @client.WireGroupMember::{ id: member, address: "test:1" },
+    member: @client.WireGroupMember::{ id: member, address: "test:1", },
     topics,
   }
 }
@@ -411,7 +411,7 @@ test "a stranger cannot commit, and leaving moves the generation" {
   // member that misspells a group should be told
   let beat = @client.GroupHeartbeat::{
     group: "other",
-    member: @client.WireGroupMember::{ id: "m1", address: "test:1" },
+    member: @client.WireGroupMember::{ id: "m1", address: "test:1", },
   }
   assert_true(registry.heartbeat(beat, store, 1000L) is Err(_))
   // a graceful leave moves the generation immediately
@@ -430,8 +430,8 @@ test "a stranger cannot commit, and leaving moves the generation" {
 ///|
 test "floors only reflect groups that actually committed" {
   let (registry, store) = group_fixture("floors", "events")
-  let p0 = @cluster.PartitionId::{ topic: "events", index: 0 }
-  let p1 = @cluster.PartitionId::{ topic: "events", index: 1 }
+  let p0 = @cluster.PartitionId::{ topic: "events", index: 0, }
+  let p1 = @cluster.PartitionId::{ topic: "events", index: 1, }
   // a group that joined but never committed holds nothing back
   let _ = registry.join(join_req("g", "m1", ["events"]), store, 1000L)
   assert_eq(registry.floors([p0, p1]).length(), 0)

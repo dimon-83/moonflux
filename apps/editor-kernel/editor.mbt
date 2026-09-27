@@ -210,7 +210,7 @@ priv struct Session {
 }
 
 ///|
-let session : Session = Session::{ next_rid: 1 }
+let session : Session = Session::{ next_rid: 1, }
 
 ///|
 /// Resets the session (a new connection starts over).

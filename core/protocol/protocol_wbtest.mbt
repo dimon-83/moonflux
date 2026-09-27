@@ -4,14 +4,14 @@
 
 ///|
 fn rec(timestamp : Int64, key : Bytes, value : Bytes) -> Record {
-  Record::{ timestamp, key, value, headers: [] }
+  Record::{ timestamp, key, value, headers: [], }
 }
 
 ///|
 test "frame round trip empty batch" {
   let frame = encode_frame(0L, [])
   let decoded = decode_frame_strict(frame)
-  assert_eq(decoded, Ok(DecodedBatch::{ base_offset: 0L, records: [] }))
+  assert_eq(decoded, Ok(DecodedBatch::{ base_offset: 0L, records: [], }))
 }
 
 ///|
@@ -29,7 +29,7 @@ test "frame round trip multi record with headers" {
   let frame = encode_frame(42L, records)
   assert_eq(
     decode_frame_strict(frame),
-    Ok(DecodedBatch::{ base_offset: 42L, records }),
+    Ok(DecodedBatch::{ base_offset: 42L, records, }),
   )
 }
 
@@ -41,7 +41,7 @@ test "decode is deterministic and encode is injective here" {
   // it changes bytes and decodes back with the new offset
   assert_eq(
     decode_frame_strict(encode_frame(7L, records)),
-    Ok(DecodedBatch::{ base_offset: 7L, records }),
+    Ok(DecodedBatch::{ base_offset: 7L, records, }),
   )
 }
 
@@ -94,11 +94,11 @@ test "trailing bytes rejected in strict decode but framed decode consumes one" {
   let reader = @codec.Reader::new(bytes)
   assert_eq(
     decode_frame(reader),
-    Ok(DecodedBatch::{ base_offset: 0L, records: [rec(1L, b"", b"a")] }),
+    Ok(DecodedBatch::{ base_offset: 0L, records: [rec(1L, b"", b"a")], }),
   )
   assert_eq(
     decode_frame(reader),
-    Ok(DecodedBatch::{ base_offset: 0L, records: [rec(2L, b"", b"b")] }),
+    Ok(DecodedBatch::{ base_offset: 0L, records: [rec(2L, b"", b"b")], }),
   )
   assert_true(reader.is_empty())
 }
@@ -122,7 +122,7 @@ test "base_offset of -1 allowed for unassigned producer frames" {
   let frame = encode_frame(-1L, [rec(0L, b"", b"x")])
   assert_eq(
     decode_frame_strict(frame),
-    Ok(DecodedBatch::{ base_offset: -1L, records: [rec(0L, b"", b"x")] }),
+    Ok(DecodedBatch::{ base_offset: -1L, records: [rec(0L, b"", b"x")], }),
   )
 }
 

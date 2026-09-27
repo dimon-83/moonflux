@@ -92,7 +92,7 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
     capability: "native",
     detail: sink_detail,
   })
-  Topology::{ pipeline: spec.metadata_name, topic: spec.topic.name, processes }
+  Topology::{ pipeline: spec.metadata_name, topic: spec.topic.name, processes, }
 }
 
 ///|

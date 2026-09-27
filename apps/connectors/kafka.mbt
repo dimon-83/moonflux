@@ -145,7 +145,7 @@ pub fn parse_kafka_url(url : String) -> Result[KafkaUrl, String] {
       }
     }
   }
-  Ok(KafkaUrl::{ host, port, topic, partition, from, gzip })
+  Ok(KafkaUrl::{ host, port, topic, partition, from, gzip, })
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,7 +1217,7 @@ priv struct KafkaSession {
 fn kafka_open_session(
   target : KafkaUrl,
 ) -> Result[(KafkaSession, @net.TcpStream), String] {
-  let conn = KafkaConn::{ stream: None, correlation: 0 }
+  let conn = KafkaConn::{ stream: None, correlation: 0, }
   let bootstrap = match kafka_connect(target.host, target.port, conn) {
     Ok(stream) => stream
     Err(e) => return Err(e)
@@ -1278,7 +1278,7 @@ fn open_sink_stream(
 /// preserved; partition 0 unless the URL says otherwise.
 pub fn kafka_sink(url : String) -> Sink {
   let parsed = parse_kafka_url(url)
-  let state : KafkaSinkState = KafkaSinkState::{ session: None, stream: None }
+  let state : KafkaSinkState = KafkaSinkState::{ session: None, stream: None, }
   Sink::{
     name: "kafka-produce:\{url}",
     flush: fn(records) {

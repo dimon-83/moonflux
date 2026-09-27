@@ -82,7 +82,7 @@ fn File::open_mode(path : String, mode : Int) -> Result[File, FsError] {
   if fd < 0 {
     Err(Io(-fd, "open"))
   } else {
-    Ok(File::{ path, fd })
+    Ok(File::{ path, fd, })
   }
 }
 

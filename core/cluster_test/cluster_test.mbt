@@ -4,12 +4,12 @@
 
 ///|
 fn spu(id : String) -> @cluster.SpuSpec {
-  @cluster.SpuSpec::{ id, address: "127.0.0.1:0" }
+  @cluster.SpuSpec::{ id, address: "127.0.0.1:0", }
 }
 
 ///|
 fn topic(name : String, partitions : Int, rf : Int) -> @cluster.TopicSpec {
-  @cluster.TopicSpec::{ name, partitions, replication_factor: rf }
+  @cluster.TopicSpec::{ name, partitions, replication_factor: rf, }
 }
 
 ///|
@@ -17,12 +17,12 @@ fn spec(
   spus : Array[@cluster.SpuSpec],
   topics : Array[@cluster.TopicSpec],
 ) -> @cluster.ClusterSpec {
-  @cluster.ClusterSpec::{ topics, spus }
+  @cluster.ClusterSpec::{ topics, spus, }
 }
 
 ///|
 fn empty_state() -> @cluster.ClusterState {
-  @cluster.ClusterState::{ partitions: [] }
+  @cluster.ClusterState::{ partitions: [], }
 }
 
 ///|

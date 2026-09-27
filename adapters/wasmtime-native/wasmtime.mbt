@@ -58,7 +58,7 @@ pub fn operator_engine(
       if handle == 0L {
         return Err(@operator.InvalidSpec(read_err(err)))
       }
-      let session = Session::{ handle, spec }
+      let session = Session::{ handle, spec, }
       // ABI version handshake
       let out : FixedArray[Int] = FixedArray::make(1, 0)
       if we_abi_version(session.handle, out, err, err.length()) != 0 {

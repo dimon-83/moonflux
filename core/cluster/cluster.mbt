@@ -205,7 +205,7 @@ fn desired_partitions(spec : ClusterSpec) -> Array[PartitionId] {
   let out : Array[PartitionId] = []
   for topic in topics {
     for i in 0..<topic.partitions {
-      out.push(PartitionId::{ topic: topic.name, index: i })
+      out.push(PartitionId::{ topic: topic.name, index: i, })
     }
   }
   out
@@ -329,7 +329,7 @@ pub fn canonical_state(state : ClusterState) -> ClusterState {
       a.partition.index.compare(b.partition.index)
     }
   })
-  ClusterState::{ partitions: sorted }
+  ClusterState::{ partitions: sorted, }
 }
 
 ///|
@@ -357,7 +357,7 @@ pub fn apply_actions(
             } else {
               replicas[0]
             }
-            partitions[i] = ReplicaSet::{ partition, leader, replicas }
+            partitions[i] = ReplicaSet::{ partition, leader, replicas, }
             found = true
             break
           }

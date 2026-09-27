@@ -65,4 +65,3 @@ pub(all) struct MemberAssignment {
 // Type aliases
 
 // Traits
-

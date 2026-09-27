@@ -67,7 +67,7 @@ fn cmd_serve(argv : Array[String]) -> Unit {
         frame, data_dir, rules, ws, groups, self_addr, identity,
       )
     },
-    auth: AuthGate::{ config: auth_config, data_dir },
+    auth: AuthGate::{ config: auth_config, data_dir, },
     on_ready: fn() {
       // hot-reload checkpoint: a freshly applied spec is picked up here,
       // exactly as it was on the single-connection path
@@ -157,7 +157,9 @@ fn serve_partition_floor(
   partition : Int,
   committed : Int64,
 ) -> Int64 {
-  let floors = groups.floors([@cluster.PartitionId::{ topic, index: partition }])
+  let floors = groups.floors([
+    @cluster.PartitionId::{ topic, index: partition, },
+  ])
   for floor in floors {
     if floor.topic == topic && floor.partition == partition {
       if floor.floor < committed {
@@ -562,11 +564,11 @@ fn segment_view(
 ///|
 fn reply_frame(rid : Int, code : Int, payload : Bytes) -> @client.Frame {
   if code == @client.CMD_OK {
-    @client.Frame::{ cmd: @client.CMD_OK, rid, payload }
+    @client.Frame::{ cmd: @client.CMD_OK, rid, payload, }
   } else {
     // the single-connection path answered errors with an ERR frame
     // carrying the code in its payload; keep that shape exactly
-    @client.Frame::{ cmd: @client.CMD_ERR, rid, payload }
+    @client.Frame::{ cmd: @client.CMD_ERR, rid, payload, }
   }
 }
 
@@ -963,7 +965,7 @@ fn dispatch_fetch_committed(
     Ok(max) => max.reinterpret_as_int()
     Err(_) => return err_reply(@client.ERR_BAD_PAYLOAD, "bad fetch payload")
   }
-  let info = @replica.OffsetInfo::{ high_watermark, log_end_offset }
+  let info = @replica.OffsetInfo::{ high_watermark, log_end_offset, }
   match @replica.check_read(info, Committed, from, max) {
     Ok(_) => ()
     Err(e) => return err_reply(@client.ERR_BAD_PAYLOAD, "\{e}")
