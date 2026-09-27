@@ -45,6 +45,19 @@ wait_listen() {
   return 1
 }
 
+wait_log() { # $1 = file, $2 = extended regex, $3 = seconds (default 10)
+  # Startup announcements land just after the port opens; a single
+  # immediate grep is a race the dev machine wins and a cold CI runner
+  # loses (see the p12/p13 failures of 2026-09-27).
+  local file=$1 pattern=$2 tries=$(( ${3:-10} * 20 ))
+  while [ "$tries" -gt 0 ]; do
+    grep -qE "$pattern" "$file" 2>/dev/null && return 0
+    sleep 0.05
+    tries=$((tries - 1))
+  done
+  return 1
+}
+
 gen_cert() { # $1 = ca prefix, $2 = leaf name -> CA + signed server cert
   openssl req -x509 -newkey rsa:2048 -nodes -keyout "$WORK/$1-ca.key" \
     -out "$WORK/$1-ca.pem" -days 2 -subj "/CN=p24-$1" 2>/dev/null
@@ -173,7 +186,7 @@ printf '{"credentials":[{"name":"plain","token":"p24-plain-token-1234","role":"r
 PLAIN_PID=$!
 PIDS+=("$PLAIN_PID")
 wait_listen 19719 || { cat "$WORK/plain.log"; fail "the plain serve did not start"; }
-grep -q "credentials travel in cleartext" "$WORK/plain.log" \
+wait_log "$WORK/plain.log" "credentials travel in cleartext" \
   || { cat "$WORK/plain.log"; fail "an auth-enabled plaintext listener did not announce the cleartext risk"; }
 pass "auth enabled without TLS announces the cleartext risk at startup"
 

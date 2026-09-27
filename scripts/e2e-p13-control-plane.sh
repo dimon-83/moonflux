@@ -55,6 +55,20 @@ wait_listen() { # $1 = port
   return 1
 }
 
+wait_log() { # $1 = file, $2 = extended regex, $3 = seconds (default 10)
+  # The port opens before the server has announced its modes (auth table,
+  # TLS context). Checking once, immediately, is a race the dev machine
+  # wins and CI's cold runner loses — it failed here with a log holding
+  # only the "listening" line. Poll the announcement instead.
+  local file=$1 pattern=$2 tries=$(( ${3:-10} * 20 ))
+  while [ "$tries" -gt 0 ]; do
+    grep -qE "$pattern" "$file" 2>/dev/null && return 0
+    sleep 0.05
+    tries=$((tries - 1))
+  done
+  return 1
+}
+
 # Two kinds of silent peer, both over TLS (the port requires it):
 #
 #   stall-handshake: connects and never speaks TLS. The server's handshake
@@ -135,10 +149,10 @@ for d in sc spu-a spu-b spu-c; do cp "$WORK/auth.json" "$WORK/$d/auth.json"; don
   --tls-ca "$CA" --tls-require-client > "$WORK/sc.log" 2>&1 &
 PIDS+=("$!")
 wait_listen "$SC_PORT" || { cat "$WORK/sc.log"; fail "sc did not start"; }
-grep -q "serving connections concurrently" "$WORK/sc.log" \
+wait_log "$WORK/sc.log" "serving connections concurrently" 15 \
   || { cat "$WORK/sc.log"; fail "the control plane is not serving concurrently"; }
-grep -q "authentication ENABLED" "$WORK/sc.log" || { cat "$WORK/sc.log"; fail "auth was not announced"; }
-grep -q "TLS ENABLED" "$WORK/sc.log" || { cat "$WORK/sc.log"; fail "TLS was not announced"; }
+wait_log "$WORK/sc.log" "authentication ENABLED" || { cat "$WORK/sc.log"; fail "auth was not announced"; }
+wait_log "$WORK/sc.log" "TLS ENABLED" || { cat "$WORK/sc.log"; fail "TLS was not announced"; }
 
 start_spu() { # $1 = id, $2 = port, $3 = token
   "$EXE" spu --id "$1" --listen "127.0.0.1:$2" --data-dir "$WORK/$1" \

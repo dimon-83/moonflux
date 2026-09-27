@@ -21,6 +21,11 @@ Usage:
                  [--json] [--tls-ca CA [--tls-cert C --tls-key K]]
 """
 
+# The `str | None` annotations below are 3.10+ syntax; this keeps the probe
+# runnable on the Python that ships with macOS (3.9) instead of quietly
+# making "python3" mean "python3.10+" for anyone running the security gate.
+from __future__ import annotations
+
 import argparse
 import socket
 import ssl

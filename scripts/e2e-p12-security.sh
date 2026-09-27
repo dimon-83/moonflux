@@ -63,6 +63,23 @@ wait_listen() { # $1 = port
   return 1
 }
 
+wait_log() { # $1 = file, $2 = extended regex, $3 = seconds (default 10)
+  # A server announces its modes right after binding, and this gate learns
+  # the server is up from the PORT — which opens before the announcement
+  # is written. On CI's cold macOS runner that gap (auth table load,
+  # OpenSSL dlopen, certificate parse) outlived a single grep: the gate
+  # failed with a log holding only the "listening" line, captured 0.3 ms
+  # after it appeared. Assert that the announcement happens, not that it
+  # has already landed at the instant the socket accepts.
+  local file=$1 pattern=$2 tries=$(( ${3:-10} * 20 ))
+  while [ "$tries" -gt 0 ]; do
+    grep -qE "$pattern" "$file" 2>/dev/null && return 0
+    sleep 0.05
+    tries=$((tries - 1))
+  done
+  return 1
+}
+
 # Flags travel as arrays: an unquoted "$VAR" holding several flags is a
 # single argument in some shells (this project's own smoke testing hit
 # exactly that — the client sent plaintext and it looked like a TLS bug).
@@ -106,7 +123,7 @@ mkdir -p "$WORK/plain"
 PLAIN_PID=$!
 CLEANUP_PIDS+=("$PLAIN_PID")
 wait_listen "$PLAIN_PORT" || { cat "$WORK/plain.log"; fail "plain serve did not start"; }
-grep -q "authentication DISABLED" "$WORK/plain.log" \
+wait_log "$WORK/plain.log" "authentication DISABLED" \
   || { cat "$WORK/plain.log"; fail "an unauthenticated broker did not announce it"; }
 pass "1. authentication off is announced at startup: $(grep -o 'authentication DISABLED.*' "$WORK/plain.log" | head -1)"
 printf 'plain-1\nplain-2\n' > "$WORK/plain-in.txt"
@@ -157,7 +174,7 @@ fi
   > "$WORK/sc.log" 2>&1 &
 SC_PID=$!; CLEANUP_PIDS+=("$SC_PID")
 wait_listen "$SC_PORT" || { cat "$WORK/sc.log"; fail "sc did not start"; }
-grep -q "authentication ENABLED" "$WORK/sc.log" || { cat "$WORK/sc.log"; fail "the control plane did not announce auth"; }
+wait_log "$WORK/sc.log" "authentication ENABLED" 15 || { cat "$WORK/sc.log"; fail "the control plane did not announce auth"; }
 
 start_spu() { # $1 = id, $2 = port, $3 = token
   "$EXE" spu --id "$1" --listen "127.0.0.1:$2" --data-dir "$WORK/$1" \
