@@ -39,9 +39,19 @@ step "generated artifacts are current" bash -c '
 # interfaces must be regenerated with the code that changed them: a
 # stale pkg.generated.mbti is how P15 shipped a whole round without
 # filing its new public surface (caught in review, not by this gate —
-# which is why this step exists)
+# which is why this step exists).
+#
+# moon info failing is NOT "no interfaces changed": on CI's first run a
+# broken dependency graph (a fresh checkout without `moon update`) made
+# this step report PASS while every other moon command failed. Same hole
+# as the build matrix below — a tool that could not run is not a tool
+# that found nothing.
 step "moon info: interfaces are current" bash -c '
-  moon info >/dev/null 2>&1
+  if ! out=$(moon info 2>&1); then
+    echo "moon info failed — the interface freshness check could not run:" >&2
+    printf "%s\n" "$out" >&2
+    exit 1
+  fi
   stale=$(git status --porcelain -- "*pkg.generated.mbti")
   if [ -n "$stale" ]; then
     echo "pkg.generated.mbti is stale — run moon info and commit the diff:" >&2

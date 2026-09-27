@@ -2,13 +2,27 @@
 # runs on demand. Gates assert structure, never wall-clock numbers
 # (README decision 41), so a green run means the invariants held.
 #
-# The fast job skips the E2E legs (build matrix, both test suites, the
-# generators' freshness) and runs on Linux. The full job runs every
-# E2E gate — those scripts carry macOS idioms (BSD stat, lsof) and
-# expect OpenSSL for the TLS legs, so it pins to a macOS runner and is
-# triggered manually (workflow_dispatch) rather than on every push:
-# the full suite takes ~25 minutes locally and would dominate wall
-# time. Run it before merging anything that touches the data path.
+# The fast job skips the E2E legs and runs on Linux; the full job runs
+# every E2E gate and pins to macOS because those scripts carry BSD
+# idioms (BSD stat, lsof). Full is triggered manually: it takes ~25
+# minutes locally and would dominate wall time if it ran on every push.
+#
+# Both jobs provision the wasmtime C API at the version the dev loop
+# uses (48.0.2). That pin is not cosmetic — the shim mirrors wasmtime's
+# struct layouts, and decision 14/T15 is the record of what an undersized
+# mirror costs. The library installs under /usr/local because
+# adapters/wasmtime-native/moon.pkg names that prefix in stub-cc-flags
+# next to Homebrew's, so one source tree builds on both hosts; the
+# runtime path is then handed over explicitly via MOONFLUX_WASMTIME_LIB
+# rather than relying on the platform default baked into the shim.
+#
+# Known drift (open item, not a silent one): the MoonBit toolchain is
+# installed as `latest`, while the dev loop runs moon 0.1.20260629. The
+# installer cannot pin today — the CDN answers 403 for versioned binary
+# URLs (checked 2026-09-26, both with and without the build hash) — so
+# this records a real divergence instead of pretending it does not
+# exist. Pin it here as soon as a version string the CDN accepts is
+# confirmed from a green run.
 name: ci
 
 on:
@@ -27,13 +41,46 @@ jobs:
     # freshness + the four-backend build matrix + both test suites +
     # the operator build. No E2E.
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      MOONFLUX_WASMTIME_LIB: /usr/local/lib/libwasmtime.so
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install MoonBit
         run: |
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Cache the MoonBit registry index
+        uses: actions/cache@v4
+        with:
+          path: ~/.moon/registry
+          key: moon-registry-${{ runner.os }}
+      - name: Fetch the MoonBit registry index
+        # The single dependency's sources (dimon-83/mbel@0.3.3) are
+        # vendored under .mooncakes/ and tracked in git, but moon still
+        # resolves through the registry index, which a fresh runner does
+        # not have: the first run failed all ten legs with "module was
+        # not found in the registry", and --frozen does not help (tested
+        # on a cloned tree with an empty index). This is the very step
+        # moon's own hint names.
+        run: moon update
+      - name: Runner prerequisites
+        # crosscheck-operators.sh waits for the served port with lsof.
+        run: command -v lsof >/dev/null || sudo apt-get install -y lsof
+      - name: Install wasmtime 48.0.2 C API
+        run: |
+          W=wasmtime-v48.0.2-x86_64-linux-c-api
+          curl -sSfL -o wasmtime.tar.xz \
+            "https://github.com/bytecodealliance/wasmtime/releases/download/v48.0.2/$W.tar.xz"
+          tar -xJf wasmtime.tar.xz
+          sudo mkdir -p /usr/local/include /usr/local/lib
+          sudo cp -R "$W/include/." /usr/local/include/
+          sudo cp -R "$W/lib/." /usr/local/lib/
+          sudo ldconfig
+          # fail here, with a legible message, rather than three steps
+          # later inside a gate that only says "libwasmtime not loaded"
+          test -f /usr/local/include/wasmtime.h
+          test -f "$MOONFLUX_WASMTIME_LIB"
       - name: Show toolchain
         run: |
           moon version --all
@@ -48,12 +95,32 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-14
     timeout-minutes: 90
+    env:
+      MOONFLUX_WASMTIME_LIB: /usr/local/lib/libwasmtime.dylib
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install MoonBit
         run: |
           curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Cache the MoonBit registry index
+        uses: actions/cache@v4
+        with:
+          path: ~/.moon/registry
+          key: moon-registry-${{ runner.os }}
+      - name: Fetch the MoonBit registry index
+        run: moon update
+      - name: Install wasmtime 48.0.2 C API
+        run: |
+          W=wasmtime-v48.0.2-aarch64-macos-c-api   # macos-14 runners are arm64
+          curl -sSfL -o wasmtime.tar.xz \
+            "https://github.com/bytecodealliance/wasmtime/releases/download/v48.0.2/$W.tar.xz"
+          tar -xJf wasmtime.tar.xz
+          sudo mkdir -p /usr/local/include /usr/local/lib
+          sudo cp -R "$W/include/." /usr/local/include/
+          sudo cp -R "$W/lib/." /usr/local/lib/
+          test -f /usr/local/include/wasmtime.h
+          test -f "$MOONFLUX_WASMTIME_LIB"
       - name: Show toolchain
         run: |
           moon version --all

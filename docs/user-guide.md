@@ -8,11 +8,14 @@
 
 ```bash
 cd ~/workspace/moonflux
+moon update                         # 首次克隆必须：取 registry 索引（见下）
 moon build --target native          # 产物：_build/native/debug/build/apps/cli/cli.exe
-moon test --target native           # 203 项
-moon test --target wasm-gc          # 148 项（内核全后端）
-scripts/gates.sh                    # 全量门禁（32 步）；scripts/gates.sh fast 跳过 E2E
+moon test --target native           # 274 项
+moon test --target wasm-gc          # 174 项（内核全后端）
+scripts/gates.sh                    # 全量门禁（43 步）；scripts/gates.sh fast 跳过 E2E
 ```
+
+- **`moon update` 是首次克隆的前置步骤**（CI 首跑实测）：唯一的依赖 `dimon-83/mbel@0.3.3` 的**源码已随仓库 vendored** 在 `.mooncakes/`（119 个文件，随 git 追踪），但 moon 解析依赖仍要过 registry 索引——索引不在时每条 moon 命令都报 `Failed to resolve registry dependency dimon-83/mbel: module was not found in the registry`（`--frozen` 也一样失败）。moon 自己会提示 `you may need to run 'moon update'`。
 
 - CLI 是**单二进制多子命令**：`serve`（单机 all-in-one）、`spu`（数据节点）、`sc`（控制面）加上各运维子命令，都从同一个 `cli.exe` 出。
 - 门禁脚本默认测 **debug** 构建（`moon build --target native` 的产物）；`MOONFLUX_EXE` 可指向任意构建，但别把门禁指向一个碰巧存在的旧 release——它曾让一次门禁跑在上一轮的二进制上。
