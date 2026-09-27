@@ -180,7 +180,22 @@ int mf_fs_remove_dir_all(const uint8_t *buf, int len) {
 }
 
 /* Nanosecond mtime for change detection: second granularity aliases
- * rapid apply+reload cycles. Returns ns since epoch, or -errno. */
+ * rapid apply+reload cycles. Returns ns since epoch, or -errno.
+ *
+ * struct stat is one of the few places macOS and Linux disagree in the
+ * field NAME rather than the semantics (st_mtimespec vs st_mtim), and
+ * the nanosecond field this function exists for is only reachable
+ * through it — CI's first Linux build is what surfaced this. */
+#ifdef __APPLE__
+#define MF_ST_MTIM_NS(st)                                    \
+  ((int64_t)(st).st_mtimespec.tv_sec * 1000000000LL +        \
+   (int64_t)(st).st_mtimespec.tv_nsec)
+#else
+#define MF_ST_MTIM_NS(st)                                    \
+  ((int64_t)(st).st_mtim.tv_sec * 1000000000LL +             \
+   (int64_t)(st).st_mtim.tv_nsec)
+#endif
+
 int64_t mf_fs_mtime(const uint8_t *buf, int len) {
   char path[4096];
   if (len < 0 || len >= 4096) return -EINVAL;
@@ -188,8 +203,7 @@ int64_t mf_fs_mtime(const uint8_t *buf, int len) {
   path[len] = 0;
   struct stat st;
   if (stat(path, &st) != 0) return -errno;
-  return (int64_t)st.st_mtimespec.tv_sec * 1000000000LL +
-         (int64_t)st.st_mtimespec.tv_nsec;
+  return MF_ST_MTIM_NS(st);
 }
 
 int mf_fs_truncate(int fd, int new_size) {
