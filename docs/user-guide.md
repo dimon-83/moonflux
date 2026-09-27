@@ -545,7 +545,7 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
 | 一切（43 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
-| CI：随推送的 fast（Linux，12 步） | GitHub Actions（[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)）；本地等价物 `scripts/gates.sh fast`；日志 `gh run view --log-failed` |
+| CI：随推送的 fast（Linux，12 步） | GitHub Actions（[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)）；本地等价物 `scripts/gates.sh fast`；日志 `gh run view --log-failed`。**日志可能被截断**（门禁输出混着数百条 moon warning，本仓实测 `--log-failed` 读不到末尾的汇总）：要全量就用原始日志 `gh api --allow-escape-sequences repos/dimon-83/moonflux/actions/jobs/<job-id>/logs`（job-id 由 `gh api repos/dimon-83/moonflux/actions/runs/<run-id>/jobs --jq '.jobs[] \| select(.name=="fast") \| .id'` 取） |
 | CI：手动的 full（macOS，43 步 E2E） | `gh workflow run ci`（或网页 Actions → ci → Run workflow）；本地等价物 `scripts/gates.sh`。**full 有独立并发组**：手动跑全量期间推送不会把它取消（推送只取消同分支的前一次 `fast`） |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
