@@ -31,15 +31,22 @@ on:
   pull_request:
   workflow_dispatch:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+# Concurrency is per JOB, not per run. A workflow-level group
+# (ci-${{ github.ref }}) meant any push cancelled an in-flight manual
+# `full` — which is exactly what happened the first time full was
+# triggered by hand: a docs commit forty seconds later killed it. The
+# fast job still wants cancellation (superseded pushes are worthless),
+# while full is a deliberate 25-minute act that should not be collateral
+# damage of someone typing `git push`.
 
 jobs:
   fast:
     # gates.sh fast = fmt check + generator freshness + interface
     # freshness + the four-backend build matrix + both test suites +
     # the operator build. No E2E.
+    concurrency:
+      group: ci-fast-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -93,6 +100,9 @@ jobs:
     # injection, independent Python peers). macOS because the gate
     # scripts use BSD userland. Manual trigger.
     if: github.event_name == 'workflow_dispatch'
+    concurrency:
+      group: ci-full-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: macos-14
     timeout-minutes: 90
     env:
