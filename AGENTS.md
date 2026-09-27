@@ -266,6 +266,7 @@ moonflux/
 - [ ] 涉及 codec/算子：golden vectors 对拍通过；涉及执行路径：预算与超时行为测试通过
 - [ ] 生成物一致性：`tools/gen_*.py --check` 全部 up to date（**改数据文件后必须重跑生成器**；生成器按 `moon fmt` 排版输出，故 fmt 对生成文件是 no-op）
 - [ ] 涉及集成（mbel / 参考系统互操作）：附可复现脚本与对照输出
+- [ ] **CI**：推送即跑 `scripts/gates.sh fast`（Linux）；动数据路径前手动跑全量（`gh workflow run ci`，macOS 43 步）。CI 装的是工具链 `latest`，**本地必须 `moon upgrade` 到同版本**（格式器方向相反，见 README 决策 51）
 - [ ] 文档同步：README / 报告章节 / 本文件金规则表（如决策有变更并注明依据；规范见 §10）
 
 ## 7. 对标参考系统（Fluvio）使用规则

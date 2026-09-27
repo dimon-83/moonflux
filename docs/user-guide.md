@@ -16,6 +16,7 @@ scripts/gates.sh                    # 全量门禁（43 步）；scripts/gates.s
 ```
 
 - **`moon update` 是首次克隆的前置步骤**（CI 首跑实测）：唯一的依赖 `dimon-83/mbel@0.3.3` 的**源码已随仓库 vendored** 在 `.mooncakes/`（119 个文件，随 git 追踪），但 moon 解析依赖仍要过 registry 索引——索引不在时每条 moon 命令都报 `Failed to resolve registry dependency dimon-83/mbel: module was not found in the registry`（`--frozen` 也一样失败）。moon 自己会提示 `you may need to run 'moon update'`。
+- **工具链必须与 CI 同版本**（决策 51）：CI 装 MoonBit 的 `latest`（版本化下载 URL 被 CDN 403，钉不住旧版），仓库的格式以该版本为准——两个格式器方向相反（新版给结构体字面量补尾随逗号、旧版删掉），因此**旧版本地工具链会让 `moon fmt --check` 朝相反方向报红**，`moon info` 也会把这些 `.mbti` 改回去。升级一条命令：`moon upgrade`（升级后重跑 `scripts/gates.sh fast` 确认 12 步绿）。
 
 - CLI 是**单二进制多子命令**：`serve`（单机 all-in-one）、`spu`（数据节点）、`sc`（控制面）加上各运维子命令，都从同一个 `cli.exe` 出。
 - 门禁脚本默认测 **debug** 构建（`moon build --target native` 的产物）；`MOONFLUX_EXE` 可指向任意构建，但别把门禁指向一个碰巧存在的旧 release——它曾让一次门禁跑在上一轮的二进制上。
@@ -544,6 +545,8 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
 | 一切（43 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| CI：随推送的 fast（Linux，12 步） | GitHub Actions（[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)）；本地等价物 `scripts/gates.sh fast`；日志 `gh run view --log-failed` |
+| CI：手动的 full（macOS，43 步 E2E） | `gh workflow run ci`（或网页 Actions → ci → Run workflow）；本地等价物 `scripts/gates.sh` |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
 | 多分区复制与隔离 | `scripts/e2e-p7-partitions.sh` |

@@ -2,7 +2,7 @@
 
 > **定位**：项目的**进度管理**单一真相——分阶段路线图、每阶段的交付物与门禁证据、已达成的里程碑清单与后续排期。**规约依据**：AGENTS.md §2（阶段与门禁，工程纪律口径）；**边界声明**：README 只保留路线图**摘要**并链接到这里（2026-09-17 文档重构，决策 37）；阶段推进的门禁必须可证伪、可复现，"看起来能跑"不计数（AGENTS.md §2）。
 >
-> **日期**：2026-09-25 · 状态：P0–P26 全部达成 · 门禁全套 43 步绿（native 274 / wasm-gc 174）
+> **日期**：2026-09-27 · 状态：P0–P26 全部达成 · 门禁全套 43 步绿（native 274 / wasm-gc 174）· CI 已接线（`fast` Linux 随推送首绿，`full` macOS 手动）
 
 ## 1. 阶段路线图（含门禁证据）
 
@@ -73,13 +73,14 @@
 - [x] P24 达成：无重启轮转——TLS 上下文与凭据表 mtime 监视热重载（换文件即生效、坏文件保旧、明文+认证启动警告），SASL 给出边界声明；`scripts/e2e-p24-rotation.sh` 4 腿全绿（2026-09-25，决策 48）
 - [x] P25 达成：批压缩——DEFLATE 编解码进 core/codec（Python zlib 三容器金标语料锚定 + 炸弹上界）+ Kafka 连接器 gzip 双向；`scripts/e2e-p25-compression.sh` 4 腿全绿（2026-09-25，决策 49）
 - [x] P26 达成：ABI v2 标量调用（触发条件成立）——沙箱标量函数端到端、与 mbel 逐字节对拍、四类结构化拒绝；顺带修链的整批应用与探针的无导入段检查（2026-09-25，决策 50）
-- [x] 远端仓库达成（2026-09-25，用户提供 `github.com/dimon-83/moonflux`）：94 笔提交全历史推送。**CI 只到"暂存"**——工作流内容（fast 门禁 Linux 随推送 + 全量门禁 macOS 手动触发，E2E 脚本为 BSD 惯用法）在 [`.scratch/moonflux-ci/ci.yml`](../.scratch/moonflux-ci/ci.yml)：GitHub 拒绝用缺 `workflow` scope 的凭据推送 `.github/workflows/` 下的任何内容；凭据就位后复制 + 提交 + 推送即落地（见 §3 待办）
+- [x] 远端仓库达成（2026-09-25，用户提供 `github.com/dimon-83/moonflux`）：94 笔提交全历史推送
+- [x] **CI 接线达成（2026-09-27）**：工作流落在 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（`.scratch/moonflux-ci/` 那份暂存副本已退休——线上有了权威副本，留着就是第二真相）。`fast`（12 步）随推送在 **ubuntu-latest** 首绿（run `36324100660`，1 分 41 秒，**本仓首次 Linux 验证**：四后端编译 + 双测试套件）；`full`（43 步 E2E）手动触发于 macos-14。接线过程抓出五件事（registry 索引前置、wasmtime 与 `st_mtimespec` 两处 macOS-only、两个门禁假绿）与工具链版本政策，见决策 51 与看板返工台账第 11 条
 - [x] 生成项目规约 [`AGENTS.md`](../AGENTS.md)（2026-09-15）；随代码结构落地更新（2026-09-16 补 §10 文档规范）
 
 ## 3. 待办与排期
 
 - [x] ~~compaction~~ **已达成**（2026-09-18，P14：键语义启用 + 键控压实落地）
-- [ ] **CI 接线**（唯一在账的工程动作，非代码问题）：工作流内容已在 `.scratch/moonflux-ci/ci.yml` 暂存；阻塞点是 GitHub 凭据缺 `workflow` scope（GitHub 原话拒绝的是凭据，不是内容）
+- [x] ~~**CI 接线**~~ **已达成**（2026-09-27，决策 51）：`fast` 随推送（Linux，首绿 run `36324100660`）+ `full` 手动（macOS）；**工具链政策**：CI 装 `latest`（CDN 拒版本化 URL，钉不住），仓库采纳该版本格式，本地须 `moon upgrade` 同步
 - [ ] **下一梯队**（按优先级）：编辑器函数集 UI、多语言客户端 SDK（均待需求触发）；~~ABI v2 实现~~ **已达成**（2026-09-25，P26，见决策 50）
 - [x] ~~P15 后续：每请求重开日志~~ **已达成**（2026-09-19，P16：进程级有界缓存，见决策 40 与 `scripts/e2e-p16-logcache.sh`）
 - [x] ~~P16 后续 ①：benchmark 工具~~ **已达成**（2026-09-22，P17：`benchmark produce/consume/latency` + `scripts/e2e-p17-bench.sh`，见决策 41；执行中抓掉 accept 先于 poll 的每请求一 tick 税，ticket 75）

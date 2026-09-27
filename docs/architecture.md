@@ -223,7 +223,7 @@ flowchart TB
 
 ## 10. 验证体系（架构的执行者）
 
-架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**43 步**）：
+架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**43 步**；CI 跑的是同一条脚本——`fast` 随推送在 Linux，`full` 手动在 macOS）：
 
 | 层 | 机制 |
 | :--- | :--- |
@@ -234,6 +234,7 @@ flowchart TB
 | 分布式行为 | 故障注入门禁（宕机/恢复/分区隔离/选主/分歧回归/水位一致性） |
 | 安全面 | 拒绝路径断言（伪造命令、错 CA、无凭据）+ TLS 下复制逐字节一致 |
 | 门禁产物 | E2E 脚本测 `moon build --target native` 产出的 **debug** 二进制（`MOONFLUX_EXE` 可覆盖）——门禁测"这次构建"是事实不是巧合 |
+| 持续集成 | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)：`fast`（12 步）随推送在 Linux，`full`（43 步）手动在 macOS；两者跑的都是本仓库的 `gates.sh`，工具链随 CI 安装的 `latest` 对齐（决策 51） |
 
 ## 维护规则
 
