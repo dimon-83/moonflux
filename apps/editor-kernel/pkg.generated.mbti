@@ -6,11 +6,19 @@ pub fn mf_editor_abi_version() -> Int
 
 pub fn mf_editor_apply(String) -> Bytes
 
+pub fn mf_editor_build_function_set(String) -> String
+
 pub fn mf_editor_build_spec(String) -> String
 
 pub fn mf_editor_feed(Bytes) -> String
 
 pub fn mf_editor_fetch(String, Int64, Int) -> Bytes
+
+pub fn mf_editor_function_set_create(String) -> Bytes
+
+pub fn mf_editor_function_set_delete(String) -> Bytes
+
+pub fn mf_editor_function_set_list() -> Bytes
 
 pub fn mf_editor_hello() -> Bytes
 

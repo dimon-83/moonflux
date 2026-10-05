@@ -218,7 +218,7 @@ flowchart TB
 ## 9. 产品面
 
 - **CLI**（`apps/cli`，单二进制多子命令）：数据面 `produce`/`consume`；集群 `sc`/`spu`/`serve`；运维 `topic`/`cluster`/`group`/`function-set`/`operator`；管道 `pipeline plan/apply/run`。命令面盘点与对标见 [`cli-roadmap.md`](cli-roadmap.md)。
-- **Web 编辑器**（P4，`apps/editor-kernel` js 目标 + `web/editor/`）：**spec-first**——编辑器只是 `PipelineSpec` 的渲染器，部署动词是 `CMD_APPLY_PIPELINE`；同一端口 WS 升级（`serve --ws`，4 字节嗅探），浏览器与 CLI 走同一协议（决策 22–24）。
+- **Web 编辑器**（P4，`apps/editor-kernel` js 目标 + `web/editor/`）：**spec-first**——编辑器只是 `PipelineSpec` 的渲染器，部署动词是 `CMD_APPLY_PIPELINE`；同一端口 WS 升级（`serve --ws`，4 字节嗅探），浏览器与 CLI 走同一协议（决策 22–24）。P27 起编辑器还渲染**函数集资产**：面板/表单/选择器/漂移标记四件套，资产文档构建与 CRUD 帧（命令 22–25）全在内核（ABI 2），表单预检只做形状、校验权威在节点发布期，漂移标记是编辑器侧 advisory（`topology.json` 为服务端真相）（决策 52）。
 - **管线**：spec → `pipeline plan`（差异预览）→ `apply`（发布期静态检查 + 落盘）→ run/serve 消费路径执行；集群口径 `apply --remote <sc>`。
 
 ## 10. 验证体系（架构的执行者）

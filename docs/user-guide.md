@@ -279,6 +279,8 @@ cli.exe serve --data-dir d --listen 127.0.0.1:19420 --ws
 
 拖拽 Source/Transform/Sink → 部署（`CMD_APPLY_PIPELINE`）→ 在编辑器内消费。编辑器是 spec 的渲染器：它产出的就是 `PipelineSpec`，CLI 与浏览器看到同一个真相。
 
+**函数集面板（P27）**：连接后左侧「function sets」列出节点上的集合（名称 / revision / 函数数），可刷新、删除、载入表单；「new set」打开编辑表单（集合名 + 函数行：name / params 逗号分隔 / body / description），「deploy set」即 `function-set create` 的线上等价（经 WS，命令 22–25）。表达式节点多一个「function set」下拉（— 无 — + 已知集合），选择随图进入 `build_spec` 的 `transforms[i].functions`。**修订漂移标记**：每次部署成功会快照所引用集合的 revision；之后任何一次刷新发现集合前进，该行出现 `↻ re-apply (applied r{旧} · now r{新})`——重新部署即换绑（服务端权威记录是 `<data-dir>/topology.json` 的 `functions` 数组，标记只是编辑器侧提醒）。**两条边界**：表单只做形状预检，mbel 规则与纯度以节点发布期门禁为准（拒绝原样进日志）；UI 不提供标量函数编写面（那是 ABI v2 沙箱的路径）。认证开启时函数集命令仅 Root 可用（闭合权限表），编辑器会话不带凭据——函数集 UI 的口径与编辑器整体一致：本地/免认证姿态。
+
 ## 9. 实战：五个端到端例子
 
 以下例子都在本机跑过，输出的形状与这里一致（值为一次真实运行的截取）。它们逐级组合前面的能力：表达式 → 函数集 → 算子沙箱 → 分区与消费组 → 集群容错 → 安全拓扑。

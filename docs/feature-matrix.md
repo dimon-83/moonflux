@@ -93,7 +93,7 @@
 | PipelineSpec v1alpha1（JSON；plan 差异预览 / apply 发布期检查） | ✅ | `core/spec`；`scripts/e2e-p0p.sh` |
 | Web 拖拽编辑器（spec-first；同端口 WS；浏览器闭环） | ✅ | `apps/editor-kernel` + `web/editor/`；`scripts/e2e-p4-editor.sh`（浏览器阶段人/agent 驱动） |
 | 客户端内核（native + wasm-gc 双后端同一份逻辑） | ✅ | `core/client`；`moon test --target wasm-gc` |
-| 编辑器函数集 UI | ⏳ | spec 可携带引用；UI 待需求 |
+| 编辑器函数集 UI（面板/表单/选择器/漂移标记） | ✅ | `scripts/e2e-p27-editor-functions.sh`（3 腿）+ `apps/editor-kernel` wbtest 11 条；决策 52 |
 | 多语言客户端 SDK（Rust/Python/…） | ⏳ | 线协议与第二实现（Python 探针）已证明可复制；SDK 未立项 |
 | K8s 部署（CRD 元数据后端 + operator/Helm） | ⏳ | **明确排到最后**（用户裁定，[`project-roadmap.md`](project-roadmap.md) §3）：元数据接口可插拔，本地存储是第一个实现 |
 | Benchmark 工具（吞吐/延迟直方图） | ✅ | `benchmark produce/consume/latency`（本地 `--data-dir` + 远端 `--remote`；值头序号做负载下完整性校验；单调 µs 时钟 + nearest-rank 直方图 min/avg/p50/p90/p99/max）；对标 `fluvio benchmark`（其 consumer 基准未发布，本工具补了 consume 与 e2e 可见性）；**数字只报告，门禁只断言结构**（决策 41）；`scripts/e2e-p17-bench.sh`（6 腿） |

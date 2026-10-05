@@ -89,13 +89,19 @@ export MOONFLUX_EXE="$ROOT/_build/native/debug/build/apps/cli/cli.exe"
 
 # 4. gates
 #
-# Not in this list: scripts/e2e-p4-editor.sh. Its first half is
-# mechanical (build, start the broker, assert on the segment file), but
-# the milestone's gate is "a browser composes a pipeline and consumes
-# data", and no shell script can press a button. Run it as:
+# Not in this list: scripts/e2e-p4-editor.sh and
+# scripts/e2e-p27-editor-functions.sh. Their first halves are
+# mechanical (build, start the broker, assert on data), but the
+# milestone's gate is "a browser composes a pipeline and consumes
+# data" (and, for p27, "a browser authors a rule asset and rebinds
+# it"), and no shell script can press a button. Run them as:
 #   scripts/e2e-p4-editor.sh setup    # prints the editor URL
 #   … drive the page (agent or human) …
 #   scripts/e2e-p4-editor.sh verify
+# and, for the function-set UI (two drive rounds, one per revision):
+#   scripts/e2e-p27-editor-functions.sh setup
+#   … drive round 1 …  bump … drive round 2 …
+#   scripts/e2e-p27-editor-functions.sh verify
 step "crosscheck-protocol.sh" scripts/crosscheck-protocol.sh
 if [ "$MODE" != "fast" ]; then
   step "e2e-p0.sh" scripts/e2e-p0.sh

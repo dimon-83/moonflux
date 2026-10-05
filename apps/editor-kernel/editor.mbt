@@ -18,9 +18,12 @@
 
 ///|
 /// ABI version for the page to check (the same discipline the operator
-/// ABI uses: a mismatch is refused, not guessed).
+/// ABI uses: a mismatch is refused, not guessed). 2 adds the function-
+/// set surface (P27): an old artifact staged next to the new page would
+/// leave the panel silently missing, so the page asserts the version
+/// instead of discovering that by absence.
 pub fn mf_editor_abi_version() -> Int {
-  1
+  2
 }
 
 // ---------------------------------------------------------------------
@@ -117,10 +120,34 @@ pub fn mf_editor_build_spec(graph : String) -> String {
               Some(String(expr)) => {
                 doc_map["type"] = Json::string("expr")
                 doc_map["expr"] = Json::string(expr)
+                // an expr transform may reference a function set by name
+                // (P6's `$.spec.transforms[i].functions`); the name is
+                // resolved — and refused if missing — when the node
+                // applies the spec, so the editor only carries it
+                match t.get("functions") {
+                  Some(String(set_name)) =>
+                    if set_name.length() > 0 {
+                      doc_map["functions"] = Json::string(set_name)
+                    }
+                  Some(_) =>
+                    return json_error(
+                      "functions must name a function set (a string)",
+                    )
+                  None => ()
+                }
               }
               _ => return json_error("an expr transform needs an expr")
             }
-          "wasm" =>
+          "wasm" => {
+            // the reference lives on the expr transform only; a silent
+            // ignore here would drop a setting the user can see
+            match t.get("functions") {
+              Some(_) =>
+                return json_error(
+                  "only an expr transform can reference a function set",
+                )
+              None => ()
+            }
             match t.get("module") {
               Some(String(module)) => {
                 doc_map["type"] = Json::string("wasm")
@@ -128,6 +155,7 @@ pub fn mf_editor_build_spec(graph : String) -> String {
               }
               _ => return json_error("a wasm transform needs a module")
             }
+          }
           _ => return json_error("unknown transform kind '\{kind}'")
         }
         transforms.push(Json::object(doc_map))
@@ -288,6 +316,132 @@ pub fn mf_editor_fetch(topic : String, from : Int64, max : Int) -> Bytes {
   request(@client.CMD_FETCH, payload.to_bytes())
 }
 
+// ---------------------------------------------------------------------
+// Function sets (P27): the editor manages the rule assets a spec's
+// expr transforms reference. The split is the same as everywhere else
+// on this page — the kernel builds the asset document and the protocol
+// bytes; the node's publish-time gate (mbel's own validation plus the
+// purity scan) stays the only authority for everything beyond shape.
+
+///|
+/// Builds the asset document a function-set form edits into the JSON
+/// the CREATE verb consumes.
+///
+/// Input (the form's shape):
+///   { "name": "textkit",
+///     "functions": [ { "name": "shout", "params": ["x"],
+///                      "body": "upper(x) + \"!\"", "description": "…" } ] }
+///
+/// The pre-check is shape only: the set name reuses the project's one
+/// name whitelist (`core/spec`, the same rule a topic name answers to),
+/// and the required fields must be present and non-empty. mbel's rules
+/// for names, parameters and bodies — and the purity scan — are the
+/// node's create-time gate, deliberately not re-implemented here: a
+/// second authority would drift from the first.
+///
+/// Output: `{ "ok": true, "asset": "<document>" }`, or
+/// `{ "ok": false, "error": "…" }`.
+pub fn mf_editor_build_function_set(form : String) -> String {
+  let json = @json.parse(form[0:form.length()]) catch {
+    e => return json_error("form is not valid JSON: \{e}")
+  }
+  let obj = match json {
+    Object(obj) => obj
+    _ => return json_error("the form must be an object")
+  }
+  let name = match obj.get("name") {
+    Some(String(name)) => name
+    _ => return json_error("the form needs a set name")
+  }
+  if !@spec.valid_topic_name(name) {
+    return json_error("invalid set name '\{name}' (1..128 of [a-z0-9._-])")
+  }
+  let items = match obj.get("functions") {
+    Some(Array(items)) => items
+    _ => return json_error("the form needs a functions array")
+  }
+  if items.length() == 0 {
+    return json_error("a function set needs at least one function")
+  }
+  let functions : Array[Json] = []
+  for item in items {
+    let f = match item {
+      Object(f) => f
+      _ => return json_error("each function must be an object")
+    }
+    let fn_name = match f.get("name") {
+      Some(String(n)) => n
+      _ => return json_error("each function needs a name")
+    }
+    if fn_name.length() == 0 {
+      return json_error("a function name cannot be empty")
+    }
+    let params : Array[Json] = []
+    match f.get("params") {
+      Some(Array(raw)) =>
+        for p in raw {
+          match p {
+            String(p) => params.push(Json::string(p))
+            _ => return json_error("params must be strings")
+          }
+        }
+      Some(_) => return json_error("params must be an array of strings")
+      None => return json_error("each function needs params")
+    }
+    let body = match f.get("body") {
+      Some(String(body)) => body
+      _ => return json_error("function '\{fn_name}' needs a body")
+    }
+    if body.length() == 0 {
+      return json_error("function '\{fn_name}' needs a body")
+    }
+    let doc : Map[String, Json] = {}
+    doc["name"] = Json::string(fn_name)
+    doc["params"] = Json::array(params)
+    doc["body"] = Json::string(body)
+    match f.get("description") {
+      Some(String(text)) =>
+        // an empty description is "none", not "" — the asset should not
+        // carry a field that says nothing
+        if text.length() > 0 {
+          doc["description"] = Json::string(text)
+        }
+      Some(_) => return json_error("description must be a string")
+      None => ()
+    }
+    functions.push(Json::object(doc))
+  }
+  let set_map : Map[String, Json] = {}
+  set_map["name"] = Json::string(name)
+  set_map["functions"] = Json::array(functions)
+  let root : Map[String, Json] = {}
+  root["ok"] = true.to_json()
+  root["asset"] = Json::string(Json::object(set_map).stringify(indent=2))
+  json_bytes(root)
+}
+
+///|
+/// A FUNCTION_SET_CREATE request carrying the asset document.
+pub fn mf_editor_function_set_create(asset_json : String) -> Bytes {
+  request(
+    @client.CMD_FUNCTION_SET_CREATE,
+    @utf8.encode(asset_json[0:asset_json.length()]),
+  )
+}
+
+///|
+/// A FUNCTION_SET_LIST request (the reply is every set's full document:
+/// name, revision, functions — the panel and the form load from it).
+pub fn mf_editor_function_set_list() -> Bytes {
+  request(@client.CMD_FUNCTION_SET_LIST, b"")
+}
+
+///|
+/// A FUNCTION_SET_DELETE request naming the set.
+pub fn mf_editor_function_set_delete(name : String) -> Bytes {
+  request(@client.CMD_FUNCTION_SET_DELETE, @utf8.encode(name[0:name.length()]))
+}
+
 ///|
 /// Builds one request frame and returns its bytes for JS to send.
 fn request(cmd : Int, payload : Bytes) -> Bytes {
@@ -351,23 +505,47 @@ pub fn mf_editor_feed(reply : Bytes) -> String {
       root["message"] = Json::string(message)
     }
     @client.CMD_OK =>
-      // an OK carries either records (fetch) or an applied-pipeline
-      // summary; decide by what the payload decodes to
+      // an OK carries either records (fetch), an applied-pipeline
+      // summary, or a function-set reply (list/create); decide by what
+      // the payload decodes to. The shapes are mutually exclusive by
+      // construction: the binary ones start with a u32/uleb count, the
+      // JSON ones with `[` or `{` — a JSON byte as a count is far past
+      // every bound tried here.
       match decode_records(payload) {
         Some(records) => {
           root["kind"] = Json::string("records")
           root["records"] = Json::array(records)
         }
-        None => {
-          root["kind"] = Json::string("ok")
-          match decode_applied(payload) {
-            Some((name, processes)) => {
-              root["pipeline"] = Json::string(name)
-              root["processes"] = Json::number(processes.to_double())
+        None =>
+          // JSON replies first: the applied-pipeline probe below reads
+          // ulebs, and a JSON object's leading `{` (123) passes its
+          // length bound — a create reply would impersonate an apply
+          // reply (caught by driving the real page). A binary payload
+          // simply fails the JSON parse and falls through.
+          match decode_function_set_list_reply(payload) {
+            Some(sets) => {
+              root["kind"] = Json::string("function-sets")
+              root["sets"] = Json::array(sets)
             }
-            None => ()
+            None =>
+              match decode_function_set_created_reply(payload) {
+                Some(fields) => {
+                  root["kind"] = Json::string("function-set")
+                  for key, value in fields {
+                    root[key] = value
+                  }
+                }
+                None =>
+                  match decode_applied(payload) {
+                    Some((name, processes)) => {
+                      root["kind"] = Json::string("ok")
+                      root["pipeline"] = Json::string(name)
+                      root["processes"] = Json::number(processes.to_double())
+                    }
+                    None => root["kind"] = Json::string("ok")
+                  }
+              }
           }
-        }
       }
     _ => root["kind"] = Json::string("unknown")
   }
@@ -439,6 +617,38 @@ fn decode_applied(payload : Bytes) -> (String, Int)? {
     Err(_) => return None
   }
   Some((name, processes))
+}
+
+///|
+/// Tries to decode a function-set LIST reply: the payload is a JSON
+/// array of the sets' full documents (`encode_function_set_doc`'s
+/// shape — name, revision, functions), so the panel and the form load
+/// straight from it. Binary payloads fail the parse and return None.
+fn decode_function_set_list_reply(payload : Bytes) -> Array[Json]? {
+  let text = @utf8.decode_lossy(payload[0:payload.length()])
+  let json = @json.parse(text[0:text.length()]) catch { _ => return None }
+  match json {
+    Array(items) => Some(items)
+    _ => None
+  }
+}
+
+///|
+/// Tries to decode a function-set CREATE reply: `{name, revision,
+/// created}` (created = deployed-or-updated). Keyed on the `created`
+/// field so no other JSON object on this channel can impersonate it.
+fn decode_function_set_created_reply(payload : Bytes) -> Map[String, Json]? {
+  let text = @utf8.decode_lossy(payload[0:payload.length()])
+  let json = @json.parse(text[0:text.length()]) catch { _ => return None }
+  match json {
+    Object(obj) =>
+      if obj.get("name") is Some(String(_)) && obj.get("created") is Some(_) {
+        Some(obj)
+      } else {
+        None
+      }
+    _ => None
+  }
 }
 
 ///|

@@ -66,6 +66,16 @@
   td.num { font:12px ui-monospace,Menlo,monospace; color:var(--dim); }
   .pill { font-size:11px; padding:1px 6px; border-radius:10px; border:1px solid var(--line);
           color:var(--dim); }
+  .pill.drift { border-color:var(--accent); color:var(--accent); }
+  #fn-form { border:1px solid var(--line); border-radius:8px; padding:10px; margin-top:8px;
+             display:grid; gap:6px; background:#fff; }
+  /* the display above beats the UA's [hidden] rule — keep the toggle honest */
+  #fn-form[hidden] { display:none; }
+  #fn-form .fnrow { display:grid; grid-template-columns:1fr 2fr; gap:6px; align-items:center; }
+  #fn-form textarea { width:100%; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+                      border:1px solid var(--line); border-radius:4px; padding:4px 6px;
+                      min-height:44px; }
+  .hintline { font-size:11px; color:var(--dim); margin:6px 0 0; }
 </style>
 </head>
 <body>
@@ -107,6 +117,31 @@
       <button class="act" id="btn-run" disabled>run</button>
       <button class="act" id="btn-consume" disabled>consume</button>
     </div>
+
+    <h2>function sets <span class="status">(rule assets the expr transforms reference)</span></h2>
+    <div class="palette">
+      <button class="act" id="btn-sets-refresh">refresh</button>
+      <button class="act" id="btn-sets-new">new set</button>
+    </div>
+    <table><thead><tr><th>name</th><th>revision</th><th>functions</th><th>status</th><th></th></tr></thead>
+           <tbody id="set-rows"></tbody></table>
+    <p class="hintline">expression function sets only — untrusted scalar functions are the
+       ABI&nbsp;v2 sandbox path and are deliberately not exposed here.</p>
+
+    <div id="fn-form" hidden>
+      <div class="fnrow">
+        <span class="kind">set name</span>
+        <input class="f" id="fn-set-name" placeholder="textkit">
+      </div>
+      <div id="fn-rows"></div>
+      <div class="palette">
+        <button class="act" id="btn-fn-add">add function</button>
+        <button class="act primary" id="btn-set-deploy">deploy set</button>
+        <button class="act" id="btn-set-cancel">close</button>
+      </div>
+      <p class="hintline">the node's publish-time gate (mbel's own validation plus the purity
+         scan) is the authority — the form only checks the shape.</p>
+    </div>
   </section>
 
   <section id="inspector">
@@ -144,7 +179,12 @@ let graph = {
   sink: null,
 };
 
-$("kernel").textContent = "kernel ABI " + kernel.mf_editor_abi_version();
+// the kernel artifact and the page ship together: a stale
+// editor-kernel.js next to this page would leave the function-set
+// surface silently missing, so the mismatch is announced, not guessed
+const abi = kernel.mf_editor_abi_version();
+if (abi !== 2) say(`kernel ABI ${abi} — this page expects 2; rebuild apps/editor-kernel (js)`);
+$("kernel").textContent = "kernel ABI " + abi;
 
 // ---- rendering --------------------------------------------------------
 function field(label, value, oninput) {
@@ -211,7 +251,31 @@ function render() {
   }
   graph.transforms.forEach((t, i) => {
     const body = [field("kind", t.kind, (v) => { t.kind = v; })];
-    if (t.kind === "expr") body.push(field("expr", t.expr, (v) => { t.expr = v; }));
+    if (t.kind === "expr") {
+      body.push(field("expr", t.expr, (v) => { t.expr = v; }));
+      // the function-set reference: a dropdown over the panel's view of
+      // the node's assets (an unknown set is refused at apply time —
+      // the kernel carries the name, the node resolves it)
+      const wrap = document.createElement("div");
+      const l = document.createElement("div");
+      l.className = "kind";
+      l.textContent = "function set";
+      const sel = document.createElement("select");
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "— none —";
+      sel.append(none);
+      for (const name of Object.keys(sets)) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = `${name} (r${sets[name].revision})`;
+        sel.append(opt);
+      }
+      sel.value = t.functions ?? "";
+      sel.addEventListener("change", () => { t.functions = sel.value || null; refresh(); });
+      wrap.append(l, sel);
+      body.push(wrap);
+    }
     if (t.kind === "wasm") body.push(field("module", t.module, (v) => { t.module = v; }));
     transformLane.append(nodeEl("transform", String(i), body));
   });
@@ -300,6 +364,7 @@ function refresh() {
   }
   // availability follows the graph, not the page load order
   updateButtons();
+  renderSets();
 }
 
 $("name").addEventListener("input", (ev) => { graph.name = ev.target.value; refresh(); });
@@ -308,7 +373,19 @@ $("topic").addEventListener("input", (ev) => { graph.topic = ev.target.value; re
 // ---- transport: a WebSocket the page owns, a session the kernel owns -
 let socket = null;
 let socketReady = false;
-const pending = [];
+// replies are routed by request id, not by arrival order: the panel's
+// requests and the pipeline's actions now interleave, and "first reply
+// wins" quietly mislabels both
+const awaiting = new Map(); // rid -> action label
+
+// ---- function-set state (P27) -----------------------------------------
+// `sets` is the node's view (the last LIST reply); `boundAtDeploy` is
+// the editor-side snapshot of the revisions a deploy bound. The drift
+// marker compares the two — an *advisory* fact owned by this page; the
+// authoritative binding record is topology.json on the node.
+let sets = {};           // name -> {revision, functions: [...]}
+let boundAtDeploy = {};  // name -> revision at the last successful deploy
+let fnForm = { open: false, name: "", functions: [] };
 
 function connect() {
   // the broker and the page are served from different ports, so the
@@ -340,14 +417,41 @@ function connect() {
 }
 
 function handle(decoded) {
+  const action = awaiting.get(decoded.rid) ?? "reply";
+  awaiting.delete(decoded.rid);
   if (decoded.kind === "welcome") {
     say(`hello accepted (server v${decoded.major}.${decoded.minor})`);
+    // the panel comes alive with the connection: list what the node holds
+    guard("set-list", () => send(kernel.mf_editor_function_set_list(), "set-list"));
     updateButtons();
   } else if (decoded.kind === "ok") {
-    if (decoded.pipeline) say(`deployed pipeline "${decoded.pipeline}" (${decoded.processes} processes)`);
-    else say("ok");
+    if (decoded.pipeline) {
+      say(`deployed pipeline "${decoded.pipeline}" (${decoded.processes} processes)`);
+      // snapshot the revisions this deploy bound, per referenced set —
+      // the drift marker's editor-side half (topology.json is the
+      // server's record of the same fact)
+      for (const t of graph.transforms) {
+        if (t.kind === "expr" && t.functions && sets[t.functions]) {
+          boundAtDeploy[t.functions] = sets[t.functions].revision;
+        }
+      }
+      renderSets();
+    } else {
+      say(`${action}: ok`);
+    }
   } else if (decoded.kind === "error") {
-    say(`error ${decoded.code}: ${decoded.message}`);
+    say(`${action} error ${decoded.code}: ${decoded.message}`);
+  } else if (decoded.kind === "function-sets") {
+    sets = {};
+    for (const s of decoded.sets) sets[s.name] = s;
+    say(`function sets: ${decoded.sets.length} on the node`);
+    // the expr nodes' dropdowns are rendered from `sets` too, so the
+    // whole graph re-renders, not just the table
+    refresh();
+  } else if (decoded.kind === "function-set") {
+    const verb = decoded.created ? "deployed" : "updated";
+    say(`${verb} function set "${decoded.name}" at revision ${decoded.revision}`);
+    guard("set-list", () => send(kernel.mf_editor_function_set_list(), "set-list"));
   } else if (decoded.kind === "records") {
     const rows = $("rows");
     rows.innerHTML = "";
@@ -367,7 +471,6 @@ function handle(decoded) {
   } else {
     say(`reply: ${JSON.stringify(decoded)}`);
   }
-  pending.shift();
   updateButtons();
 }
 
@@ -378,8 +481,14 @@ function updateButtons() {
   $("btn-consume").disabled = !ready;
 }
 
-function send(bytes) {
+function send(bytes, label) {
   if (!socketReady) return say("socket is not connected yet");
+  // the label travels with the request id so the reply can name the
+  // action that caused it
+  if (label) {
+    const rid = new DataView(bytes.buffer, bytes.byteOffset, 13).getUint32(5);
+    awaiting.set(rid, label);
+  }
   socket.send(bytes);
 }
 
@@ -393,26 +502,179 @@ function guard(label, fn) {
   }
 }
 
+// ---- function sets: panel, form, drift (P27) --------------------------
+// The kernel builds the asset document and the protocol frames; this
+// section is rendering and conversation state only.
+
+function paramsArray(text) {
+  return text.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+function renderSets() {
+  const tbody = $("set-rows");
+  tbody.innerHTML = "";
+  for (const name of Object.keys(sets).sort()) {
+    const s = sets[name];
+    const tr = document.createElement("tr");
+    const td = (text, cls) => {
+      const c = document.createElement("td");
+      if (cls) c.className = cls;
+      c.textContent = text;
+      return c;
+    };
+    tr.append(td(name), td(String(s.revision), "num"),
+              td(String((s.functions ?? []).length), "num"));
+    const status = document.createElement("td");
+    if (boundAtDeploy[name] !== undefined && s.revision > boundAtDeploy[name]) {
+      // the set moved after this editor last deployed: the running
+      // topology still binds the old revision until a re-apply
+      const pill = document.createElement("span");
+      pill.className = "pill drift";
+      pill.textContent = `↻ re-apply (applied r${boundAtDeploy[name]} · now r${s.revision})`;
+      status.append(pill);
+    } else if (boundAtDeploy[name] !== undefined) {
+      status.textContent = `bound r${boundAtDeploy[name]}`;
+    } else {
+      status.textContent = "—";
+    }
+    const ops = document.createElement("td");
+    const load = document.createElement("button");
+    load.className = "remove";
+    load.textContent = "edit";
+    load.addEventListener("click", () => guard("load", () => loadSet(name)));
+    const del = document.createElement("button");
+    del.className = "remove";
+    del.textContent = "delete";
+    del.addEventListener("click", () => guard("delete", () => deleteSet(name)));
+    ops.append(load, del);
+    tr.append(status, ops);
+    tbody.append(tr);
+  }
+}
+
+function renderFnForm() {
+  $("fn-form").hidden = !fnForm.open;
+  $("fn-set-name").value = fnForm.name;
+  const rows = $("fn-rows");
+  rows.innerHTML = "";
+  fnForm.functions.forEach((f, i) => {
+    const box = document.createElement("div");
+    box.className = "node";
+    const top = document.createElement("div");
+    top.className = "top";
+    const kind = document.createElement("span");
+    kind.className = "kind";
+    kind.textContent = `function ${i + 1}`;
+    const remove = document.createElement("button");
+    remove.className = "remove";
+    remove.textContent = "✕";
+    remove.addEventListener("click", () => {
+      fnForm.functions.splice(i, 1);
+      renderFnForm();
+    });
+    top.append(kind, remove);
+    const grid = document.createElement("div");
+    grid.className = "grid2";
+    const mk = (label, value, cb, area) => {
+      const cell = document.createElement("div");
+      const l = document.createElement("div");
+      l.className = "kind";
+      l.textContent = label;
+      const input = area ? document.createElement("textarea") : document.createElement("input");
+      input.value = value ?? "";
+      input.addEventListener("input", () => cb(input.value));
+      cell.append(l, input);
+      return cell;
+    };
+    grid.append(
+      mk("name", f.name, (v) => { f.name = v; }),
+      mk("params (comma-sep)", f.params, (v) => { f.params = v; }),
+      mk("body (mbel)", f.body, (v) => { f.body = v; }, true),
+      mk("description", f.description, (v) => { f.description = v; }),
+    );
+    box.append(top, grid);
+    rows.append(box);
+  });
+}
+
+function submitSet() {
+  const doc = {
+    name: fnForm.name.trim(),
+    functions: fnForm.functions.map((f) => {
+      const entry = { name: f.name.trim(), params: paramsArray(f.params), body: f.body };
+      if (f.description.trim()) entry.description = f.description.trim();
+      return entry;
+    }),
+  };
+  guard("build-set", () => {
+    const built = JSON.parse(kernel.mf_editor_build_function_set(JSON.stringify(doc)));
+    // the kernel's shape refusals land here; the node's publish-time
+    // refusals come back as error replies and land in the log
+    if (built.ok === false) return say(`function set refused: ${built.error}`);
+    send(kernel.mf_editor_function_set_create(built.asset), `set-create:${doc.name}`);
+  });
+}
+
+function loadSet(name) {
+  const s = sets[name];
+  if (!s) return say(`function set "${name}" is not in the panel — refresh first`);
+  fnForm = {
+    open: true,
+    name,
+    functions: (s.functions ?? []).map((f) => ({
+      name: f.name,
+      params: (f.params ?? []).join(","),
+      body: f.body,
+      description: f.description ?? "",
+    })),
+  };
+  renderFnForm();
+  say(`editing function set "${name}" (deploying publishes revision ${s.revision + 1})`);
+}
+
+function deleteSet(name) {
+  const referenced = graph.transforms.some((t) => t.kind === "expr" && t.functions === name);
+  if (referenced) {
+    say(`warning: "${name}" is referenced by this pipeline — the next apply refuses until the reference is removed`);
+  }
+  send(kernel.mf_editor_function_set_delete(name), `set-delete:${name}`);
+}
+
+$("btn-sets-refresh").addEventListener("click", () =>
+  guard("set-list", () => send(kernel.mf_editor_function_set_list(), "set-list")));
+$("btn-sets-new").addEventListener("click", () => {
+  fnForm = { open: true, name: "", functions: [{ name: "", params: "", body: "", description: "" }] };
+  renderFnForm();
+});
+$("btn-fn-add").addEventListener("click", () => {
+  fnForm.functions.push({ name: "", params: "", body: "", description: "" });
+  renderFnForm();
+});
+$("btn-set-deploy").addEventListener("click", submitSet);
+$("btn-set-cancel").addEventListener("click", () => { fnForm.open = false; renderFnForm(); });
+$("fn-set-name").addEventListener("input", (ev) => { fnForm.name = ev.target.value; });
+
 $("btn-deploy").addEventListener("click", () => {
   say("deploying " + graph.name + "…");
-  guard("deploy", () => { send(kernel.mf_editor_apply(specText)); });
+  guard("deploy", () => { send(kernel.mf_editor_apply(specText), "deploy"); });
 });
 
 $("btn-run").addEventListener("click", () => {
   const lines = $("records").value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
   const records = lines.map((value) => ({ key: "", value }));
   say(`producing ${records.length} record(s) to ${graph.topic}…`);
-  guard("run", () => { send(kernel.mf_editor_produce(graph.topic, JSON.stringify(records))); });
+  guard("run", () => { send(kernel.mf_editor_produce(graph.topic, JSON.stringify(records)), "run"); });
 });
 
 $("btn-consume").addEventListener("click", () => {
   say(`consuming ${graph.topic}…`);
   // MoonBit's Int64 is a BigInt on this target: passing a plain number
   // throws *inside* the kernel, so the offset is written as a BigInt
-  guard("consume", () => { send(kernel.mf_editor_fetch(graph.topic, 0n, 1000)); });
+  guard("consume", () => { send(kernel.mf_editor_fetch(graph.topic, 0n, 1000), "consume"); });
 });
 
 render();
+renderSets();
 refresh();
 connect();
 
@@ -425,6 +687,34 @@ window.moonfluxEditor = {
   log: () => logEl.textContent,
   records: () => Array.from(document.querySelectorAll("#rows tr")).map((tr) =>
     Array.from(tr.children).map((td) => td.textContent)),
+  // P27: the function-set surface, driven the same way
+  sets: () => sets,
+  drift: () => Object.keys(sets).map((n) => ({
+    name: n,
+    revision: sets[n].revision,
+    applied: boundAtDeploy[n] ?? null,
+    drifted: boundAtDeploy[n] !== undefined && sets[n].revision > boundAtDeploy[n],
+  })),
+  refreshSets: () => guard("set-list", () => send(kernel.mf_editor_function_set_list(), "set-list")),
+  setForm: (doc) => {
+    fnForm = {
+      open: true,
+      name: doc.name,
+      functions: doc.functions.map((f) => ({
+        name: f.name,
+        params: (f.params ?? []).join(","),
+        body: f.body,
+        description: f.description ?? "",
+      })),
+    };
+    renderFnForm();
+  },
+  submitSet,
+  deleteSet,
+  pickFunctions: (setName) => {
+    graph.transforms.forEach((t) => { if (t.kind === "expr") t.functions = setName || null; });
+    refresh();
+  },
 };
 </script>
 </body>

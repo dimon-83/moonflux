@@ -1,8 +1,8 @@
 # moonflux 进度看板（快照）
 
-> **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–51），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–96 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
+> **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–52），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–99 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
 
-**快照日期**：2026-09-27 · 状态：**P0–P26 全部达成** · 门禁全套 **43 步绿**（native 274 / wasm-gc 174 / 算子 6）· **CI 已接线且两腿均绿**：`fast`（12 步）随推送在 **Linux**（run `36324100660`，1 分 41 秒——本仓**首次 Linux 验证**）；`full`（43 步 E2E）手动在 macOS **首次跑满 43/43**（run `36325414560`，5 分 13 秒）
+**快照日期**：2026-10-05 · 状态：**P0–P27 全部达成** · 门禁全套 **43 步绿**（native 285 / wasm-gc 185 / 算子 6）· **CI 已接线且两腿均绿**：`fast`（12 步）随推送在 **Linux**（run `36324100660`，1 分 41 秒——本仓**首次 Linux 验证**）；`full`（43 步 E2E）手动在 macOS **首次跑满 43/43**（run `36325414560`，5 分 13 秒）
 
 ---
 
@@ -39,6 +39,7 @@
 | P24 | 无重启轮转：TLS/凭据表 mtime 监视热重载 + 明文警告 + SASL 边界声明 | 09-25 | `e2e-p24-rotation.sh`（4 腿）+ rotation wbtest 3 条 |
 | P25 | 批压缩：DEFLATE 进 core/codec（Python zlib 锚定 + 炸弹上界）+ Kafka gzip 双向 | 09-25 | `e2e-p25-compression.sh`（4 腿）+ codec wbtest 9 条 |
 | P26 | ABI v2 标量调用：沙箱标量函数 + 与 mbel 逐字节对拍 + 探针无导入段检查 | 09-25 | `e2e-p26-scalar.sh`（6 腿）+ wasmtime wbtest 9 条 |
+| P27 | 编辑器函数集 UI：面板/表单/选择器/漂移标记，资产与协议帧全在内核（ABI 2）；UI 不暴露标量函数面 | 10-05 | `e2e-p27-editor-functions.sh`（3 腿）+ wbtest 11 条 |
 
 ### 📋 待办（按优先级）
 
@@ -53,13 +54,13 @@
 | 7 | ~~批压缩~~ **已达成**（P25，09-25） | — | DEFLATE 进 core/codec + Kafka gzip 双向；自有 MFS 帧仍为未压缩（显式边界，决策 49） |
 | 8 | ~~细粒度 ACL / 审计日志~~ **已达成**（P21）· ~~证书轮转~~ **已达成**（P24）· SASL **边界声明**（决策 48：token-over-TLS 已覆盖；Kafka 连接器侧 SASL/TLS 为互操作候选）；剩余压缩 | 低 | 见决策 45/48 |
 | 9 | K8s 部署形态 | **最后（用户裁定）** | 弱门禁让位强门禁（roadmap §3 留痕）；真需要时先清单 + PVC 跑文件后端 |
-| 10 | ~~ABI v2 标量调用~~ **已达成**（P26，09-25）；剩余：多语言 SDK / 编辑器函数集 UI | 条件触发 | 见决策 50（设计稿触发条件成立即落地） |
+| 10 | ~~ABI v2 标量调用~~ **已达成**（P26，09-25）· ~~编辑器函数集 UI~~ **已达成**（P27，10-05）；剩余：多语言 SDK | 条件触发 | 见决策 50/52 |
 
 ### 🚫 阻塞
 
 | 项 | 阻塞原因 | 解法 |
 | :--- | :--- | :--- |
-| — | **无阻塞** | 剩余待办（K8s 部署形态 / 多语言 SDK / 编辑器函数集 UI）都是条件触发或用户已裁定排最后 |
+| — | **无阻塞** | 剩余待办（K8s 部署形态 / 多语言 SDK）都是条件触发或用户已裁定排最后 |
 
 （远端 + CI 接线已于 2026-09-27 清账：仓库与工作流都在线上，`fast` 首绿。）
 
@@ -80,6 +81,7 @@
 | 11 | **CI 首跑抓出的五件事**（没有一件是读文档能发现的）：① 新机器没有 registry 索引 → `dimon-83/mbel` 解析失败，**十条腿全红**（源码明明已 vendored 在 `.mooncakes/`）；② wasmtime 的头/库路径硬编码 Homebrew → Linux 上 **native 后端根本编不出来**；③ `fs_shim.c` 的 `st_mtimespec` 是 macOS 独有（glibc 为 `st_mtim`）；④ 编译矩阵对"非 `^Error` 的失败"报 PASS（`moon` 移出 PATH 后四条腿全绿）；⑤ `moon info` 吞掉 stderr、只看 `git status` → 依赖图坏掉时照样报"接口新鲜" | 用户提供带 `workflow` scope 的凭据、CI 真跑起来。**注意 ④⑤ 是门禁自己的假绿**——抓它们的是 CI，而 CI 用的正是这两条腿 | ① `moon update` + 索引缓存；② `-I/usr/local/include` + 平台化 dlopen 兜底 + CI 装官方 48.0.2 C API（与本地同版本，决策 14/T15 的镜像尺寸前提）；③ `__APPLE__` 分支；④⑤ 看退出码并打印输出（各自三路/日志实测）。**工具链漂移**（CI 装 latest vs 本地 `0.1.20260629`，而 CDN 拒版本化 URL）在决策 51 给出政策：仓库采纳 CI 那一版，`moon fmt` + `moon info` 重排 59+7+27 个文件（`.mbti` 非空行零变化），本地须 `moon upgrade` |
 | 12 | **决策 50 被插进了决策 49 的段落中间**（我上一轮补决策 50 时，用"行首编号"匹配插入点，而 49 是**多行**段落，于是 50 那行落进了 49 的第一行之后，把 49 截成两半——编号顺序看起来是对的，因为顺序检查也只看了行首） | 写决策 51 时读回文件，发现 49 的段落少了尾巴 | 把 50 移到 49 段落**之后**（按"49 的结尾行"定位，不按行首编号），再追加 51；顺带记教训：**多行段落不要用行首前缀做插入锚点** |
 | 13 | **门禁的启动时序假设**（full 首跑 43 步里 2 红：p12/p13）：两个门禁从**端口**学"服务起来了"，然后立刻 `grep` 一次日志；而 `sc` 是先打印 `listening`、**再**加载凭据表与 OpenSSL 上下文/证书（`apps/cli/node.mbt` 的 `sc` 启动序列）。runner 冷缓存下这个窗口比一次 grep 长——失败输出里的日志只有 `listening` 一行，**距该行出现仅 0.34 ms**（日志时间戳） | 首次手动 full 跑。**注意这是门禁的假设错，不是产品缺陷** | 新增有界等待 `wait_log`（默认 10 s，TLS 处 15 s；超时仍失败并打印日志，断言不减弱），并改掉同类站点（p12 腿 1、p12 腿 2、p13 三处、p24 明文警告）；`p5` 那条不动——它在服务跑完整场之后才查，不存在该竞态。三路单测 + 三条门禁本地回归（p12 10 腿 / p13 5 腿 / p24 4 腿）。**产品无缺陷的证据同在一次跑里**：`e2e-p24-rotation` 做完整 mTLS 轮转（换 CA、旧 CA 被拒、凭据轮换）4 腿全绿——说明 TLS 在 runner 上可用、控制面确实起来了。顺带修掉一个隐藏前置：`scripts/mfs_probe.py` 的 `str | None` 注解没有 `from __future__ import annotations`，等于**隐式要求 Python ≥3.10**（macOS 自带 3.9 直接 TypeError） |
+| 14 | **`mf_editor_feed` 的 apply 应答试探误读长 JSON 应答**：LIST/CREATE 应答的首字节 `[`（91）/`{`（123）在载荷够长时通过 uleb 试探的长度上界（≤128），被解码成 `deployed pipeline "{\"name":…`——面板首刷时每行日志都成了假部署。**wbtest 的短夹具当年全绿**（49 字节的数组过不了 91 字节的读取），真页面第一条 LIST（>91 字节）才现形 | P27 真浏览器驱动阶段（合成事件绕过指针交付问题后，日志第一眼就露出假 `deployed` 行） | 修法为**解码次序**：JSON 函数集应答（数组/带 `created` 的对象）**先于** uleb 试探——二进制载荷解析 JSON 必败、自然落空；新增**长夹具**回归（>91 字节的 LIST 应答断言无 `pipeline` 键）。教训入 AGENTS P4 块：**夹具必须覆盖真实载荷的长度级别**；另留痕一个驱动环境事实：IAB 面板的指针事件（Playwright click 与 CUA 坐标）在后台不交付，页面钩子（`window.moonfluxEditor`）与合成事件是为此设计的驱动面 |
 
 ---
 
@@ -93,9 +95,9 @@
 
 **可编程**：mbel 表达式变换（消费路径执行、热重载、历史按当前规则重现）；版本化函数集（发布期静态检查 + 编译两道闸）；WASM 算子沙箱（ABI v1、fuel 确定性预算、失败 fail-closed）；PipelineSpec 单一真相（编辑器只是渲染器）。
 
-**客户端与工具**：单二进制多子命令 CLI（produce / consume / serve / spu / sc / topic / group / cluster / operator / benchmark / pipeline / function-set）；WebSocket 网关（同端口同协议）；浏览器编辑器（拖拽 → 部署 → 消费）；**基准工具**（produce 吞吐 + 逐批延迟、consume 抽干与序号完整性校验、latency 端到端可见性——本地铁环回 ack ~4 ms / e2e p50 ~189 µs）；**MQTT 连接器**（P19）与 **Kafka 连接器**（P20：消费源 + 生产汇，手写锁定版本协议与 RecordBatch v2，CRC-32C 外部锚点验证）。
+**客户端与工具**：单二进制多子命令 CLI（produce / consume / serve / spu / sc / topic / group / cluster / operator / benchmark / pipeline / function-set）；WebSocket 网关（同端口同协议）；浏览器编辑器（拖拽 → 部署 → 消费；**P27 起带函数集面板/表单/选择器/漂移标记**——资产文档与协议帧全在 `apps/editor-kernel`）；**基准工具**（produce 吞吐 + 逐批延迟、consume 抽干与序号完整性校验、latency 端到端可见性——本地铁环回 ack ~4 ms / e2e p50 ~189 µs）；**MQTT 连接器**（P19）与 **Kafka 连接器**（P20：消费源 + 生产汇，手写锁定版本协议与 RecordBatch v2，CRC-32C 外部锚点验证）。
 
-**工程面**：一内核多后端（core 在 wasm / wasm-gc / js / native 四后端编译矩阵下保持可编译）；43 步门禁（故障注入、对拍、结构断言）；**CI 已接线**（`fast` 随推送在 Linux、`full` 手动在 macOS）；golden vectors + 独立 Python 协议第二实现；51 条关键决策记录全程留痕。
+**工程面**：一内核多后端（core 在 wasm / wasm-gc / js / native 四后端编译矩阵下保持可编译）；43 步门禁（故障注入、对拍、结构断言）；**CI 已接线**（`fast` 随推送在 Linux、`full` 手动在 macOS）；golden vectors + 独立 Python 协议第二实现；52 条关键决策记录全程留痕。
 
 ---
 
