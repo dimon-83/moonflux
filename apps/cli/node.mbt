@@ -1839,6 +1839,12 @@ struct HostTable {
   /// now written down instead of implied.
   mut applied_topic : String
   mut hosts : Array[PartitionHost]
+  /// Last background-compaction attempt per `topic/partition` (P28).
+  /// Keyed by partition, not indexed by host slot, so placement changes
+  /// cannot misattribute a timestamp: an unknown key is simply due now,
+  /// and a stale key for a partition no longer hosted is never visited.
+  /// The map object is mutated in place, so the field binding is not.
+  compaction_due : Map[String, Int64]
 }
 
 ///|
@@ -1848,7 +1854,15 @@ fn HostTable::new(
   address : String,
   link : PeerLink,
 ) -> HostTable {
-  HostTable::{ data_dir, node_id, address, link, applied_topic: "", hosts: [], }
+  HostTable::{
+    data_dir,
+    node_id,
+    address,
+    link,
+    applied_topic: "",
+    hosts: [],
+    compaction_due: Map::new(),
+  }
 }
 
 ///|
@@ -2101,6 +2115,34 @@ fn HostTable::tick_one(
         ) {
         Ok(_) => ()
         Err(e) => note("warning: \{e}")
+      }
+      // background compaction (P28): the tick is 50 ms — far hotter
+      // than a sealed-segment scan should run — so the pass keeps its
+      // own per-partition cadence (`MOONFLUX_COMPACT_MS`, off unless an
+      // operator set it). Same floor retention uses: the committed
+      // prefix lowered by whatever consumers still need.
+      let now = now_ms()
+      let key = "\{host.topic}/\{host.partition}"
+      let last = match self.compaction_due.get(key) {
+        Some(t) => t
+        None => -1L
+      }
+      if maintenance_due(last, now, compact_interval_ms()) {
+        self.compaction_due[key] = now
+        match
+          compact_partition(
+            self.data_dir,
+            host.topic,
+            host.partition,
+            partition_floor(host),
+            now,
+            @log.CompactionPolicy::{
+              min_dirty_bytes: compaction_min_dirty_bytes(),
+            },
+          ) {
+          Ok(_) => ()
+          Err(e) => note("warning: \{e}")
+        }
       }
     }
   } else if host.topic.length() > 0 {
@@ -2607,6 +2649,9 @@ fn dispatch_data_frame(
           ref.partition,
           partition_floor(host),
           now_ms(),
+          // the operator asked for this pass by name: rewrite as soon
+          // as anything is droppable (threshold 0), exactly as before
+          @log.CompactionPolicy::{ min_dirty_bytes: 0, },
         ) {
         Ok(report) => {
           let wire : Array[@client.WireCompaction] = []

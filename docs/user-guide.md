@@ -262,11 +262,13 @@ cli.exe produce --topic events --file events.txt --key-separator ':' --remote 12
 | `MOONFLUX_ROLL_BYTES` / `MOONFLUX_ROLL_MS` | 段滚动阈值（字节 / 时长） | 关闭（单段） |
 | `MOONFLUX_RETAIN_BYTES` / `MOONFLUX_RETAIN_MS` | retention 策略 | 关闭 |
 | `MOONFLUX_INDEX_EVERY` | 索引锚点密度 | 内置值 |
+| `MOONFLUX_COMPACT_MS` | 后台压实的节拍（**即开关**） | 关闭（0） |
+| `MOONFLUX_COMPACT_MIN_DIRTY_BYTES` | 后台压实愿意为多少可弃字节重写一段 | 0（有可弃即重写） |
 
 - 段边界永远是帧边界；只有最后一段可能带撕裂尾（崩溃恢复截断并报告）。
 - **retention 只删整段、只删 floor 以下**：floor = `min(leader 已提交前缀, 最慢消费组的提交偏移)`；删完后更老的读得到 `OffsetOutOfRange`（"没了"≠"空"）。每次删除打印段 base/记录数/字节数与新可读起点。
 - `.idx` 损坏不用修：任何疑点自动回退全扫，结果与有索引逐字节一致。
-- **压实（compaction，P14）删被取代的键、不搬存活记录**：`cluster compact` 只删除「同一键有更新版本」的记录，存活记录**保留原偏移**（读取与消费偏移因此不受影响），空洞可以正常读；只动已提交前缀（floor = `min(leader 水位, 消费组地板)`）之下的封存段，每次删除打印逐段与总计，重复执行为空报告。
+- **压实（compaction，P14）删被取代的键、不搬存活记录**：`cluster compact` 只删除「同一键有更新版本」的记录，存活记录**保留原偏移**（读取与消费偏移因此不受影响），空洞可以正常读；只动已提交前缀（floor = `min(leader 水位, 消费组地板)`）之下的封存段，每次删除打印逐段与总计，重复执行为空报告。**P28 起可以后台化**：给 serve/spu 设 `MOONFLUX_COMPACT_MS`（如 300000 = 每 5 分钟尝试一次），压实就与 retention 共用同一套节拍、同一 floor 自动运行——节拍即开关（不设 = 永不自动压实），`MOONFLUX_COMPACT_MIN_DIRTY_BYTES` 控制「多少可弃字节才值得重写一段」。floor 之上被超越的记录**不会**被后台压实碰（那是消费组还没读到的数据）。
 - **每个副本都要压实**：命令是节点本地的存储动作，请对**持有该分区的每个节点**各执行一次（只压 leader 会让故障切换时复活已删的键）；复制的空洞由副本自行跨过并在日志里说明。
 - 键由 `produce --key K`（全部同键）或 `--key-separator S`（每行首个分隔符拆 key/value；无分隔符的行**跳过并在 stderr 汇总**）产生；`consume` 第三列即键。
 

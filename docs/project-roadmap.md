@@ -2,7 +2,7 @@
 
 > **定位**：项目的**进度管理**单一真相——分阶段路线图、每阶段的交付物与门禁证据、已达成的里程碑清单与后续排期。**规约依据**：AGENTS.md §2（阶段与门禁，工程纪律口径）；**边界声明**：README 只保留路线图**摘要**并链接到这里（2026-09-17 文档重构，决策 37）；阶段推进的门禁必须可证伪、可复现，"看起来能跑"不计数（AGENTS.md §2）。
 >
-> **日期**：2026-10-05 · 状态：P0–P27 全部达成 · 门禁全套 43 步绿（native 285 / wasm-gc 185 / 算子 6）· CI 已接线（`fast` Linux 随推送首绿，`full` macOS 手动）
+> **日期**：2026-10-06 · 状态：P0–P28 全部达成 · 门禁全套 44 步绿（native 288 / wasm-gc 185 / 算子 6）· CI 已接线（`fast` Linux 随推送首绿，`full` macOS 手动）
 
 ## 1. 阶段路线图（含门禁证据）
 
@@ -38,6 +38,7 @@
 | **P25** | **批压缩** | DEFLATE 进 `core/codec`（inflate 三块型 + deflate 固定 Huffman/LZ77 + zlib/gzip 容器 + 炸弹上界，外部锚 = Python zlib 金标语料）；Kafka 连接器 gzip 双向 + 按名拒绝；自有协议压缩保持显式边界 | ✅ 达成（2026-09-25）：`scripts/e2e-p25-compression.sh` 4 腿全绿（双向外部锚定 + 默认不变 + apply 期拒绝）+ codec wbtest 9 条；执行中自抓三个自身 bug（漏 BTYPE、块头次序、容器校验和覆盖错对象）（决策 49） |
 | **P26** | **ABI v2 标量调用** | 设计稿落地（可选成对导出、返回指针 + v1 的 output_len/last_status 拆分、guest SDK 显式参数类型、节点注册表 apply 绑定、`{"type":"scalar"}` 变换）；链改整批应用（逐记录调用曾让批算子只拿单条批、上限永不触发）；探针补无导入段检查 | ✅ 达成（2026-09-25）：`scripts/e2e-p26-scalar.sh` 6 腿全绿（与 mbel 逐字节对拍、四类结构化拒绝）+ 真 wasmtime wbtest 9 条；设计稿 §7 落地实录（决策 50） |
 | **P27** | **编辑器函数集 UI** | 六部分议定范围（P26 收口时）：面板（列表/刷新/删除/载入）+ 编辑表单（部署即 CREATE）+ 表达式节点集合下拉（图 → `build_spec` 派生 `functions`）+ 修订漂移标记（部署快照 revision、LIST 前进即提示 re-apply，编辑器侧 advisory）+ 不含标量函数编写面 + 门禁形态；资产文档与协议帧全在 `apps/editor-kernel`（ABI 2） | ✅ 达成（2026-10-05）：`scripts/e2e-p27-editor-functions.sh` 三腿全绿（面板 CREATE 经 WS 落地、引用入 spec 且 re-apply 换绑 revision 2、历史按当前规则重现）+ wbtest 11 条；执行中修掉 apply 应答试探误读长 JSON 应答的真缺陷（决策 52） |
+| **P28** | **存储维护调度** | 后台压实加入既有维护节拍：`MOONFLUX_COMPACT_MS` 节拍即开关（默认关）、`MOONFLUX_COMPACT_MIN_DIRTY_BYTES` 透传内核 `min_dirty_bytes`、枚举与 floor 与 retention 同源（serve 抽 `serve_maintenance_targets`，spu 按 topic/partition 记节拍与 50ms tick 解耦）；顺带把 `decode_log_frames.py` 升到 P18 真偏移语义 | ✅ 达成（2026-10-06）：`scripts/e2e-p28-maintenance.sh` 5 腿全绿（默认关 / 收敛到每键最新且偏移不变 / 组地板挡压实 / 手动命令不变 / spu 同语义非 tick 同频）；进 gates.sh 步表 43→44（决策 53） |
 > **为什么 Native 先行**（2026-09-15 修订，README 决策 3）：数据源（Source）与数据汇（Sink）需要**独立的外部读写能力**——网络 / 文件 / 协议 / MQ / 硬件直采，**WASM 沙箱不能自主 IO**；连接器与数据面是第一梯队能力，因此承载它们的 Native 先行。WASM 保留为"数据路径内算子沙箱"（P2 落地）；**内核全后端可编译的纪律由 CI 矩阵从第一天保持**。
 >
 > **K8s 与阶段的关系**：P0–P3 **不依赖 K8s**，全部在本地单机/多进程推进与验收；K8s 仅是部署目标之一，只贡献元数据后端（CRD）与生命周期自动化。数据面、复制、选主、元数据调和是**任何部署模型都需要**的架构能力（AGENTS.md §1.2）。
@@ -77,6 +78,7 @@
 - [x] 远端仓库达成（2026-09-25，用户提供 `github.com/dimon-83/moonflux`）：94 笔提交全历史推送
 - [x] **CI 接线达成（2026-09-27）**：工作流落在 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（`.scratch/moonflux-ci/` 那份暂存副本已退休——线上有了权威副本，留着就是第二真相）。`fast`（12 步）随推送在 **ubuntu-latest** 首绿（run `36324100660`，1 分 41 秒，**本仓首次 Linux 验证**：四后端编译 + 双测试套件）；`full`（43 步 E2E）手动触发于 macos-14，2026-09-27 **首次跑满 43/43**（run `36325414560`，5 分 13 秒）。接线过程抓出五件事（registry 索引前置、wasmtime 与 `st_mtimespec` 两处 macOS-only、两个门禁假绿）与工具链版本政策，见决策 51 与看板返工台账第 11 条；full 首跑另暴露两处**门禁自身的启动时序假设**（p12/p13），修法与证据见同表第 13 条
 - [x] **P27 达成：编辑器函数集 UI（2026-10-05，决策 52）**——面板/表单/选择器/漂移标记四件套，资产文档与协议帧全在 `apps/editor-kernel`（ABI 2，页面断言版本）；表单预检只做形状（mbel 规则与纯度以节点发布期门禁为唯一权威）；UI 不暴露标量函数编写面。门禁 `scripts/e2e-p27-editor-functions.sh` 三腿全绿（面板 CREATE 经 WS 落地、引用入 spec 且 re-apply 换绑 revision 2、历史按当前规则重现 `ALPHA?` + 新记录 `BETA?`）+ wbtest 11 条；执行中修掉 `mf_editor_feed` 的 apply 应答试探误读长 JSON 应答的真缺陷（真页面驱动抓到；教训：**夹具必须覆盖真实载荷的长度级别**）。tickets 97–99
+- [x] **P28 达成：存储维护调度（2026-10-06，决策 53）**——后台压实加入既有维护节拍（立项盘点修正：retention 自 P9 起已周期化，缺口只有压实）；节拍即开关、重写门槛透传内核、floor 单一真相；`scripts/e2e-p28-maintenance.sh` 5 腿全绿并进步表（44 步）；`decode_log_frames.py` 升级为真偏移输出。tickets 100–102
 - [x] 生成项目规约 [`AGENTS.md`](../AGENTS.md)（2026-09-15）；随代码结构落地更新（2026-09-16 补 §10 文档规范）
 
 ## 3. 待办与排期

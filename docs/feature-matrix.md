@@ -14,7 +14,7 @@
 | 段滚动（字节/时长阈值，段边界=帧边界） | ✅ | `MOONFLUX_ROLL_BYTES/_MS`；`scripts/e2e-p8-storage.sh` |
 | 稀疏段索引（CRC 校验，疑点回退全扫，逐字节一致） | ✅ | 同上（删 `.idx` 腿） |
 | retention（只删整段、floor 以下；结构化拒绝更老读） | ✅ | `MOONFLUX_RETAIN_BYTES/_MS`；`e2e-p8-storage.sh` |
-| 键控 compaction（删旧留新，偏移不变） | ✅ | `cluster compact`；键由 `produce --key/--key-separator` 产生；幂等、floor = 提交前缀 ∩ 消费组地板、空键永不淘汰；`scripts/e2e-p14-compaction.sh`（11 腿：8 条语义 + P18 三条**真偏移**——空洞两侧的远端/committed 消费显示幸存者真偏移、本地零重复）+ `core/log_test`（7 条压实测试） |
+| 键控 compaction（删旧留新，偏移不变） | ✅ | `cluster compact`；键由 `produce --key/--key-separator` 产生；幂等、floor = 提交前缀 ∩ 消费组地板、空键永不淘汰；`scripts/e2e-p14-compaction.sh`（11 腿：8 条语义 + P18 三条**真偏移**——空洞两侧的远端/committed 消费显示幸存者真偏移、本地零重复）+ `core/log_test`（7 条压实测试）；P28 起可后台化（`MOONFLUX_COMPACT_MS`）+ `scripts/e2e-p28-maintenance.sh`（5 腿） |
 | **载荷预算**（大记录/大文件全链路） | ✅ | 单一真相 `@protocol.MAX_BATCH_BYTES`（16 MiB）派生所有预算：生产分批 4 MiB（`Producer::send` 与本地 `produce` 同一套，偏移连续）、读取窗口按字节封顶（至少一条/一帧）、fetch 应答带 `scan_end` 加法段、复制窗口 1 MiB、hub 缓冲从协议派生且超限**记日志再关**；单条 key/value 超 4 MiB 由生产者按名拒绝；`scripts/e2e-p15-bulk.sh`（5 腿：20 MiB 逐字节一致 / 偏移精确 / 两处超限的结构化拒绝 / 12 MiB 复制字节一致）+ `core/protocol`/`core/log_test`/`apps/client` 单测 |
 | 客户端分片拼接（多段到达的应答） | ✅ | `apps/client` 的 `fill_exact`：每次读只会**追加**到已收前缀之后（此前每次 recv 都写回缓冲区起点，多段到达的应答被静默损坏）；脚本化分片来源的单测 `apps/client/transport_wbtest.mbt` |
 | 压缩编解码（P25）：DEFLATE 进 `core/codec`（inflate 三块型 + deflate + zlib/gzip 容器 + 炸弹上界）；Kafka 连接器 gzip 双向（`?compression=gzip` 产生、按压缩列解压读取；snappy/lz4/zstd 按名拒绝）；**自有 MFS 帧仍为未压缩**（显式边界，决策 49） | ✅ | `core/codec_test/deflate_check.mbt`（Python zlib 三容器锚 + 9 条）+ `scripts/e2e-p25-compression.sh`（4 腿双向锚定） |

@@ -92,6 +92,68 @@ fn roll_after_ms() -> Int64 {
   }
 }
 
+// ---------------------------------------------------------------------
+// Background compaction (P28). Rewriting sealed segments is deletion's
+// cousin, so like retention the policy is opt-in — and here the cadence
+// knob is also the switch: `MOONFLUX_COMPACT_MS` > 0 enables the pass
+// and is the minimum interval between attempts. The rewrite lever is
+// the kernel's own `min_dirty_bytes` (the one threshold
+// `apply_compaction` has always had), so the background path adds no
+// second policy semantics; it only rides the maintenance cadences
+// retention already runs on.
+
+///|
+/// Parses `MOONFLUX_COMPACT_MS`: a positive millisecond count enables
+/// the pass; anything else (absent, zero, negative, junk) is off —
+/// 0 must mean "never", not "fire every tick".
+fn parse_compact_interval_ms(text : String?) -> Int64 {
+  match text {
+    Some(text) =>
+      match (try? @string.parse_int64(text[0:text.length()])) {
+        Ok(n) if n > 0L => n
+        _ => 0L
+      }
+    None => 0L
+  }
+}
+
+///|
+/// Parses `MOONFLUX_COMPACT_MIN_DIRTY_BYTES`: the smallest rewrite the
+/// background pass will pay for. Absent/junk = 0 = rewrite as soon as
+/// anything is droppable, which is exactly the manual command's
+/// semantics.
+fn parse_min_dirty_bytes(text : String?) -> Int {
+  match text {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) if n > 0 => n
+        _ => 0
+      }
+    None => 0
+  }
+}
+
+///|
+fn compact_interval_ms() -> Int64 {
+  parse_compact_interval_ms(@env.get_env_var("MOONFLUX_COMPACT_MS"))
+}
+
+///|
+fn compaction_min_dirty_bytes() -> Int {
+  parse_min_dirty_bytes(@env.get_env_var("MOONFLUX_COMPACT_MIN_DIRTY_BYTES"))
+}
+
+///|
+/// Whether a maintenance pass is due: an interval of 0 never fires (the
+/// switch), a pass that never ran (`last < 0`) is immediately due, and
+/// otherwise the clock must have covered the interval.
+fn maintenance_due(last : Int64, now : Int64, interval : Int64) -> Bool {
+  if interval <= 0L {
+    return false
+  }
+  last < 0L || now - last >= interval
+}
+
 ///|
 /// One retention pass over a partition's log: roll if the active
 /// segment has aged out, then drop whole segments that are both below
@@ -150,15 +212,13 @@ fn compact_partition(
   partition : Int,
   floor : Int64,
   now_ms : Int64,
+  policy : @log.CompactionPolicy,
 ) -> Result[@log.CompactionReport, String] {
   let log = match open_partition_log(data_dir, topic, partition) {
     Ok(log) => log
     Err(e) => return Err(e)
   }
-  let report = match
-    log.apply_compaction(floor, now_ms, @log.CompactionPolicy::{
-      min_dirty_bytes: 0,
-    }) {
+  let report = match log.apply_compaction(floor, now_ms, policy) {
     Ok(report) => report
     Err(e) => return Err("compaction \{topic}[\{partition}]: \{e}")
   }

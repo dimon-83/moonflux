@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Decode a segment file (concatenated wire-protocol batch frames) and
-print one line per record: `<offset>\t<key>\t<value>`.
+print one line per record: `<offset>\t<base>\t<key>\t<value>`.
 
 Used by the P4 editor gate to assert what the *browser* wrote without
 opening a connection to the broker — the segment file is the protocol
-stream, so it can be read directly. Base offsets are not in the file
-per-record, so the offset printed is the record's position in the log.
+stream, so it can be read directly. Since P18 the offset printed is the
+record's TRUE offset (frame base + position within the frame): a hole
+left by compaction or a filter shows up as a gap between consecutive
+offsets, which is the fact the P28 gate asserts on. The second column
+stays the frame's base for anyone comparing frame layout.
 
 Usage: python3 tools/decode_log_frames.py <segment-file>
 """
@@ -31,7 +34,6 @@ def uleb(buf: bytes, i: int):
 def main() -> int:
     data = open(sys.argv[1], "rb").read()
     i = 0
-    offset = 0
     while i < len(data):
         if data[i:i + 3] != b"MFB":
             print(f"bad magic at byte {i}", file=sys.stderr)
@@ -43,7 +45,7 @@ def main() -> int:
         blob_len = struct.unpack(">I", body[16:20])[0]
         blob = body[20:20 + blob_len]
         j = 0
-        for _ in range(count):
+        for record_in_frame in range(count):
             total, j = uleb(blob, j)
             end = j + total
             ts = struct.unpack(">q", blob[j:j + 8])[0]
@@ -61,8 +63,8 @@ def main() -> int:
                 hvlen, j = uleb(blob, j)
                 j += hvlen
             assert j == end, "record length mismatch"
-            print(f"{offset}\t{base}\t{key.decode(errors='replace')}\t{value.decode(errors='replace')}")
-            offset += 1
+            print(f"{base + record_in_frame}\t{base}\t"
+                  f"{key.decode(errors='replace')}\t{value.decode(errors='replace')}")
         i += 8 + length
     return 0
 

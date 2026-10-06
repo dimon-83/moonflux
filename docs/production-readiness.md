@@ -17,7 +17,7 @@
 | 耐久性 | 每批 append **fsync 后**才回应答（ack 即落盘）；每帧 CRC；撕裂尾/坏帧截断到确认前缀**且报告丢弃量**；索引可疑一律回退全扫、两路径逐字节一致 | `core/log`（`append` → `file.flush`）；`e2e-p8-storage.sh` |
 | 复制正确性 | follower-pull；HW 单调（迟到低报忽略）；分歧截断报告丢弃量；副本逐字节一致（含 TLS 之下） | `e2e-p3/p7/p8`；`e2e-p12-security.sh` 腿 7 |
 | 故障注入 | 杀 leader / 换主 / 控制面重启 / 撕裂尾 / 分区隔离 / 慢客户端——门禁全部可复现，含反例腿 | `scripts/gates.sh` 43 步 |
-| 持续集成 | `fast`（12 步：fmt/生成物/接口/四后端编译/双测试套件/算子构建）随推送在 **Linux** 运行且已首绿（run `36324100660`，1 分 41 秒）；`full`（43 步）手动触发于 macOS，2026-09-27 **首次跑满 43/43**（run `36325414560`，5 分 13 秒） | `.github/workflows/ci.yml` |
+| 持续集成 | `fast`（12 步：fmt/生成物/接口/四后端编译/双测试套件/算子构建）随推送在 **Linux** 运行且已首绿（run `36324100660`，1 分 41 秒）；`full`（44 步）手动触发于 macOS，2026-09-27 **首次跑满 43/43**（run `36325414560`，5 分 13 秒） | `.github/workflows/ci.yml` |
 | 连接器与流式源 | HTTP/文件/stdin 一次性源 + **MQTT 订阅源**（P19：手写 3.1.1、QoS 0、会话复用）+ **Kafka 消费源**（P20：手写锁定版本协议与 RecordBatch v2、CRC-32C 外部锚点、连接期版本探针）；汇：stdout / HTTP / MQTT / Kafka；门禁对端是独立 Python 实现（线上字节断言 + 批 CRC 校验） | `e2e-p1-connectors.sh`；`e2e-p19-mqtt.sh`；`e2e-p20-kafka.sh` |
 | 授权与审计 | 四角色闭合表 + **按主题 grants**（P21：收窄不放大；无 grants 凭据行为不变）+ **`audit.log`**（拒绝/认证/生命周期，凭据永不入）；审计 append 即落盘、写失败 stderr 可见 | `core/auth.authorize_topic`；`e2e-p12` 腿 8–10 |
 | 语义 | 至少一次且**无缺口**（重平衡窗内允许重复，文档化）；偏移是身份；真偏移（空洞两侧） | `e2e-p9-groups.sh`；`e2e-p14` 腿 9–11 |

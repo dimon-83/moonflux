@@ -81,6 +81,7 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   // (P22: the group registry lives next door), and the policy is off
   // unless an operator asked for it (README 决策 31)
   let mut last_housekeeping : Int64 = -1L
+  let mut last_compact : Int64 = -1L
   while true {
     let live = hub.poll_once(handler, fn(kind) {
       if kind == "websocket" {
@@ -108,18 +109,26 @@ fn cmd_serve(argv : Array[String]) -> Unit {
       // and each floor is the log end lowered to the slowest consumer
       serve_retain_all(data_dir, groups, now)
     }
+    // background compaction (P28): own cadence, because the pass scans
+    // sealed segments and must not run at the retention tick's pace.
+    // Off unless MOONFLUX_COMPACT_MS says otherwise.
+    if maintenance_due(last_compact, now, compact_interval_ms()) {
+      last_compact = now
+      serve_compact_all(data_dir, groups, now)
+    }
   }
 }
 
 ///|
-/// Runs the (default-off) retention policy across every partition on
-/// disk. The enumeration is the same one the group coordinator uses
-/// for shares — declared ∪ disk, per partition — so retention and
-/// assignment can never disagree about what this broker hosts.
-fn serve_retain_all(
+/// Every partition on disk, with the floor a maintenance pass may
+/// delete below. Retention and background compaction share this one
+/// enumeration so the two schedules can never disagree about what this
+/// broker hosts (P22's disk rule), nor about the floor: the log end
+/// lowered to the slowest group's committed offset when one exists.
+fn serve_maintenance_targets(
   data_dir : String,
   groups : GroupRegistry,
-  now : Int64,
+  f : (String, Int, Int64) -> Unit,
 ) -> Unit {
   let topic_names = match @fs.list_dir("\{data_dir}/topics") {
     Ok(names) => names
@@ -135,13 +144,49 @@ fn serve_retain_all(
         Ok(log) => log.high_watermark()
         Err(_) => continue // a directory that opens as no log: skip it
       }
-      let floor = serve_partition_floor(groups, name, p, hw)
-      match retain_partition(data_dir, name, p, floor, now) {
-        Ok(_) => ()
-        Err(e) => note("warning: \{e}")
-      }
+      f(name, p, serve_partition_floor(groups, name, p, hw))
     }
   }
+}
+
+///|
+/// Runs the (default-off) retention policy across every partition on
+/// disk — the serve-side equivalent of the cluster node's "retain each
+/// hosted partition" (P9).
+fn serve_retain_all(
+  data_dir : String,
+  groups : GroupRegistry,
+  now : Int64,
+) -> Unit {
+  serve_maintenance_targets(data_dir, groups, fn(name, p, floor) {
+    match retain_partition(data_dir, name, p, floor, now) {
+      Ok(_) => ()
+      Err(e) => note("warning: \{e}")
+    }
+  })
+}
+
+///|
+/// One background compaction pass over every partition on disk (P28):
+/// the enumeration and the floor are the retention sweep's; only the
+/// policy differs, and the switch is the cadence knob. A pass with
+/// nothing superseded is a no-op by construction (P14 idempotence), so
+/// running this on a schedule is safe — running it by default is not,
+/// which is why `MOONFLUX_COMPACT_MS` gates it.
+fn serve_compact_all(
+  data_dir : String,
+  groups : GroupRegistry,
+  now : Int64,
+) -> Unit {
+  let policy = @log.CompactionPolicy::{
+    min_dirty_bytes: compaction_min_dirty_bytes(),
+  }
+  serve_maintenance_targets(data_dir, groups, fn(name, p, floor) {
+    match compact_partition(data_dir, name, p, floor, now, policy) {
+      Ok(_) => ()
+      Err(e) => note("warning: \{e}")
+    }
+  })
 }
 
 ///|
@@ -348,6 +393,9 @@ fn dispatch_session_frame(
           ref.partition,
           floor,
           @env.now().reinterpret_as_int64(),
+          // operator-issued: threshold 0, the semantics the command
+          // has always had
+          @log.CompactionPolicy::{ min_dirty_bytes: 0, },
         ) {
         Ok(report) => {
           let wire : Array[@client.WireCompaction] = []
