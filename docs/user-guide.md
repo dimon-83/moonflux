@@ -194,10 +194,15 @@ cli.exe group commit   --group g1 --member m1 --topic events --partition 0 \
 cat > fns.json <<'EOF'
 {"name":"text-fns","functions":[{"name":"shout","params":["x"],"body":"upper(x) + \"!\""}]}
 EOF
+# 本地口径：资产直接落进这个 data dir 的元数据（不需要先起服务）
+cli.exe function-set create --file fns.json --data-dir .moonflux-data
+cli.exe function-set list   --data-dir .moonflux-data
+# 远端口径：请一个正在运行的节点安装（两者互斥，同时给会按名拒绝）
 cli.exe function-set create --file fns.json --remote 127.0.0.1:19451
 cli.exe function-set list   --remote 127.0.0.1:19451
 ```
 
+- **两个宿主，同一份话**：本地路径直接复用节点侧的 handler，所以 `--data-dir` 的应答与服务器会发的字节相同；`--remote` 与 `--data-dir` 同时给按名拒绝（那是两句不同的话，P30/T107、决策 56）。
 - 名字/参数/函数体以 mbel 的规则为唯一权威；**函数体含 `now` 在部署被拒**（确定性红线：重放必须同输入同输出）。
 - spec 按名引用；**更新集合必须 re-apply 才生效**（解析到的 revision 记入 `topology.json`，运维可见漂移）。
 - 引用缺失集合、使用集合外名字、类型错误，都在 `apply`（发布期）拦截，不进运行期。

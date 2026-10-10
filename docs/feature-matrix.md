@@ -53,6 +53,7 @@
 | :--- | :--- | :--- |
 | mbel 表达式 transforms（消费/回放路径，改规则秒级生效） | ✅ | `apps/transform`；`scripts/e2e-p1-rules.sh` |
 | 表达式函数集（版本化资产 + spec 引用 + re-apply 换绑） | ✅ | `function-set` 命令面；`scripts/e2e-p6-functions.sh` |
+| 函数集本地存储路径（`--data-dir`，P30/T107） | ✅ | 本地与远端**共用节点侧同一 handler**（应答逐字节同源）；`--remote` 与 `--data-dir` 互斥按名拒绝；无服务即可 create/list/get/update/apply/run/delete；`scripts/e2e-p6-functions.sh` 第 11 条 |
 | 发布期静态检查（语法/未知名/类型/纯度拒绝 `now`） | ✅ | 同上 |
 | wasm 算子沙箱（ABI v1，guest 无导入，fail-closed） | ✅ | `scripts/crosscheck-operators.sh`（native vs wasm 字节级一致） |
 | 双预算（记录数 + fuel；墙钟仅观测） | ✅ | `core/operator` tier + 宿主 fuel；`operator verify/describe` |

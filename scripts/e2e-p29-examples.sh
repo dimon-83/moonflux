@@ -89,19 +89,13 @@ start_serve() { # $1 = data dir, $2 = port
 }
 
 # ---- 1. map: mask the digits of an ssn (a function-set asset) -----------
-# The port's one wrinkle: function sets are deployed to a *node*, and the
-# CLI has no local (--data-dir) creation verb, so a serve is started once
-# to install the asset into the same data dir the local run then uses.
+# The asset goes straight into the data dir the run reads, because the
+# function-set verbs take --data-dir (P30/T107): installing an asset no
+# longer requires starting a server for it.
 D="$WORK/d01"
-start_serve "$D" "$PORT"
-"$EXE" function-set create --remote "127.0.0.1:$PORT" --file "$EXAMPLES/01-map-mask-ssn/fns.json" \
+"$EXE" function-set create --file "$EXAMPLES/01-map-mask-ssn/fns.json" --data-dir "$D" \
   > "$WORK/fns-deploy.txt" 2>&1 || { cat "$WORK/fns-deploy.txt"; fail "the pii function set was refused"; }
 grep -q "revision 1" "$WORK/fns-deploy.txt" || fail "the asset deploy did not report a revision"
-# the serve has done its one job (installing the asset into this data
-# dir); the run below is local, so the port can go. (No ${PIDS[-1]}:
-# macOS ships bash 3.2, where a negative subscript is a syntax error.)
-kill "$SERVE_PID" 2>/dev/null || true
-sleep 0.2
 "$EXE" pipeline apply --data-dir "$D" --file "$EXAMPLES/01-map-mask-ssn/spec.json" > /dev/null \
   || fail "case 1: apply failed (is the function set in this data dir?)"
 "$EXE" pipeline run --data-dir "$D" > "$WORK/01.out" 2> "$WORK/01.err" \

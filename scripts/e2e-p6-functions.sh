@@ -226,6 +226,45 @@ if "$EXE" pipeline apply -f "$WORK/spec-shout.json" --data-dir "$DATA" > /dev/nu
 fi
 pass "deleting the asset makes the next apply fail (no stale reference)"
 
+# ---------------------------------------------------------------- (T107)
+# The same verbs, aimed at a local store. A single machine should not need
+# a running server just to install an asset: --data-dir names the store,
+# and the reply is the same bytes the node would have sent because the
+# node-side handler is the one doing the work (README 决策 56). Naming
+# both destinations at once is refused, and the local store is the one an
+# apply resolves against.
+LOCAL="$WORK/local-data"
+"$EXE" function-set create --file "$WORK/fns-v1.json" --data-dir "$LOCAL" \
+  > "$WORK/local-create.out" 2>&1 ||
+  { cat "$WORK/local-create.out"; fail "local create failed"; }
+grep -q "deployed function set textkit at revision 1" "$WORK/local-create.out" ||
+  { cat "$WORK/local-create.out"; fail "local create did not report a first revision"; }
+"$EXE" function-set list --data-dir "$LOCAL" | grep -q "textkit	revision=1" ||
+  fail "local list does not name the asset and its revision"
+"$EXE" function-set get --name textkit --data-dir "$LOCAL" | grep -q '"name": "textkit"' ||
+  fail "local get did not return the asset document"
+"$EXE" function-set create --file "$WORK/fns-v1.json" --data-dir "$LOCAL" \
+  | grep -q "updated function set textkit at revision 2" ||
+  fail "a second local create should be an update at revision 2"
+"$EXE" pipeline apply -f "$WORK/spec-shout.json" --data-dir "$LOCAL" > /dev/null ||
+  fail "apply against the local store failed (no server is running for it)"
+"$EXE" pipeline run --spec "$WORK/spec-shout.json" --data-dir "$LOCAL" \
+  | awk -F'\t' '{print $1}' > "$WORK/local-run.out" ||
+  fail "local run failed"
+printf 'ORANGE!\nBANANA!\n' > "$WORK/expect-local.txt"
+diff -u "$WORK/expect-local.txt" "$WORK/local-run.out" || fail "local run output"
+if "$EXE" function-set list --data-dir "$LOCAL" --remote "$REMOTE" \
+    > "$WORK/local-both.out" 2>&1; then
+  fail "naming both a local store and a remote node should be refused"
+fi
+grep -q "mutually exclusive" "$WORK/local-both.out" || fail "the refusal does not say why"
+"$EXE" function-set delete --name textkit --data-dir "$LOCAL" > /dev/null ||
+  fail "local delete failed"
+if "$EXE" pipeline apply -f "$WORK/spec-shout.json" --data-dir "$LOCAL" > /dev/null 2>&1; then
+  fail "apply should fail once the local asset is deleted"
+fi
+pass "local store: create/list/get/update/apply/run/delete without a server, and both destinations at once is refused"
+
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 echo "E2E-FUNCTIONS: all green"

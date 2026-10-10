@@ -10,19 +10,23 @@ through `imports: pkg: example/mask-ssn@0.1.0`.
 
 **What moonflux does here**: the same masking as an **mbel function-set asset**
 (`fns.json`, set `pii`, function `mask_ssn`) referenced by name from the spec —
-the platform's counterpart of an SDF package. The function set is deployed to a
-node, so the case installs it through a running `serve` (the CLI has no local
-`--data-dir` create verb) and then runs the pipeline locally against the same
-data dir.
+the platform's counterpart of an SDF package. The asset goes straight into the
+same data dir the run reads: `function-set create` takes `--data-dir` (P30/T107),
+so no server is needed to install it. (Before that verb existed, this README had
+to start a `serve` just to put an asset in place — that wrinkle is gone.)
 
 ```bash
 EXE=_build/native/debug/build/apps/cli/cli.exe
 D=$(mktemp -d)
-$EXE serve --data-dir "$D" --listen 127.0.0.1:19901 &
-$EXE function-set create --remote 127.0.0.1:19901 --file examples/sdf/01-map-mask-ssn/fns.json
+$EXE function-set create --file examples/sdf/01-map-mask-ssn/fns.json --data-dir "$D"
 $EXE pipeline apply --data-dir "$D" --file examples/sdf/01-map-mask-ssn/spec.json
 $EXE pipeline run   --data-dir "$D"        # == expected.txt
 ```
+
+**Field-level version**: this case masks the digits of the whole line (as SDF's
+`mask-user-pii` raw-text variant does). If you want to mask the `ssn` *field*
+instead, `get(fromJSON(value), "ssn")` now publishes too — see
+[case 12](../12-custom-serialization/) and README 决策 55.
 
 **Difference worth knowing**: SDF's regex crate is not available to mbel
 expressions (no regex builtin), so the body is ten nested `replace` calls. The

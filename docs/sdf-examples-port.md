@@ -70,7 +70,7 @@
 5. **Rust/SmartModule 工具链**。`sdfg@0.13` + `#[sdf(fn_name=...)]` + `wasm32-wasip2` + crates.io 依赖解析 + Hub 分发。moonflux 的 guest 是 MoonBit 写的（`apps/operator-sdk`），不提供 Rust 编译链，也不从 crates.io 取依赖（AGENTS §1.1 依赖合规）。**能力等价物已在**（SDK + ABI + 探针 + 双后端对拍 + `build-operators.sh`）；缺的是**作者面**：一份"如何写一个算子"指南与稳定的 C ABI 头（进行中）。
 6. **`split` 拓扑**。一服务多汇（sink-scoped transforms）在 moonflux 里没有对应物：一份 spec 一个汇、一个主题；一节点一份已应用拓扑。
 7. **pipeline 不能以主题为源**。moonflux 的 spec 源只有 file/http/stdin/mqtt/kafka；"主题→主题"的服务形态要靠服务端的已应用拓扑（消费侧变换），而不是再写一条 pipeline。这是有意的分工，但对 SDF 的读者是首要的心智落差。
-8. **函数集没有本地创建路径**（实测，CLI 缺口）。`function-set create` 只接受 `--remote`；单机用户必须先起一个 `serve`（哪怕只是把资产写进同一个 data dir），案例 1 的步骤里保留了这一步并注明原因。这是一个可以补齐的命令面尾巴，不是设计限制。
+8. ~~**函数集没有本地创建路径**（实测，CLI 缺口）~~ **已收口（2026-10-10，T107，决策 56）**：`function-set create/get/list/delete` 现在都接受 `--data-dir`，本地路径**复用节点侧同一份 handler**，因此本地与 serve 的应答逐字节同源；同时给 `--remote` 与 `--data-dir` 互斥按名拒绝（那是两句不同的话）。案例 1 的步骤已从"先起一个 serve 装资产"简化为直接落到运行用的 data dir。
 9. **InfinyOn Cloud / 连接器仓库 / 外部数据源**（`demo-data.infinyon.com`、`mqtt.hsl.fi`、`hnrss.org`、`api.openai.com`、Hub 上的 `http-source@0.4.3` 等）。这些是外部依赖，不在移植范围；moonflux 侧的 HTTP/MQTT/Kafka 连接器是自建实现。
 
    **部分收口（2026-10-10）**：HTTP/MQTT/Kafka 三类外部数据案例已落地（上方案例 9–11，6 腿全绿，全部使用仓库自带的测试对端，**不需要外网**）。仍缺两件：**轮询式 HTTP 源**（SDF 的 `http-source` 按间隔重取，我们的 HTTP 源是一次性 GET）与**逐记录 HTTP callout**（`http-callout`/`openai-callout`）——后者须先在"接受非确定性"与"记录-回放"之间选边，方案见 [`sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md) §2 缺口 9。

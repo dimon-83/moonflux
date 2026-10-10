@@ -297,7 +297,7 @@ fn resolve_remote(flags : Flags) -> String {
           }
         None =>
           fail(
-            "missing required flag --remote (or set a profile: moonflux profile add <name> --remote host:port, then it applies everywhere)",
+            "missing required flag --remote (or set a profile: moonflux profile add <name> --remote host:port, then it applies everywhere); commands that can act on a local store also take --data-dir DIR",
           )
       }
     }

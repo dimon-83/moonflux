@@ -31,8 +31,9 @@ scripts/e2e-p29-examples.sh                 # 01–08 + 12–13: 12 legs, byte-e
 scripts/e2e-p30-connector-examples.sh       # 09–11: 6 legs against local test peers
 ```
 
-Everything runs locally with no network: cases 01–08 use files (plus one local
-`serve` for case 1's asset deploy and case 8's applied topology), and cases 09–11
+Everything runs locally with no network: cases 01–08 and 12–13 use files (case 8
+adds one local `serve` for its applied topology; case 1 needs no server at all
+now that the function-set verbs take `--data-dir`), and cases 09–11
 talk to **local test peers from this repo** — `python3 -m http.server`,
 [`scripts/mqtt_test_broker.py`](../scripts/mqtt_test_broker.py) and
 [`scripts/kafka_test_broker.py`](../scripts/kafka_test_broker.py) — which assert the

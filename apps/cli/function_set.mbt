@@ -31,19 +31,67 @@ fn cmd_function_set(argv : Array[String]) -> Unit {
 }
 
 ///|
-/// `moonflux function-set create --file fns.json --remote host:port`
+/// Where a function-set command is aimed: `--data-dir` names a local
+/// metadata store, `--remote` (or a profile) names a running node. Saying
+/// both is two different sentences about the same asset, so it is refused
+/// by name instead of silently preferring one (P30/T107).
+fn function_set_local_dir(flags : Flags) -> String? {
+  match (flags.get("data-dir"), flags.get("remote")) {
+    (Some(_), Some(_)) =>
+      fail(
+        "function-set: --data-dir and --remote are mutually exclusive (--data-dir installs the asset locally, --remote asks a running node to install it)",
+      )
+    (Some(dir), None) => Some(dir)
+    (None, _) => None
+  }
+}
+
+///|
+/// Sends one function-set command to whichever host was named. The local
+/// host reuses the node-side handler verbatim, so the two cannot drift: a
+/// `--data-dir` reply is the same bytes the server would have sent
+/// (README 决策 56).
+fn function_set_call(
+  flags : Flags,
+  local : String?,
+  cmd : Int,
+  payload : Bytes,
+  verb : String,
+) -> Bytes {
+  match local {
+    Some(dir) =>
+      match
+        dispatch_function_set(
+          @client.Frame::{ cmd, rid: 0, payload, },
+          file_metadata_store(dir),
+        ) {
+        Ok(reply) => reply
+        Err((code, message)) => fail("\{verb}: \{message} (code \{code})")
+      }
+    None => {
+      let remote = resolve_remote(flags)
+      match control_call_secure(remote, cmd, payload, peer_link(flags)) {
+        Ok(reply) => reply
+        Err(e) => fail("\{verb}: \{e}")
+      }
+    }
+  }
+}
+
+///|
+/// `moonflux function-set create --file fns.json [--remote host:port | --data-dir DIR]`
 /// The document's `name` is the asset name; `--name` overrides it (and
 /// is the only way for a document that omits one).
 fn function_set_create(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = resolve_remote(flags)
+  let local = function_set_local_dir(flags)
   let path = flags.require("file")
   let text = match @fs.read_file(path) {
     Ok(bytes) => @utf8.decode_lossy(bytes[0:bytes.length()])
     Err(e) => fail("function-set create: read \{path}: \{e}")
   }
-  // local parse first: an operator gets the shape errors without a
-  // round trip. The node re-validates — it owns the store.
+  // local parse first: an operator gets the shape errors without a round
+  // trip. The destination re-validates — it owns the store.
   let (doc_name, functions) = match parse_function_set_asset(text) {
     Ok(parsed) => parsed
     Err(e) => fail("function-set create: \{e}")
@@ -52,73 +100,62 @@ fn function_set_create(argv : Array[String]) -> Unit {
     Some(name) => name
     None => doc_name
   }
-  match
-    control_call_secure(
-      remote,
-      @client.CMD_FUNCTION_SET_CREATE,
-      @utf8.encode(text),
-      peer_link(flags),
-    ) {
-    Ok(payload) => {
-      let reply = @utf8.decode_lossy(payload[0:payload.length()])
-      let parsed = @json.parse(reply[0:reply.length()]) catch {
-        _ => Json::null()
-      }
-      let revision = match parsed.value("revision") {
-        Some(Number(n)) => n.to_int64()
-        _ => 0L
-      }
-      let was_new = match parsed.value("created") {
-        Some(True) => true
-        _ => false
-      }
-      let verb = if was_new { "deployed" } else { "updated" }
-      println(
-        "\{verb} function set \{name} at revision \{revision} (\{functions.length()} function(s))",
-      )
-    }
-    Err(e) => fail("function-set create: \{e}")
+  let reply = function_set_call(
+    flags,
+    local,
+    @client.CMD_FUNCTION_SET_CREATE,
+    @utf8.encode(text),
+    "function-set create",
+  )
+  let reply_text = @utf8.decode_lossy(reply[0:reply.length()])
+  let parsed = @json.parse(reply_text[0:reply_text.length()]) catch {
+    _ => Json::null()
   }
+  let revision = match parsed.value("revision") {
+    Some(Number(n)) => n.to_int64()
+    _ => 0L
+  }
+  let was_new = match parsed.value("created") {
+    Some(True) => true
+    _ => false
+  }
+  let verb = if was_new { "deployed" } else { "updated" }
+  println(
+    "\{verb} function set \{name} at revision \{revision} (\{functions.length()} function(s))",
+  )
   cli_exit(0)
 }
 
 ///|
-/// `moonflux function-set get --name N --remote host:port`
+/// `moonflux function-set get --name N [--remote host:port | --data-dir DIR]`
 fn function_set_get(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = resolve_remote(flags)
+  let local = function_set_local_dir(flags)
   let name = flags.require("name")
-  let payload = match
-    control_call_secure(
-      remote,
-      @client.CMD_FUNCTION_SET_GET,
-      @utf8.encode(name),
-      peer_link(flags),
-    ) {
-    Ok(payload) => payload
-    Err(e) => fail("function-set get: \{e}")
-  }
-  let text = @utf8.decode_lossy(payload[0:payload.length()])
-  println(text)
+  let reply = function_set_call(
+    flags,
+    local,
+    @client.CMD_FUNCTION_SET_GET,
+    @utf8.encode(name),
+    "function-set get",
+  )
+  println(@utf8.decode_lossy(reply[0:reply.length()]))
   cli_exit(0)
 }
 
 ///|
-/// `moonflux function-set list --remote host:port`
+/// `moonflux function-set list [--remote host:port | --data-dir DIR]`
 fn function_set_list(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = resolve_remote(flags)
-  let payload = match
-    control_call_secure(
-      remote,
-      @client.CMD_FUNCTION_SET_LIST,
-      b"",
-      peer_link(flags),
-    ) {
-    Ok(payload) => payload
-    Err(e) => fail("function-set list: \{e}")
-  }
-  let text = @utf8.decode_lossy(payload[0:payload.length()])
+  let local = function_set_local_dir(flags)
+  let reply = function_set_call(
+    flags,
+    local,
+    @client.CMD_FUNCTION_SET_LIST,
+    b"",
+    "function-set list",
+  )
+  let text = @utf8.decode_lossy(reply[0:reply.length()])
   let json = @json.parse(text[0:text.length()]) catch {
     e => fail("function-set list: bad reply: \{e}")
   }
@@ -145,21 +182,18 @@ fn function_set_list(argv : Array[String]) -> Unit {
 }
 
 ///|
-/// `moonflux function-set delete --name N --remote host:port`
+/// `moonflux function-set delete --name N [--remote host:port | --data-dir DIR]`
 fn function_set_delete(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let remote = resolve_remote(flags)
+  let local = function_set_local_dir(flags)
   let name = flags.require("name")
-  match
-    control_call_secure(
-      remote,
-      @client.CMD_FUNCTION_SET_DELETE,
-      @utf8.encode(name),
-      peer_link(flags),
-    ) {
-    Ok(_) => ()
-    Err(e) => fail("function-set delete: \{e}")
-  }
+  let _ = function_set_call(
+    flags,
+    local,
+    @client.CMD_FUNCTION_SET_DELETE,
+    @utf8.encode(name),
+    "function-set delete",
+  )
   println("deleted function set \{name}")
   cli_exit(0)
 }
