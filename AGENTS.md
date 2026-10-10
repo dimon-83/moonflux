@@ -338,6 +338,7 @@ moonflux/
 | 立项评估报告 | [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md) | 对标事实：§2 功能实录、§4 后端、§5 mbel、§6 编辑器 |
 | SDF 示例移植与缺口 | [docs/sdf-examples-port.md](docs/sdf-examples-port.md) | 对标示例集 8 例的对照、语义映射与缺口清单（P29） |
 | SDF Studio 对标探索 | [docs/sdf-studio-exploration.md](docs/sdf-studio-exploration.md) | 图形化方案的事实、对照、三阶段提案与非目标（P29） |
+| SDF 缺口追平方案 | [docs/sdf-gap-closure-plan.md](docs/sdf-gap-closure-plan.md) | 九条缺口的追平/变通/不做判定与方案（含确定性抉择与门禁形态） |
 | 参考系统作业规则 | [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md) | 在 `~/workspace/fluvio` 内的 agent 硬规则 |
 | 对标语义台账 | [docs/compatibility-matrix.md](docs/compatibility-matrix.md) | 每条对标语义的验证状态与证据入口（状态图例的单一真相） |
 | 架构说明 | [docs/architecture.md](docs/architecture.md) | 分层与包清单 / 事件循环 / 协议 / 存储 / 复制与控制面 / 安全 / 算子 / 验证体系（"为什么是这个形状"的唯一位置） |

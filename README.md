@@ -100,6 +100,7 @@ flowchart LR
 | 算子沙箱取证 | [`docs/p2-wasm-host-spike.md`](docs/p2-wasm-host-spike.md) | wasmtime 进程内宿主的探针实证与落地实录 |
 | SDF 示例移植与缺口 | [`docs/sdf-examples-port.md`](docs/sdf-examples-port.md) | 对标示例集 8 例的逐条对照、语义映射表与缺口清单（P29） |
 | SDF Studio 对标探索 | [`docs/sdf-studio-exploration.md`](docs/sdf-studio-exploration.md) | 图形化方案的事实、概念对照、三阶段提案与非目标（P29） |
+| SDF 缺口追平方案 | [`docs/sdf-gap-closure-plan.md`](docs/sdf-gap-closure-plan.md) | 九条缺口逐条判定：追平 / 变通 / 不做，含设计要点、门禁形态与排期（P29 后续） |
 | 立项评估报告 v1.6 | [`docs/fluvio-moonbit-evaluation.md`](docs/fluvio-moonbit-evaluation.md) | 七章：Fluvio 全景 / 功能详解 / 分层路径 / 后端 / mbel / 编辑器 / 结论路线图 |
 | 对标参考工作规约 | [`docs/fluvio-reference-guide.md`](docs/fluvio-reference-guide.md) | 在 Fluvio 参考仓库内作业时的 agent 硬规则 |
 | 安全面取证客户端 | [`scripts/mfs_probe.py`](scripts/mfs_probe.py) | 独立实现的 MFS 客户端（Python）：安全门禁用它伪造节点命令，断言针对**服务端授权** |

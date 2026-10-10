@@ -89,6 +89,7 @@
 - [x] ~~**CI 接线**~~ **已达成**（2026-09-27，决策 51）：`fast` 随推送（Linux，首绿 run `36324100660`）+ `full` 手动（macOS）；**工具链政策**：CI 装 `latest`（CDN 拒版本化 URL，钉不住），仓库采纳该版本格式，本地须 `moon upgrade` 同步
 - [ ] **下一梯队**（按优先级）：多语言客户端 SDK（待需求触发）；~~编辑器函数集 UI~~ **已达成**（2026-10-05，P27，见决策 52）；~~ABI v2 实现~~ **已达成**（2026-09-25，P26，见决策 50）
 - [ ] **编辑器拓扑视图（Studio 提案 P1，条件触发）**：把 `core/pipeline` 的编译结果渲染成节点/边（只读），门禁形态为结构断言；P2 活指标叠加、P3 诚实版状态视图见 [`docs/sdf-studio-exploration.md`](sdf-studio-exploration.md) §4——三者均未立项
+- [ ] **SDF 缺口追平（分批，见 [`docs/sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md)）**：P30 小票包（函数集本地创建 + 表达式静态检查探针 + MQTT/HTTP/Kafka 案例 + 轮询 HTTP 源）→ P31 算子作者指南 + C ABI 头 → P32 状态与窗口（ABI v3，先设计稿）→ P33 多汇；**不做** SQL 引擎 / 组件模型 / 仓库内 Rust 工具链，callout 与主题源须先选边并显式立项
 - [x] ~~P15 后续：每请求重开日志~~ **已达成**（2026-09-19，P16：进程级有界缓存，见决策 40 与 `scripts/e2e-p16-logcache.sh`）
 - [x] ~~P16 后续 ①：benchmark 工具~~ **已达成**（2026-09-22，P17：`benchmark produce/consume/latency` + `scripts/e2e-p17-bench.sh`，见决策 41；执行中抓掉 accept 先于 poll 的每请求一 tick 税，ticket 75）
 - [x] ~~P16 后续 ②：带过滤表达式的逐记录偏移~~ **已达成并扩大**（2026-09-23，P18：不止规则——**compaction 的空洞今天就触发**同样错位；修法为 fetch 应答按连续偏移段分帧，远端/committed/本地三路全真，见决策 42）
