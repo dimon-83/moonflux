@@ -1,0 +1,11 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-11-kafka-seed" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/11-kafka-bridge/orders.jsonl" },
+    "topic": { "name": "sdf-11-orders-raw" },
+    "transforms": [],
+    "sink": { "type": "kafka", "url": "kafka://127.0.0.1:20013/orders-in" }
+  }
+}

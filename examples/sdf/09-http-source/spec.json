@@ -1,0 +1,17 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-09-http-source" },
+  "spec": {
+    "source": { "type": "http", "url": "http://127.0.0.1:20011/cars.jsonl" },
+    "topic": { "name": "sdf-09-cars" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-filter/operator-filter.wasm",
+        "config": { "contains": "\"maker\":\"Ford\"" }
+      }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

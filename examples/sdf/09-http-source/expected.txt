@@ -1,0 +1,2 @@
+{"maker":"Ford","model":"f-150","color":"red","license":"6FAF434","location":"Portland","mph":62}
+{"maker":"Ford","model":"mustang","color":"black","license":"2XYZ999","location":"Denver","mph":77}

@@ -1,0 +1,4 @@
+{"maker":"Ford","model":"f-150","color":"red","license":"6FAF434","location":"Portland","mph":62}
+{"maker":"Toyota","model":"corolla","color":"blue","license":"7BBB123","location":"Seattle","mph":48}
+{"maker":"Ford","model":"mustang","color":"black","license":"2XYZ999","location":"Denver","mph":77}
+{"maker":"Tesla","model":"model-3","color":"white","license":"9QQQ555","location":"Austin","mph":55}

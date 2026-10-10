@@ -108,7 +108,7 @@
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
 | 日志句柄复用（进程级有界缓存，淘汰安全） | ✅ | `apps/cli/logcache.mbt`：`open_partition_log` 命中即复用；变更经同一句柄故无需失效；`MOONFLUX_LOG_CACHE` 控制上限与 LRU 淘汰；每次真实打开在 stderr 记一行；`scripts/e2e-p16-logcache.sh`（6 腿） |
-| 门禁体系（45 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS，43/43） |
+| 门禁体系（46 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS，46 步） |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

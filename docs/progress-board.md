@@ -2,7 +2,7 @@
 
 > **定位**：**带日期的进度快照与看板**——已完成 / 待办 / 优先级 / 阻塞 / 返工一页可读，并附功能点简介。**规约依据**：AGENTS.md §10（文档规范）；**边界声明**：本文是**派生视图**，不是单一真相——阶段详情与排期的真相在 [`project-roadmap.md`](project-roadmap.md)，能力清单在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，决策依据在 README「关键决策记录」（现 1–53），工作项在 `.scratch/moonflux-p{N}/issues/`（编号 01–102 全局连续）。快照日期见下；每轮里程碑收口时随提交更新。
 
-**快照日期**：2026-10-10 · 状态：**P0–P29 全部达成** · 门禁全套 **45 步绿**（native 289 / wasm-gc 186 / 算子 6）· **CI 已接线且两腿均绿**：`fast`（12 步）随推送在 **Linux**（run `36324100660`，1 分 41 秒——本仓**首次 Linux 验证**）；`full`（43 步 E2E）手动在 macOS **首次跑满 43/43**（run `36325414560`，5 分 13 秒）
+**快照日期**：2026-10-10 · 状态：**P0–P29 全部达成** · 门禁全套 **46 步绿**（native 289 / wasm-gc 186 / 算子 7）· **CI 已接线且两腿均绿**：`fast`（12 步）随推送在 **Linux**（run `36324100660`，1 分 41 秒——本仓**首次 Linux 验证**）；`full`（43 步 E2E）手动在 macOS **首次跑满 43/43**（run `36325414560`，5 分 13 秒）
 
 ---
 
@@ -58,6 +58,7 @@
 | 9 | K8s 部署形态 | **最后（用户裁定）** | 弱门禁让位强门禁（roadmap §3 留痕）；真需要时先清单 + PVC 跑文件后端 |
 | 10 | ~~ABI v2 标量调用~~ **已达成**（P26，09-25）· ~~编辑器函数集 UI~~ **已达成**（P27，10-05）；剩余：多语言 SDK | 条件触发 | 见决策 50/52 |
 | 11 | **编辑器拓扑视图（Studio 提案 P1）** | 条件触发 | 把 `core/pipeline` 的编译结果渲染成只读节点/边；P2 活指标、P3 诚实版状态视图同文档 §4——**三阶段均未立项** |
+| 12 | **SDF 缺口追平分批**（见 `docs/sdf-gap-closure-plan.md`） | 进行中 | 连接器案例已落地（`examples/sdf/09–11`，门禁 `scripts/e2e-p30-connector-examples.sh` 6 腿）；余下三票：函数集本地创建、表达式静态检查探针、轮询 HTTP 源；状态与窗口（P32）须先出 ABI v3 设计稿 |
 
 ### 🚫 阻塞
 
@@ -100,7 +101,7 @@
 
 **客户端与工具**：单二进制多子命令 CLI（produce / consume / serve / spu / sc / topic / group / cluster / operator / benchmark / pipeline / function-set）；WebSocket 网关（同端口同协议）；浏览器编辑器（拖拽 → 部署 → 消费；**P27 起带函数集面板/表单/选择器/漂移标记**——资产文档与协议帧全在 `apps/editor-kernel`）；**基准工具**（produce 吞吐 + 逐批延迟、consume 抽干与序号完整性校验、latency 端到端可见性——本地铁环回 ack ~4 ms / e2e p50 ~189 µs）；**MQTT 连接器**（P19）与 **Kafka 连接器**（P20：消费源 + 生产汇，手写锁定版本协议与 RecordBatch v2，CRC-32C 外部锚点验证）。
 
-**工程面**：一内核多后端（core 在 wasm / wasm-gc / js / native 四后端编译矩阵下保持可编译）；45 步门禁（故障注入、对拍、结构断言）；**CI 已接线**（`fast` 随推送在 Linux、`full` 手动在 macOS）；golden vectors + 独立 Python 协议第二实现；54 条关键决策记录全程留痕。
+**工程面**：一内核多后端（core 在 wasm / wasm-gc / js / native 四后端编译矩阵下保持可编译）；46 步门禁（故障注入、对拍、结构断言）；**CI 已接线**（`fast` 随推送在 Linux、`full` 手动在 macOS）；golden vectors + 独立 Python 协议第二实现；54 条关键决策记录全程留痕。
 
 ---
 

@@ -17,7 +17,7 @@
 
 ## 2. 逐案例对照
 
-八个案例都在 [`examples/sdf/`](../examples/sdf/)，每例含 `spec.json` + 夹具 + `expected*.txt` + 说明；门禁腿号对应 `scripts/e2e-p29-examples.sh`。
+十一个案例都在 [`examples/sdf/`](../examples/sdf/)，每例含 spec + 夹具 + `expected*.txt` + 说明；01–08 由 `scripts/e2e-p29-examples.sh`（8 腿）验真，09–11 由 `scripts/e2e-p30-connector-examples.sh`（6 腿，对端是仓库自带的测试 broker/HTTP 服务）验真。
 
 | # | 案例 | SDF 出处 | moonflux 形状 | 门禁腿 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -29,6 +29,9 @@
 | 6 | [`06-merge-two-sources`](../examples/sdf/06-merge-two-sources/) | `primitives/merge` | **两条入口 spec 写同一个主题**；主题即合并后的流（偏移 0..3 连续） | 6 |
 | 7 | [`07-key-value-keys`](../examples/sdf/07-key-value-keys/) | `primitives/key-value/{input,output,chained}` | key 是**日志的一列**：`produce --key-separator` 打戳、`consume` 第 3 列可见、跨存储存活 | 7 |
 | 8 | [`08-state-is-the-log`](../examples/sdf/08-state-is-the-log/) | `primitives/update-state`、`dataflows/word-counter` | ① 同一主题两个视角（`consume --remote` 走已应用拓扑=服务视图；`consume --data-dir`=原始日志视图）；② 键控压实作为"每键最新"的物化，偏移不变 | 8a / 8b |
+| 9 | [`09-http-source`](../examples/sdf/09-http-source/) | `dataflows/car-processing`、`dataflows/ny-transit`（入湖段） | **spec 内的 HTTP 源**（SDF 是独立部署的 `http-source` 连接器）→ 沙箱过滤 → 主题；日志保留原始抓取 | 1 |
+| 10 | [`10-mqtt-transit`](../examples/sdf/10-mqtt-transit/) | `dataflows/helsinki-transit`（入湖段） | **spec 内的 MQTT 订阅源**（流式，不停机）→ 主题；线上形状由仓库自带的 MQTT 测试 broker 断言 | 2–3 |
+| 11 | [`11-kafka-bridge`](../examples/sdf/11-kafka-bridge/) | **无直接对应物**（示例集全是 topic→topic，连接器在数据流之外） | **kafka 源 → 过滤 → kafka 汇**、两个 broker；断言读的是对端自己的 received 文件 | 4–6 |
 
 **为此新增的两个 guest 算子**（SDF 的 `filter`/`flat-map` 在 moonflux 里必须落在沙箱，因为 mbel 表达式**必须返回字符串**，无法表达"丢弃"）：
 
@@ -67,6 +70,8 @@
 7. **pipeline 不能以主题为源**。moonflux 的 spec 源只有 file/http/stdin/mqtt/kafka；"主题→主题"的服务形态要靠服务端的已应用拓扑（消费侧变换），而不是再写一条 pipeline。这是有意的分工，但对 SDF 的读者是首要的心智落差。
 8. **函数集没有本地创建路径**（实测，CLI 缺口）。`function-set create` 只接受 `--remote`；单机用户必须先起一个 `serve`（哪怕只是把资产写进同一个 data dir），案例 1 的步骤里保留了这一步并注明原因。这是一个可以补齐的命令面尾巴，不是设计限制。
 9. **InfinyOn Cloud / 连接器仓库 / 外部数据源**（`demo-data.infinyon.com`、`mqtt.hsl.fi`、`hnrss.org`、`api.openai.com`、Hub 上的 `http-source@0.4.3` 等）。这些是外部依赖，不在移植范围；moonflux 侧的 HTTP/MQTT/Kafka 连接器是自建实现。
+
+   **部分收口（2026-10-10）**：HTTP/MQTT/Kafka 三类外部数据案例已落地（上方案例 9–11，6 腿全绿，全部使用仓库自带的测试对端，**不需要外网**）。仍缺两件：**轮询式 HTTP 源**（SDF 的 `http-source` 按间隔重取，我们的 HTTP 源是一次性 GET）与**逐记录 HTTP callout**（`http-callout`/`openai-callout`）——后者须先在"接受非确定性"与"记录-回放"之间选边，方案见 [`sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md) §2 缺口 9。
 
 ## 5. 明确不做（与 §4 的区别）
 

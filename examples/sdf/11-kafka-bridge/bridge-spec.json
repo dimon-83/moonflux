@@ -1,0 +1,17 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-11-kafka-bridge" },
+  "spec": {
+    "source": { "type": "kafka", "url": "kafka://127.0.0.1:20013/orders-in" },
+    "topic": { "name": "sdf-11-orders-paid" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-filter/operator-filter.wasm",
+        "config": { "contains": "\"status\":\"paid\"" }
+      }
+    ],
+    "sink": { "type": "kafka", "url": "kafka://127.0.0.1:20014/orders-paid" }
+  }
+}

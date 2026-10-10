@@ -1,0 +1,11 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-10-mqtt-transit" },
+  "spec": {
+    "source": { "type": "mqtt", "url": "mqtt://127.0.0.1:20012/transit" },
+    "topic": { "name": "sdf-10-transit" },
+    "transforms": [],
+    "sink": { "type": "stdout" }
+  }
+}
