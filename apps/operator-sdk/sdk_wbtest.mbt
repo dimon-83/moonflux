@@ -92,6 +92,25 @@ test "config parse accepts objects, rejects the rest" {
 }
 
 ///|
+test "config_int types a JSON number and refuses a fractional one" {
+  let text = "{\"min_len\": 10, \"ratio\": 0.5, \"name\": \"x\"}"
+  let cfg = match parse_config(@utf8.encode(text[0:text.length()])) {
+    Ok(cfg) => cfg
+    Err(e) => abort("config rejected: \{e}")
+  }
+  // an integer survives the double round trip
+  assert_eq(config_int(cfg, "min_len"), Some(10))
+  // a fractional value is refused rather than truncated: a config that
+  // says 10.5 must not silently mean 10
+  assert_eq(config_int(cfg, "ratio"), None)
+  // a missing key and a non-numeric one are both None, not 0
+  assert_eq(config_int(cfg, "absent"), None)
+  assert_eq(config_int(cfg, "name"), None)
+  // the string reader is unaffected
+  assert_eq(config_string(cfg, "name"), Some("x"))
+}
+
+///|
 test "malformed envelope fails with status and error text" {
   let _ = alloc_input(4)
   // the zeroed slot is not a valid batch frame

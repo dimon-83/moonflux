@@ -1,0 +1,13 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-01-mask-ssn" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/01-map-mask-ssn/input.txt" },
+    "topic": { "name": "sdf-01-masked-users" },
+    "transforms": [
+      { "type": "expr", "expr": "mask_ssn(value)", "functions": "pii" }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

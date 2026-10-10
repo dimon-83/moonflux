@@ -14,6 +14,8 @@ pub fn alloc_input(Int) -> Bytes
 
 pub fn buffered_output() -> Bytes
 
+pub fn config_int(Map[String, Json], String) -> Int?
+
 pub fn config_string(Map[String, Json], String) -> String?
 
 pub fn decode_input(Bytes) -> Result[Array[@protocol.Record], String]

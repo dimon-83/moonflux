@@ -1,0 +1,18 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-03-filter-map" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/03-filter-map-uppercase/input.txt" },
+    "topic": { "name": "sdf-03-capitalized" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-filter/operator-filter.wasm",
+        "config": { "min_len": 11 }
+      },
+      { "type": "expr", "expr": "upper(value)" }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

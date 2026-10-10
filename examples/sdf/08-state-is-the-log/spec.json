@@ -1,0 +1,17 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-08-words" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/08-state-is-the-log/input.txt" },
+    "topic": { "name": "sdf-08-sentences" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-flatmap/operator-flatmap.wasm",
+        "config": { "separator": " " }
+      }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

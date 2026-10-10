@@ -1,0 +1,2 @@
+{"plate":"2XYZ999","kind":"sedan"}
+{"plate":"9QQQ555","kind":"sedan"}

@@ -1,0 +1,4 @@
+0	{"plate":"6FAF434","kind":"truck"}
+1	{"plate":"7BBB123","kind":"truck"}
+2	{"plate":"2XYZ999","kind":"sedan"}
+3	{"plate":"9QQQ555","kind":"sedan"}

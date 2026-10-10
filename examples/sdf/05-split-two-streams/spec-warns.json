@@ -1,0 +1,17 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-05-warns" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/05-split-two-streams/input.txt" },
+    "topic": { "name": "sdf-05-warns" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-filter/operator-filter.wasm",
+        "config": { "contains": "WARN" }
+      }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

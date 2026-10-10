@@ -1,0 +1,11 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-06-b" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/06-merge-two-sources/b.txt" },
+    "topic": { "name": "sdf-06-licenses" },
+    "transforms": [],
+    "sink": { "type": "stdout" }
+  }
+}

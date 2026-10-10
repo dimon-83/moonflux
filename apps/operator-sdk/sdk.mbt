@@ -164,6 +164,26 @@ pub fn config_string(config : Map[String, Json], key : String) -> String? {
 }
 
 ///|
+/// Reads an integer-valued config key. The core JSON package carries
+/// every number as a double, so this is where an operator's
+/// `{"min_len": 10}` becomes a typed Int — and the only place a
+/// fractional value could be rounded, which is why it is refused
+/// instead: a config that says 10.5 must not silently mean 10.
+pub fn config_int(config : Map[String, Json], key : String) -> Int? {
+  match config.get(key) {
+    Some(Number(n)) => {
+      let i = n.to_int()
+      if i.to_double() == n {
+        Some(i)
+      } else {
+        None
+      }
+    }
+    _ => None
+  }
+}
+
+///|
 /// Identity operator: records pass through unchanged.
 pub fn identity() -> GuestOperator {
   GuestOperator::{ name: "identity", process: fn(records) { Ok(records) }, }

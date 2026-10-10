@@ -1,0 +1,25 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/apps/operator-filter"
+
+// Values
+pub fn mf_op_abi_version() -> Int
+
+pub fn mf_op_alloc_input(Int) -> Bytes
+
+pub fn mf_op_init(Bytes) -> Int
+
+pub fn mf_op_last_error() -> Bytes
+
+pub fn mf_op_last_status() -> Int
+
+pub fn mf_op_output_len() -> Int
+
+pub fn mf_op_process(Bytes) -> Bytes
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits

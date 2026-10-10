@@ -1,0 +1,2 @@
+2026-01-01T00:00:02Z ERROR disk full
+2026-01-01T00:00:04Z ERROR write failed

@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-filter: a config-driven filter (wasm guest). The
+// decision is 1 -> 0 or 1 -> 1, which an mbel expression cannot spell
+// (rules must return a string) and a batch operator can: drop is a
+// shorter batch.
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+      ],
+    },
+  },
+)

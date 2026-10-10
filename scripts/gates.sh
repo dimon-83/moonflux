@@ -136,6 +136,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p25-compression.sh" scripts/e2e-p25-compression.sh
   step "e2e-p26-scalar.sh" scripts/e2e-p26-scalar.sh
   step "e2e-p28-maintenance.sh" scripts/e2e-p28-maintenance.sh
+  step "e2e-p29-examples.sh" scripts/e2e-p29-examples.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

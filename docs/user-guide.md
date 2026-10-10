@@ -12,7 +12,7 @@ moon update                         # 首次克隆必须：取 registry 索引�
 moon build --target native          # 产物：_build/native/debug/build/apps/cli/cli.exe
 moon test --target native           # 274 项
 moon test --target wasm-gc          # 174 项（内核全后端）
-scripts/gates.sh                    # 全量门禁（43 步）；scripts/gates.sh fast 跳过 E2E
+scripts/gates.sh                    # 全量门禁（45 步）；scripts/gates.sh fast 跳过 E2E
 ```
 
 - **`moon update` 是首次克隆的前置步骤**（CI 首跑实测）：唯一的依赖 `dimon-83/mbel@0.3.3` 的**源码已随仓库 vendored** 在 `.mooncakes/`（119 个文件，随 git 追踪），但 moon 解析依赖仍要过 registry 索引——索引不在时每条 moon 命令都报 `Failed to resolve registry dependency dimon-83/mbel: module was not found in the registry`（`--frozen` 也一样失败）。moon 自己会提示 `you may need to run 'moon update'`。
@@ -548,9 +548,11 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
-| 一切（43 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| 一切（45 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| SDF 示例集的 8 个应用案例 | `scripts/e2e-p29-examples.sh`；逐案例说明见 `examples/sdf/*/README.md`，对照与缺口见 `docs/sdf-examples-port.md` |
+| 图形化（Studio）对标探索与提案 | `docs/sdf-studio-exploration.md`（**未实现**：三阶段提案，含门禁形态） |
 | CI：随推送的 fast（Linux，12 步） | GitHub Actions（[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)）；本地等价物 `scripts/gates.sh fast`；日志 `gh run view --log-failed`。**日志可能被截断**（门禁输出混着数百条 moon warning，本仓实测 `--log-failed` 读不到末尾的汇总）：要全量就用原始日志 `gh api --allow-escape-sequences repos/dimon-83/moonflux/actions/jobs/<job-id>/logs`（job-id 由 `gh api repos/dimon-83/moonflux/actions/runs/<run-id>/jobs --jq '.jobs[] \| select(.name=="fast") \| .id'` 取） |
-| CI：手动的 full（macOS，43 步 E2E） | `gh workflow run ci`（或网页 Actions → ci → Run workflow）；本地等价物 `scripts/gates.sh`。**full 有独立并发组**：手动跑全量期间推送不会把它取消（推送只取消同分支的前一次 `fast`） |
+| CI：手动的 full（macOS，45 步 E2E） | `gh workflow run ci`（或网页 Actions → ci → Run workflow）；本地等价物 `scripts/gates.sh`。**full 有独立并发组**：手动跑全量期间推送不会把它取消（推送只取消同分支的前一次 `fast`） |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
 | 多分区复制与隔离 | `scripts/e2e-p7-partitions.sh` |

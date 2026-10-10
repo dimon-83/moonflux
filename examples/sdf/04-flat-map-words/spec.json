@@ -1,0 +1,17 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-04-flat-map" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/04-flat-map-words/input.txt" },
+    "topic": { "name": "sdf-04-words" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-flatmap/operator-flatmap.wasm",
+        "config": { "separator": " " }
+      }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

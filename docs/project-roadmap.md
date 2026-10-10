@@ -2,7 +2,7 @@
 
 > **定位**：项目的**进度管理**单一真相——分阶段路线图、每阶段的交付物与门禁证据、已达成的里程碑清单与后续排期。**规约依据**：AGENTS.md §2（阶段与门禁，工程纪律口径）；**边界声明**：README 只保留路线图**摘要**并链接到这里（2026-09-17 文档重构，决策 37）；阶段推进的门禁必须可证伪、可复现，"看起来能跑"不计数（AGENTS.md §2）。
 >
-> **日期**：2026-10-06 · 状态：P0–P28 全部达成 · 门禁全套 44 步绿（native 288 / wasm-gc 185 / 算子 6）· CI 已接线（`fast` Linux 随推送首绿，`full` macOS 手动）
+> **日期**：2026-10-10 · 状态：P0–P29 全部达成 · 门禁全套 45 步绿（native 289 / wasm-gc 186 / 算子 7）· CI 已接线（`fast` Linux 随推送首绿，`full` macOS 手动）
 
 ## 1. 阶段路线图（含门禁证据）
 
@@ -39,6 +39,7 @@
 | **P26** | **ABI v2 标量调用** | 设计稿落地（可选成对导出、返回指针 + v1 的 output_len/last_status 拆分、guest SDK 显式参数类型、节点注册表 apply 绑定、`{"type":"scalar"}` 变换）；链改整批应用（逐记录调用曾让批算子只拿单条批、上限永不触发）；探针补无导入段检查 | ✅ 达成（2026-09-25）：`scripts/e2e-p26-scalar.sh` 6 腿全绿（与 mbel 逐字节对拍、四类结构化拒绝）+ 真 wasmtime wbtest 9 条；设计稿 §7 落地实录（决策 50） |
 | **P27** | **编辑器函数集 UI** | 六部分议定范围（P26 收口时）：面板（列表/刷新/删除/载入）+ 编辑表单（部署即 CREATE）+ 表达式节点集合下拉（图 → `build_spec` 派生 `functions`）+ 修订漂移标记（部署快照 revision、LIST 前进即提示 re-apply，编辑器侧 advisory）+ 不含标量函数编写面 + 门禁形态；资产文档与协议帧全在 `apps/editor-kernel`（ABI 2） | ✅ 达成（2026-10-05）：`scripts/e2e-p27-editor-functions.sh` 三腿全绿（面板 CREATE 经 WS 落地、引用入 spec 且 re-apply 换绑 revision 2、历史按当前规则重现）+ wbtest 11 条；执行中修掉 apply 应答试探误读长 JSON 应答的真缺陷（决策 52） |
 | **P28** | **存储维护调度** | 后台压实加入既有维护节拍：`MOONFLUX_COMPACT_MS` 节拍即开关（默认关）、`MOONFLUX_COMPACT_MIN_DIRTY_BYTES` 透传内核 `min_dirty_bytes`、枚举与 floor 与 retention 同源（serve 抽 `serve_maintenance_targets`，spu 按 topic/partition 记节拍与 50ms tick 解耦）；顺带把 `decode_log_frames.py` 升到 P18 真偏移语义 | ✅ 达成（2026-10-06）：`scripts/e2e-p28-maintenance.sh` 5 腿全绿（默认关 / 收敛到每键最新且偏移不变 / 组地板挡压实 / 手动命令不变 / spu 同语义非 tick 同频）；进 gates.sh 步表 43→44（决策 53） |
+| **P29** | **SDF 示例集的应用案例 + Studio 对标探索** | 逐条清点 [`stateful-dataflow-examples`](https://github.com/infinyon/stateful-dataflow-examples)（32 dataflow + 5 package）后落地 8 个可运行案例（`examples/sdf/*`：map/filter/filter-map/flat-map/split/merge/key/state）+ 两个新 guest 算子（`operator-filter` 1→0、`operator-flatmap` 1→N）+ 对照与缺口文档；Studio 侧给出概念对照与三阶段提案 | ✅ 2026-10-10（`scripts/e2e-p29-examples.sh` 8 腿字节级对拍；缺口 9 条如实留档；见决策 54） |
 > **为什么 Native 先行**（2026-09-15 修订，README 决策 3）：数据源（Source）与数据汇（Sink）需要**独立的外部读写能力**——网络 / 文件 / 协议 / MQ / 硬件直采，**WASM 沙箱不能自主 IO**；连接器与数据面是第一梯队能力，因此承载它们的 Native 先行。WASM 保留为"数据路径内算子沙箱"（P2 落地）；**内核全后端可编译的纪律由 CI 矩阵从第一天保持**。
 >
 > **K8s 与阶段的关系**：P0–P3 **不依赖 K8s**，全部在本地单机/多进程推进与验收；K8s 仅是部署目标之一，只贡献元数据后端（CRD）与生命周期自动化。数据面、复制、选主、元数据调和是**任何部署模型都需要**的架构能力（AGENTS.md §1.2）。
@@ -79,6 +80,7 @@
 - [x] **CI 接线达成（2026-09-27）**：工作流落在 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)（`.scratch/moonflux-ci/` 那份暂存副本已退休——线上有了权威副本，留着就是第二真相）。`fast`（12 步）随推送在 **ubuntu-latest** 首绿（run `36324100660`，1 分 41 秒，**本仓首次 Linux 验证**：四后端编译 + 双测试套件）；`full`（43 步 E2E）手动触发于 macos-14，2026-09-27 **首次跑满 43/43**（run `36325414560`，5 分 13 秒）。接线过程抓出五件事（registry 索引前置、wasmtime 与 `st_mtimespec` 两处 macOS-only、两个门禁假绿）与工具链版本政策，见决策 51 与看板返工台账第 11 条；full 首跑另暴露两处**门禁自身的启动时序假设**（p12/p13），修法与证据见同表第 13 条
 - [x] **P27 达成：编辑器函数集 UI（2026-10-05，决策 52）**——面板/表单/选择器/漂移标记四件套，资产文档与协议帧全在 `apps/editor-kernel`（ABI 2，页面断言版本）；表单预检只做形状（mbel 规则与纯度以节点发布期门禁为唯一权威）；UI 不暴露标量函数编写面。门禁 `scripts/e2e-p27-editor-functions.sh` 三腿全绿（面板 CREATE 经 WS 落地、引用入 spec 且 re-apply 换绑 revision 2、历史按当前规则重现 `ALPHA?` + 新记录 `BETA?`）+ wbtest 11 条；执行中修掉 `mf_editor_feed` 的 apply 应答试探误读长 JSON 应答的真缺陷（真页面驱动抓到；教训：**夹具必须覆盖真实载荷的长度级别**）。tickets 97–99
 - [x] **P28 达成：存储维护调度（2026-10-06，决策 53）**——后台压实加入既有维护节拍（立项盘点修正：retention 自 P9 起已周期化，缺口只有压实）；节拍即开关、重写门槛透传内核、floor 单一真相；`scripts/e2e-p28-maintenance.sh` 5 腿全绿并进步表（44 步）；`decode_log_frames.py` 升级为真偏移输出。tickets 100–102
+- [x] **P29 达成：SDF 示例集的应用案例与 Studio 对标探索（2026-10-10，决策 54）**——8 例端到端门禁（`scripts/e2e-p29-examples.sh`；含「日志即状态」的诚实写法：原始日志视图 vs 已应用拓扑的服务视图、键控压实保持偏移、地板之下结构化拒绝）；新增两个沙箱算子（filter 1→0 / flatmap 1→N，mbel 表达不了）；Studio 提案只渲染已有真相，不画 state 对象（缺口见 `docs/sdf-examples-port.md` §4）
 - [x] 生成项目规约 [`AGENTS.md`](../AGENTS.md)（2026-09-15）；随代码结构落地更新（2026-09-16 补 §10 文档规范）
 
 ## 3. 待办与排期
@@ -86,6 +88,7 @@
 - [x] ~~compaction~~ **已达成**（2026-09-18，P14：键语义启用 + 键控压实落地）
 - [x] ~~**CI 接线**~~ **已达成**（2026-09-27，决策 51）：`fast` 随推送（Linux，首绿 run `36324100660`）+ `full` 手动（macOS）；**工具链政策**：CI 装 `latest`（CDN 拒版本化 URL，钉不住），仓库采纳该版本格式，本地须 `moon upgrade` 同步
 - [ ] **下一梯队**（按优先级）：多语言客户端 SDK（待需求触发）；~~编辑器函数集 UI~~ **已达成**（2026-10-05，P27，见决策 52）；~~ABI v2 实现~~ **已达成**（2026-09-25，P26，见决策 50）
+- [ ] **编辑器拓扑视图（Studio 提案 P1，条件触发）**：把 `core/pipeline` 的编译结果渲染成节点/边（只读），门禁形态为结构断言；P2 活指标叠加、P3 诚实版状态视图见 [`docs/sdf-studio-exploration.md`](sdf-studio-exploration.md) §4——三者均未立项
 - [x] ~~P15 后续：每请求重开日志~~ **已达成**（2026-09-19，P16：进程级有界缓存，见决策 40 与 `scripts/e2e-p16-logcache.sh`）
 - [x] ~~P16 后续 ①：benchmark 工具~~ **已达成**（2026-09-22，P17：`benchmark produce/consume/latency` + `scripts/e2e-p17-bench.sh`，见决策 41；执行中抓掉 accept 先于 poll 的每请求一 tick 税，ticket 75）
 - [x] ~~P16 后续 ②：带过滤表达式的逐记录偏移~~ **已达成并扩大**（2026-09-23，P18：不止规则——**compaction 的空洞今天就触发**同样错位；修法为 fetch 应答按连续偏移段分帧，远端/committed/本地三路全真，见决策 42）

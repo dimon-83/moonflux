@@ -1,0 +1,17 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-02-filter-questions" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/02-filter-questions/input.txt" },
+    "topic": { "name": "sdf-02-questions" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-filter/operator-filter.wasm",
+        "config": { "contains": "?" }
+      }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

@@ -1,0 +1,2 @@
+1	sensor-2	30
+2	sensor-1	22

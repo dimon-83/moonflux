@@ -70,6 +70,7 @@
 | P26 | **ABI v2 标量调用**（设计稿落地）：`mf_op_scalar_abi_version` + `mf_op_eval`（可选成对导出；返回指针、长度走 v1 的 `mf_op_output_len`、失败走 `last_status`/`last_error`）；guest SDK 的 `GuestScalarFn`（显式参数类型）；节点注册表 `scalar-functions.json`（apply 时绑定）；`{"type":"scalar"}` 变换按整批应用 | 沙箱标量跑通且**与 mbel `upper()` 逐字节一致**；未注册名/v1-only 模块在 apply 被拒；类型错与每批上限 fail-closed 无输出；探针补**无导入段检查**与 v2 成对导出 | ✅ 2026-09-25（`scripts/e2e-p26-scalar.sh`，6 条腿 + 真 wasmtime wbtest 9 条；见决策 50） |
 | P27 | **编辑器函数集 UI**（P26 收口时议定的六部分范围）：面板（列表/刷新/删除/载入）+ 编辑表单（部署即 CREATE）+ 表达式节点集合下拉（图 → `build_spec` 派生 `functions`）+ 修订漂移标记（部署快照 revision，LIST 前进即提示 re-apply）；资产文档与协议帧全在 `apps/editor-kernel`（ABI 2，页面断言版本） | 门禁 `e2e-p27-editor-functions.sh`（setup/bump/verify，浏览器阶段 agent/人驱动，与 p4-editor 同形不进步表）三腿：面板 CREATE 经 WS 落地、选择器引用入 spec 且 re-apply 换绑 revision 2、历史按当前规则重现（`ALPHA?`）+ 新记录（`BETA?`）；wbtest 11 条（含**长夹具**回归：JSON 应答先于 uleb 试探，短夹具当年全绿是教训） | ✅ 2026-10-05（见决策 52） |
 | P28 | **存储维护调度**：后台压实加入既有维护节拍——serve 的 housekeeping 旁按 `MOONFLUX_COMPACT_MS` 跑 `serve_compact_all`（枚举/floor 与 retention 同源），spu 在 leader tick 上按每分区节拍（HostTable 按 topic/partition 记时间戳）跑 `compact_partition`；`MOONFLUX_COMPACT_MIN_DIRTY_BYTES` 透传内核 `min_dirty_bytes` | 默认关（节拍即开关，重写不是默认）；floor 之上被超越的记录幸存、之下收敛到每键最新且偏移不变；手动 `cluster compact` 阈值 0 不变；spu 压实与 50ms tick 解耦 | ✅ 2026-10-06（`scripts/e2e-p28-maintenance.sh`，5 腿；见决策 53） |
+| P29 | **SDF 示例集的应用案例 + Studio 对标探索**：8 个可运行案例（`examples/sdf/*`）+ 两个新 guest 算子（`operator-filter` 1→0、`operator-flatmap` 1→N）+ 对照与缺口文档；Studio 三阶段提案（只读拓扑 / 活指标 / 诚实版状态） | `scripts/e2e-p29-examples.sh` 8 腿字节级对拍（含「日志即状态」：原始日志视图 vs 服务视图、键控压实保持偏移、地板之下结构化拒绝）；缺口 9 条如实留档（无服务内键控状态/窗口/SQL/arrow-row/Rust 工具链） | ✅ 2026-10-10（见决策 54） |
 | P19 | **连接器流式语义 + MQTT**：三态 pull（`Records`/`Quiet`/`Exhausted`）+ `pipeline run` 循环（一次性源语义不变）；手写 MQTT 3.1.1 客户端（零依赖、QoS 0 边界、会话复用）；spec 增 mqtt 源/汇 | `e2e-p19-mqtt.sh` 5 腿：订阅源流式交付且**不退出**、线上形状（CONNECT clean / SUBSCRIBE topic）被独立 Python broker 断言、汇发布被 broker 解码、坏 url **apply 期**拒绝 + 死 broker 结构化错误、一次性源一遍退出；wbtest 4 条（URL 解析 / varint 边界 / CONNECT 字节 / PUBLISH 解码含 QoS 1 形状） | ✅ 2026-09-23（见决策 43） |
 | P20 | **Kafka 连接器（对接生态对象）**：手写五个锁定版本的非 flexible API（ApiVersions v0 / Metadata v1 / ListOffsets v1 / Produce v3 / Fetch v4）+ RecordBatch v2 构建与解析 + CRC-32C 进 `core/codec`；spec 增 `kafka://` 源/汇 | `e2e-p20-kafka.sh` 5 腿：往返（file→kafka→moonflux）且源保持流式、线上形状（探针/元数据/**CRC 有效的批**/acks=1）被独立 Python broker 断言、`from=latest` 静默与缺失分区拒绝、坏 url/死 broker/旧版本 broker 三种结构化拒绝、一次性源语义不变；wbtest（URL/zigzag 边界/批往返/CRC 篡改/压缩拒绝）；**开发期用 kafka-python 3.0.11 解码我们发出的请求与自建批**（留痕于 ticket 83） | ✅ 2026-09-23（见决策 44；矩阵 #24） |
 | P21 | **细粒度授权与审计**：凭据可携带按主题 grants（read/write），`authorize_topic` 作为角色表之后的第二道门（**只收窄、不放大**）；`audit.log` 记拒绝、认证结果与主题生命周期，凭据永不入 | `e2e-p12` 腿 8–10：授权主题双向可用、未授权主题按名拒绝（码 10）、无 grants 凭据行为不变、read-only+write grant 不可放大、审计三断言 + **无凭据泄漏** grep | ✅ 2026-09-25（见决策 45） |
@@ -232,11 +233,12 @@ moonflux/
 ├── adapters/    # 薄适配层：每包声明单目标（abi-wasm → "wasm"；net-native → "native"；net-js → "js"）
 │   ├── fs-native net-native                        # P0–P1
 │   └── wasmtime-native                             # P2：算子宿主（dlopen，无链接期依赖）
-└── apps/        # 入口包：is-main，按目标打包（算子模板 / cli / 服务端 / web-client）
+├── apps/        # 入口包：is-main，按目标打包（算子模板 / cli / 服务端 / web-client）
     ├── cli（produce/consume/serve/pipeline/spu/sc/topic/cluster/group/function-set/operator/benchmark/profile/partition）
     ├── client connectors transform                 # P1：客户端 SDK / 连接器 / mbel 执行器
     ├── operator-sdk operator-*                     # P2：guest SDK 与算子模块
     └── editor-kernel                               # P4：Web 编辑器的内核侧（js 目标）
+└── examples/    # 应用案例：SDF 示例集的移植（逐例 spec + 冻结夹具 + expected + README；P29）
 ```
 
 - 包依赖只允许 `core ← adapters ← apps` 单向；任何方向的违规会被 `moon build --target X` 的依赖 fail-fast 直接拦截——**不要试图绕过，它是架构纪律的执行者**。
@@ -270,7 +272,7 @@ moonflux/
 - [ ] 涉及 codec/算子：golden vectors 对拍通过；涉及执行路径：预算与超时行为测试通过
 - [ ] 生成物一致性：`tools/gen_*.py --check` 全部 up to date（**改数据文件后必须重跑生成器**；生成器按 `moon fmt` 排版输出，故 fmt 对生成文件是 no-op）
 - [ ] 涉及集成（mbel / 参考系统互操作）：附可复现脚本与对照输出
-- [ ] **CI**：推送即跑 `scripts/gates.sh fast`（Linux）；动数据路径前手动跑全量（`gh workflow run ci`，macOS 43 步）。CI 装的是工具链 `latest`，**本地必须 `moon upgrade` 到同版本**（格式器方向相反，见 README 决策 51）
+- [ ] **CI**：推送即跑 `scripts/gates.sh fast`（Linux）；动数据路径前手动跑全量（`gh workflow run ci`，macOS 45 步）。CI 装的是工具链 `latest`，**本地必须 `moon upgrade` 到同版本**（格式器方向相反，见 README 决策 51）
 - [ ] 文档同步：README / 报告章节 / 本文件金规则表（如决策有变更并注明依据；规范见 §10）
 
 ## 7. 对标参考系统（Fluvio）使用规则
@@ -334,6 +336,8 @@ moonflux/
 | 项目介绍 | [README.md](README.md) | 定位 / 核心主张 / 快速开始 / 能力与范围摘要 / **文档导航** / **关键决策记录**（权威位置） |
 | 工作规约 | 本文件（AGENTS.md） | 金规则 / 内核红线 / 验证流程 / 文档规范等执行纪律（§1–§10） |
 | 立项评估报告 | [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md) | 对标事实：§2 功能实录、§4 后端、§5 mbel、§6 编辑器 |
+| SDF 示例移植与缺口 | [docs/sdf-examples-port.md](docs/sdf-examples-port.md) | 对标示例集 8 例的对照、语义映射与缺口清单（P29） |
+| SDF Studio 对标探索 | [docs/sdf-studio-exploration.md](docs/sdf-studio-exploration.md) | 图形化方案的事实、对照、三阶段提案与非目标（P29） |
 | 参考系统作业规则 | [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md) | 在 `~/workspace/fluvio` 内的 agent 硬规则 |
 | 对标语义台账 | [docs/compatibility-matrix.md](docs/compatibility-matrix.md) | 每条对标语义的验证状态与证据入口（状态图例的单一真相） |
 | 架构说明 | [docs/architecture.md](docs/architecture.md) | 分层与包清单 / 事件循环 / 协议 / 存储 / 复制与控制面 / 安全 / 算子 / 验证体系（"为什么是这个形状"的唯一位置） |
