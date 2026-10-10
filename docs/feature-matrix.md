@@ -75,7 +75,7 @@
 | 连接多路复用（单线程 poll hub，缓冲上限由协议批预算派生） | ✅ | `apps/cli/hub.mbt`（收包按轮 join，超限**报告后**断开）；`scripts/e2e-p5-concurrency.sh`、`scripts/e2e-p15-bulk.sh` 腿 4 |
 | 控制面并发服务（`sc` 同 hub；沉默对端不伤害他人） | ✅ | `scripts/e2e-p13-control-plane.sh` |
 | WebSocket 网关（同端口，浏览器与 CLI 同协议） | ✅ | `serve --ws`；`scripts/e2e-p4-ws.sh` |
-| 连接器：file / stdin / http（source+sink） | ✅ | `apps/connectors`；`scripts/e2e-p1-connectors.sh` |
+| 连接器：file / stdin / http（source+sink） | ✅ | `apps/connectors`；`scripts/e2e-p1-connectors.sh`；HTTP 源可选轮询（`interval_ms`，P30/T109）：0 = 一次性 GET，正数 = 按时重取，轮询期说 `Quiet` 永不说 `Exhausted` |
 | **MQTT 连接器（P19）**：订阅源 + 发布汇（手写 MQTT 3.1.1，零依赖） | ✅ | `mqtt://[user:pass@]host[:port]/topic`；三态 pull（流式源不退出、一次性源语义不变）；QoS 0 边界与 URL 凭据提示见 README 决策 43；`scripts/e2e-p19-mqtt.sh`（5 腿，对端 = 独立 Python broker）；**增量源批量**：`pipeline run` 成为流式循环，消费按批追加 + 变换 + 汇 |
 | **Kafka 连接器（P20）**：消费源 + 生产汇（手写五个锁定版本 API + RecordBatch v2 + CRC-32C） | ✅ | `kafka://host:port/topic[?partition=N&from=earliest\|latest\|<offset>]`；连接期版本探针按名拒绝不兼容 broker；无压缩/无消费组/acks=1 等边界见 README 决策 44；开发期经 kafka-python 3.0.11 解码对拍（ticket 83）；`scripts/e2e-p20-kafka.sh`（5 腿，对端 = 独立 Python broker 且**校验收到的批 CRC**） |
 | 认证（握手期 CMD_AUTH + 凭据表 + 常数时间比较） | ✅ | `core/auth`；`scripts/e2e-p12-security.sh` |

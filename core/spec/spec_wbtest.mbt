@@ -188,3 +188,31 @@ test "topic name charset pinned" {
   assert_false(valid_topic_name("Ümlaut"))
   assert_false(valid_topic_name(""))
 }
+
+///|
+test "an http source takes an optional poll interval" {
+  // absent or 0 keeps the one-shot P1 behavior; positive makes a poller
+  let one_shot = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"http://h/p\"},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(one_shot) {
+    Ok(spec) => assert_true(spec.source is HttpSource("http://h/p", 0L))
+    Err(errors) => abort("one-shot http source rejected: \{errors}")
+  }
+  let polled = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"http://h/p\",\"interval_ms\":250},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(polled) {
+    Ok(spec) => assert_true(spec.source is HttpSource("http://h/p", 250L))
+    Err(errors) => abort("polled http source rejected: \{errors}")
+  }
+  // a negative or non-numeric interval is a named rejection, not a clamp
+  let negative = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"http://h/p\",\"interval_ms\":-1},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(negative) {
+    Ok(_) => abort("a negative interval should be rejected")
+    Err(errors) =>
+      assert_true(errors.any(fn(e) { e.path == "$.spec.source.interval_ms" }))
+  }
+  let textual = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"http://h/p\",\"interval_ms\":\"soon\"},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(textual) {
+    Ok(_) => abort("a non-numeric interval should be rejected")
+    Err(errors) =>
+      assert_true(errors.any(fn(e) { e.path == "$.spec.source.interval_ms" }))
+  }
+}

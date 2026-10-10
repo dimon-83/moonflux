@@ -154,7 +154,11 @@
 | Kafka 往返 | Kafka 源/汇已就位（P20，含独立 broker 门禁） | **今天可做案例** |
 | `http-callout` / `openai-callout`（**逐记录** HTTP 调用，含 API key） | **沙箱无导入 ⇒ guest 不能做 IO**（结构性事实，不应破坏） | 需**宿主侧 `http` 变换**（见下），且与确定性冲突 |
 
-**方案 A（小票）· 轮询 HTTP 源**：给 HTTP 源加 `interval_ms`（0 = 现在的行为）：`{"type":"http","url":"...","interval_ms":1000}`，`Quiet` 语义与 MQTT 源同形（三态 pull），每轮重取并交付。门禁：本地 HTTP 服务端 + 两轮取数 + 停止后 `Exhausted`/`Quiet` 行为符合三态契约。
+**方案 A（小票）· 轮询 HTTP 源 —— 已落地（2026-10-10，T109，决策 57）**
+
+实现：`{"type":"http","url":…,"interval_ms":N}`（0/缺省 = 原一次性语义）；轮询期 `pull` 返回 `Quiet`（**永不说 `Exhausted`**，否则"轮询器"就退回成一次性源），到点才重取，每批按其**取数时刻**打时间戳（与 MQTT 源的到达时间口径一致）；重取同一份 body 会**重复投递**同样的记录——去重是读者的事，与任何外部轮询器一致。证据：`core/spec` 解析测试（缺省/正数/负数/非数值四态）、案例 09 的 `spec-poll.json`、`scripts/e2e-p30-connector-examples.sh` 腿 7（两次 200ms 轮询 → 至少两批、进程仍存活、主题按批增长）。
+
+**方案 A 原设计记录（保留）**：给 HTTP 源加 `interval_ms`（0 = 现在的行为）：`{"type":"http","url":"...","interval_ms":1000}`，`Quiet` 语义与 MQTT 源同形（三态 pull），每轮重取并交付。门禁：本地 HTTP 服务端 + 两轮取数 + 停止后 `Exhausted`/`Quiet` 行为符合三态契约。
 
 **进展（2026-10-10）**：三类案例已落地并进门禁——`examples/sdf/{09-http-source,10-mqtt-transit,11-kafka-bridge}`，由 `scripts/e2e-p30-connector-examples.sh`（6 腿）验真，对端是仓库自带的 `python3 -m http.server`、`scripts/mqtt_test_broker.py`、`scripts/kafka_test_broker.py`（无需外网）。案例同时把落差写进 README：SDF 的连接器在数据流之外，moonflux 的连接器就在 spec 里。**方案 A（轮询 HTTP 源）仍是小票**，**方案 B（callout）仍未立项**。
 

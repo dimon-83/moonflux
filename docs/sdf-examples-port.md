@@ -29,7 +29,7 @@
 | 6 | [`06-merge-two-sources`](../examples/sdf/06-merge-two-sources/) | `primitives/merge` | **两条入口 spec 写同一个主题**；主题即合并后的流（偏移 0..3 连续） | 6 |
 | 7 | [`07-key-value-keys`](../examples/sdf/07-key-value-keys/) | `primitives/key-value/{input,output,chained}` | key 是**日志的一列**：`produce --key-separator` 打戳、`consume` 第 3 列可见、跨存储存活 | 7 |
 | 8 | [`08-state-is-the-log`](../examples/sdf/08-state-is-the-log/) | `primitives/update-state`、`dataflows/word-counter` | ① 同一主题两个视角（`consume --remote` 走已应用拓扑=服务视图；`consume --data-dir`=原始日志视图）；② 键控压实作为"每键最新"的物化，偏移不变 | 8a / 8b |
-| 9 | [`09-http-source`](../examples/sdf/09-http-source/) | `dataflows/car-processing`、`dataflows/ny-transit`（入湖段） | **spec 内的 HTTP 源**（SDF 是独立部署的 `http-source` 连接器）→ 沙箱过滤 → 主题；日志保留原始抓取 | 1 |
+| 9 | [`09-http-source`](../examples/sdf/09-http-source/) | `dataflows/car-processing`、`dataflows/ny-transit`（入湖段） | **spec 内的 HTTP 源**：一次性 GET（`spec.json`）与**轮询**（`spec-poll.json`，`interval_ms`）两种形态 → 沙箱过滤 → 主题；日志保留原始抓取 | 1, 7 |
 | 10 | [`10-mqtt-transit`](../examples/sdf/10-mqtt-transit/) | `dataflows/helsinki-transit`（入湖段） | **spec 内的 MQTT 订阅源**（流式，不停机）→ 主题；线上形状由仓库自带的 MQTT 测试 broker 断言 | 2–3 |
 | 11 | [`11-kafka-bridge`](../examples/sdf/11-kafka-bridge/) | **无直接对应物**（示例集全是 topic→topic，连接器在数据流之外） | **kafka 源 → 过滤 → kafka 汇**、两个 broker；断言读的是对端自己的 received 文件 | 4–6 |
 | 12 | [`12-custom-serialization`](../examples/sdf/12-custom-serialization/) | `primitives/custom-serialization/struct/{deserialize,serialize}` | 载荷不透明 + 表达式做字段读写：`get(fromJSON(value), k)` 读、`toJSON(fromPairs([...]))` 写、`toPairs/fromPairs` 恒等往返 | 9–11 |
@@ -73,7 +73,7 @@
 8. ~~**函数集没有本地创建路径**（实测，CLI 缺口）~~ **已收口（2026-10-10，T107，决策 56）**：`function-set create/get/list/delete` 现在都接受 `--data-dir`，本地路径**复用节点侧同一份 handler**，因此本地与 serve 的应答逐字节同源；同时给 `--remote` 与 `--data-dir` 互斥按名拒绝（那是两句不同的话）。案例 1 的步骤已从"先起一个 serve 装资产"简化为直接落到运行用的 data dir。
 9. **InfinyOn Cloud / 连接器仓库 / 外部数据源**（`demo-data.infinyon.com`、`mqtt.hsl.fi`、`hnrss.org`、`api.openai.com`、Hub 上的 `http-source@0.4.3` 等）。这些是外部依赖，不在移植范围；moonflux 侧的 HTTP/MQTT/Kafka 连接器是自建实现。
 
-   **部分收口（2026-10-10）**：HTTP/MQTT/Kafka 三类外部数据案例已落地（上方案例 9–11，6 腿全绿，全部使用仓库自带的测试对端，**不需要外网**）。仍缺两件：**轮询式 HTTP 源**（SDF 的 `http-source` 按间隔重取，我们的 HTTP 源是一次性 GET）与**逐记录 HTTP callout**（`http-callout`/`openai-callout`）——后者须先在"接受非确定性"与"记录-回放"之间选边，方案见 [`sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md) §2 缺口 9。
+   **部分收口（2026-10-10）**：HTTP/MQTT/Kafka 三类外部数据案例已落地（上方案例 9–11，7 腿全绿，全部使用仓库自带的测试对端，**不需要外网**）；**轮询式 HTTP 源也随之落地**（`interval_ms`，T109，决策 57：轮询期说 `Quiet` 永不说 `Exhausted`，每次重取各成一批）。仍缺一件：**逐记录 HTTP callout**（`http-callout`/`openai-callout`）——须先在"接受非确定性"与"记录-回放"之间选边，方案见 [`sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md) §2 缺口 9。
 
 ## 5. 明确不做（与 §4 的区别）
 

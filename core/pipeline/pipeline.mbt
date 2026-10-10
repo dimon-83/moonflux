@@ -50,7 +50,15 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
   })
   let (role, detail) = match spec.source {
     FileSource(path) => ("source-runner", "file source: \{path}")
-    HttpSource(url) => ("source-runner", "http source: \{url}")
+    HttpSource(url, interval_ms) =>
+      (
+        "source-runner",
+        if interval_ms > 0L {
+          "http poller: \{url} every \{interval_ms}ms"
+        } else {
+          "http source: \{url}"
+        },
+      )
     StdinSource => ("source-runner", "stdin source")
     MqttSource(url) => ("source-runner", "mqtt subscription: \{url}")
     KafkaSource(url) => ("source-runner", "kafka consumer: \{url}")

@@ -19,6 +19,8 @@
 #                      the paid orders reach the second one
 #   6  Kafka out       the second broker's received file is the assertion,
 #                      not our own client's opinion
+#   7  HTTP poll       interval_ms makes the source a poller: Quiet, never
+#                      Exhausted, and every poll is its own batch
 #
 # What the cases deliberately do not fake: SDF's helsinki-transit computes
 # a per-vehicle average speed, which needs durable keyed state we do not
@@ -178,4 +180,27 @@ grep -qE "^produce topic=$TOPIC_IN partition=0 acks=1 records=3 base=[0-9]+ crc=
   { cat "$WORK/kafka-in-facts.txt"; fail "case 11: the produce facts are not a valid batch (acks=1, crc ok)"; }
 pass "6. kafka out: the broker's own facts confirm acks=1 and a CRC-valid batch"
 
-echo "E2E-P30-CONNECTOR-EXAMPLES: 6 legs green (3 connector applications)"
+# ---- 7. the same source, polling (interval_ms) -------------------------
+# SDF's http-source re-fetches on an interval. Ours does too now, and the
+# assertion that matters is the pull contract: a poller says Quiet ("not
+# now") and never Exhausted ("never"), so the run stays alive and keeps
+# delivering. Re-fetching an unchanged body re-delivers the same records —
+# deduplication is the reader's problem, as for any external poller.
+D="$WORK/d09p"
+"$EXE" pipeline run --data-dir "$D" --spec "$EXAMPLES/09-http-source/spec-poll.json"   > "$WORK/09p.out" 2> "$WORK/09p.err" &
+RUN_PID=$!
+for _ in $(seq 1 40); do
+  [ "$(count_lines "$WORK/09p.out")" -ge 4 ] && break
+  sleep 0.25
+done
+kill -0 "$RUN_PID" 2>/dev/null ||
+  { cat "$WORK/09p.err"; fail "case 9 poll: the poller exited — a poller that exhausts is a one-shot"; }
+[ "$(count_lines "$WORK/09p.out")" -ge 4 ] ||
+  { cat "$WORK/09p.out"; fail "case 9 poll: two 200ms polls should have delivered four filtered records"; }
+kill "$RUN_PID" 2>/dev/null; wait "$RUN_PID" 2>/dev/null; RUN_PID=""
+# each poll appends its own batch: two polls of a four-line body
+POLLED="$("$EXE" consume --topic sdf-09-cars-polled --from 0 --data-dir "$D" 2>/dev/null | wc -l | tr -d ' ')"
+[ "$POLLED" -ge 8 ] || fail "case 9 poll: the topic holds $POLLED records, expected at least two four-record polls"
+pass "7. http poller: re-fetches on the interval, never exhausts, and every poll is its own batch"
+
+echo "E2E-P30-CONNECTOR-EXAMPLES: 7 legs green (3 connector applications)"

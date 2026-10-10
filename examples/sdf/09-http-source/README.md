@@ -23,10 +23,21 @@ $EXE pipeline run --data-dir "$(mktemp -d)" --spec examples/sdf/09-http-source/s
 $EXE consume --topic sdf-09-cars --from 0 --data-dir <same data dir> | cut -f4
 ```
 
-**Two honest differences**:
-- **One GET, not a poll.** SDF's `http-source` connector re-fetches on an interval; our HTTP
-  source is one-shot (`pull` returns `Exhausted` after the first body). A `interval_ms` source
-  option is a queued small ticket (see [`docs/sdf-gap-closure-plan.md`](../../../docs/sdf-gap-closure-plan.md) §2 缺口 9).
+**Polling** (`spec-poll.json`, `interval_ms: 200`): the same source with an interval re-fetches,
+which is the SDF `http-source` shape. The pull contract is the difference that matters —
+a poller says `Quiet` ("nothing right now") and **never** `Exhausted` ("nothing ever"), so the
+run stays a connector process. Re-fetching an unchanged body re-delivers the same records:
+**deduplication is the reader's problem**, exactly as it is for any external poller.
+
+```bash
+# the polling shape: keep it running, stop it yourself
+$EXE pipeline run --data-dir "$(mktemp -d)" --spec examples/sdf/09-http-source/spec-poll.json
+```
+
+**One honest difference left**:
+- **Raw text, not typed fields.** SDF's connector emits records its schema declares; ours
+  delivers the body's lines as opaque records, and structure is the expression's business
+  (`get(fromJSON(value), "maker")`, see [case 12](../12-custom-serialization/)).
 - **Substring filter, not a field filter.** Selection here is `contains "maker":"Ford"` over the
   raw JSON text, because `fromJSON(value)` is rejected by the publish-time static check (it probes
   `value` with the literal `"a"`) — that is the gap-4 finding, with a one-place fix queued. Field

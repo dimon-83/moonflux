@@ -29,7 +29,10 @@ pub(all) enum SourceSpec {
   /// Read newline-delimited text from a local file path.
   FileSource(String)
   /// HTTP GET a URL; the response body splits into lines (P1).
-  HttpSource(String)
+  /// The `Int64` is the poll interval in milliseconds: 0 keeps the
+  /// original one-shot behavior (one body, then `Exhausted`), a positive
+  /// value makes it a polling source that re-fetches (P30/T109).
+  HttpSource(String, Int64)
   /// Read newline-delimited text from standard input (P1).
   StdinSource
   /// Subscribe to an MQTT broker topic (P19); messages become records.
@@ -307,6 +310,40 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
 }
 
 ///|
+/// The HTTP source's optional poll interval: absent or 0 means "one
+/// body, then done" — the P1 behavior — and a positive number means
+/// "fetch again no sooner than that many milliseconds". Negative values
+/// and non-numbers are rejected here, where the operator can still see
+/// which key they typed (P30/T109).
+fn parse_http_interval(
+  src : Map[String, Json],
+  errors : Array[SpecError],
+) -> Int64? {
+  match src.get("interval_ms") {
+    None => Some(0L)
+    Some(Number(n)) =>
+      if n < 0.0 {
+        errors.push(SpecError::{
+          path: "$.spec.source.interval_ms",
+          code: "bad-value",
+          message: "interval_ms must not be negative (0 means one-shot)",
+        })
+        None
+      } else {
+        Some(n.to_int64())
+      }
+    Some(_) => {
+      errors.push(SpecError::{
+        path: "$.spec.source.interval_ms",
+        code: "bad-value",
+        message: "interval_ms must be a number of milliseconds",
+      })
+      None
+    }
+  }
+}
+
+///|
 fn parse_body(
   body : Map[String, Json],
   errors : Array[SpecError],
@@ -314,7 +351,12 @@ fn parse_body(
   // source
   let source : SourceSpec? = match body.get("source") {
     Some(Object(src)) => {
-      reject_unknown_keys("$.spec.source", src, ["type", "path", "url"], errors)
+      reject_unknown_keys(
+        "$.spec.source",
+        src,
+        ["type", "path", "url", "interval_ms"],
+        errors,
+      )
       match (src.get("type"), src.get("path"), src.get("url")) {
         (Some(String("file")), Some(String(path)), _) =>
           if path.length() == 0 {
@@ -329,7 +371,10 @@ fn parse_body(
           }
         (Some(String("http")), _, Some(String(url))) =>
           if url.has_prefix("http://") && url.length() > 7 {
-            Some(HttpSource(url))
+            match parse_http_interval(src, errors) {
+              Some(interval) => Some(HttpSource(url, interval))
+              None => None
+            }
           } else {
             errors.push(SpecError::{
               path: "$.spec.source.url",

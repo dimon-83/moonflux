@@ -289,7 +289,8 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   let now = @env.now().reinterpret_as_int64()
   let source = match applied.spec.source {
     FileSource(path) => @connectors.file_source(path, now)
-    HttpSource(url) => @connectors.http_source(url, now)
+    HttpSource(url, interval_ms) =>
+      @connectors.http_source(url, now, interval_ms)
     StdinSource => @connectors.stdin_source(now)
     MqttSource(url) => @connectors.mqtt_source(url)
     KafkaSource(url) => @connectors.kafka_source(url)

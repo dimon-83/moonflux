@@ -201,15 +201,51 @@ pub fn stdin_source(timestamp : Int64) -> Source {
 }
 
 ///|
+/// Poll state for the HTTP source: whether a body has been delivered
+/// yet, and when the last fetch happened (P30/T109).
+priv struct PollState {
+  mut delivered : Bool
+  mut last_ms : Int64
+}
+
+///|
 /// HTTP GET source: fetch a URL, split the response body into lines.
-/// One-shot: HTTP GET is a question, not a subscription.
-pub fn http_source(url : String, timestamp : Int64) -> Source {
-  let state = OnceState::{ delivered: false, }
+///
+/// `interval_ms` 0 keeps the original one-shot behavior — HTTP GET is a
+/// question, not a subscription: one body, then `Exhausted`. A positive
+/// interval makes it a poller: `Quiet` until the interval has elapsed,
+/// then the body again. Each delivered batch is stamped with its *fetch*
+/// time (the arrival-time rule the MQTT source follows), and re-fetching
+/// an unchanged body re-delivers the same records — deduplication is the
+/// reader's problem, exactly as it is for any external poller.
+pub fn http_source(
+  url : String,
+  timestamp : Int64,
+  interval_ms : Int64,
+) -> Source {
+  let state = PollState::{ delivered: false, last_ms: timestamp, }
+  let polling = interval_ms > 0L
   Source::{
-    name: "http-get:\{url}",
+    name: if polling {
+      "http-poll:\{url}"
+    } else {
+      "http-get:\{url}"
+    },
     pull: fn() {
-      if state.delivered {
-        return Ok(Exhausted)
+      let stamp = if polling {
+        let now = @env.now().reinterpret_as_int64()
+        if state.delivered && now - state.last_ms < interval_ms {
+          // not yet due: a poller says "nothing right now", never
+          // "nothing ever" — that is the difference from Exhausted
+          return Ok(Quiet)
+        }
+        state.last_ms = now
+        now
+      } else {
+        if state.delivered {
+          return Ok(Exhausted)
+        }
+        timestamp
       }
       let body = match http_get(url) {
         Ok(body) => body
@@ -217,7 +253,7 @@ pub fn http_source(url : String, timestamp : Int64) -> Source {
       }
       state.delivered = true
       let text = @utf8.decode_lossy(body[0:body.length()])
-      Ok(Records(records_from_text(text, timestamp)))
+      Ok(Records(records_from_text(text, stamp)))
     },
   }
 }
