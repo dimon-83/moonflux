@@ -4,7 +4,7 @@
 # These are not unit fixtures: every case is a *documented application*
 # in examples/sdf/, and this gate proves the document's claim — run the
 # case the way its README says, compare the bytes with the frozen
-# expected file. Eight legs, each tied to the stateful-dataflow-examples
+# expected file. Twelve legs, each tied to the stateful-dataflow-examples
 # directory it was ported from (see docs/sdf-examples-port.md):
 #
 #   1  map        mask every digit in a JSON ssn      (primitives/map,
@@ -20,11 +20,20 @@
 #                topology's view, and keyed compaction as "latest per
 #                key" with offsets preserved        (primitives/update-state,
 #                dataflows/word-counter)
+#   9  deserialize read a named field out of JSON     (primitives/custom-serialization)
+#  10  projection  serialize fields into a new shape,
+#                comparing a JSON number as a number
+#  11  round trip  toPairs -> fromPairs -> toJSON is
+#                the input, byte for byte
+#  12  parse-sentence sentence -> words -> lengths    (packages/parse-sentence)
 #
 # What this gate deliberately does NOT assert: any SDF behaviour that has
-# no moonflux equivalent (durable keyed state inside a service, windows
+# no moonflux equivalent (durable keyed state *inside* a service, windows
 # and watermarks, the SQL engine, arrow-row state). Those are recorded as
-# gaps in docs/sdf-examples-port.md instead of being faked here.
+# gaps in docs/sdf-examples-port.md instead of being faked here — case 8
+# shows the honest substitute for the first of them.
+# T108 (the publish-time probe) is what makes legs 9-11 publishable at
+# all; scripts/e2e-p1-rules.sh holds its rejections.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -209,4 +218,33 @@ grep -q "OffsetOutOfRange" "$WORK/08-from0.err" \
 check "8 compaction (after)" "$WORK/08-after.out" "$EXAMPLES/08-state-is-the-log/expected-compact-after.txt"
 pass "8b. compaction kept the latest value per key at its original offsets, and refused a stale read by name"
 
-echo "E2E-P29-EXAMPLES: 8 legs green (8 example applications)"
+# ---- 9-11. JSON fields: deserialize, project, round-trip ----------------
+# SDF's custom-serialization primitive reads a line into a typed struct and
+# writes one back out. Here the payload stays opaque and the expression
+# does the work: get(fromJSON(value), "maker") reads a field,
+# toJSON(fromPairs([...])) writes a new shape, and toPairs/fromPairs makes
+# the identity round trip — which is the strongest available statement
+# that our JSON view is faithful (T108 widened the publish-time probe so
+# this could publish at all).
+D="$WORK/d12"
+"$EXE" pipeline run --data-dir "$D" --spec "$EXAMPLES/12-custom-serialization/spec-deserialize.json" \
+  > "$WORK/12a.out" 2> "$WORK/12a.err" || { cat "$WORK/12a.err"; fail "case 12: deserialize run failed"; }
+check "12 deserialize (JSON -> field)" "$WORK/12a.out" "$EXAMPLES/12-custom-serialization/expected-deserialize.txt"
+"$EXE" pipeline run --data-dir "$D" --spec "$EXAMPLES/12-custom-serialization/spec-projection.json" \
+  > "$WORK/12b.out" 2> "$WORK/12b.err" || { cat "$WORK/12b.err"; fail "case 12: projection run failed"; }
+check "12 projection (fields -> new JSON)" "$WORK/12b.out" "$EXAMPLES/12-custom-serialization/expected-projection.txt"
+pass "9. JSON field read publishes and transforms (get(fromJSON(value), key))"
+pass "10. fields serialize back into a new JSON shape, numbers compared as numbers"
+
+"$EXE" pipeline run --data-dir "$D" --spec "$EXAMPLES/12-custom-serialization/spec-roundtrip.json" \
+  > "$WORK/12c.out" 2> "$WORK/12c.err" || { cat "$WORK/12c.err"; fail "case 12: round-trip run failed"; }
+check "12 round trip (toPairs -> fromPairs -> toJSON)" "$WORK/12c.out" "$EXAMPLES/12-custom-serialization/expected-roundtrip.txt"
+pass "11. toJSON(fromPairs(toPairs(fromJSON(value)))) is the input, byte for byte"
+
+# ---- 12. parse-sentence: the package's two functions, end to end --------
+"$EXE" pipeline run --data-dir "$WORK/d13" --spec "$EXAMPLES/13-parse-sentence/spec.json" \
+  > "$WORK/13.out" 2> "$WORK/13.err" || { cat "$WORK/13.err"; fail "case 13: run failed"; }
+check "13 parse-sentence" "$WORK/13.out" "$EXAMPLES/13-parse-sentence/expected.txt"
+pass "12. parse-sentence: sentence-to-words (flat-map) then word-length (len), as the package defines them"
+
+echo "E2E-P29-EXAMPLES: 12 legs green (13 case specs across 13 example applications)"

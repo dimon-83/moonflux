@@ -1,0 +1,18 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-13-parse-sentence" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/13-parse-sentence/sentence.txt" },
+    "topic": { "name": "sdf-13-word-lengths" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-flatmap/operator-flatmap.wasm",
+        "config": { "separator": " " }
+      },
+      { "type": "expr", "expr": "string(len(value))" }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

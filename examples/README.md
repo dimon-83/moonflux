@@ -2,8 +2,10 @@
 
 Runnable, gated ports of the [stateful-dataflow-examples](https://github.com/infinyon/stateful-dataflow-examples)
 catalog onto moonflux. Every case is a frozen spec + input + expected output,
-and `scripts/e2e-p29-examples.sh` runs all of them end to end and compares the
-bytes — the examples are evidence, not illustration.
+and two gates run all of them end to end and compare the bytes — the examples
+are evidence, not illustration: `scripts/e2e-p29-examples.sh` (cases 01–08, 12–13,
+12 legs, no network) and `scripts/e2e-p30-connector-examples.sh` (cases 09–11,
+6 legs against local test peers).
 
 | case | SDF original | shape | gate leg |
 | :--- | :--- | :--- | :--- |
@@ -18,12 +20,14 @@ bytes — the examples are evidence, not illustration.
 | [09-http-source](sdf/09-http-source/) | `dataflows/car-processing`, `dataflows/ny-transit`（入湖段，连接器在数据流之外） | HTTP source in the spec → filter → topic | 1 |
 | [10-mqtt-transit](sdf/10-mqtt-transit/) | `dataflows/helsinki-transit`（入湖段） | MQTT subscription source (streaming) | 2–3 |
 | [11-kafka-bridge](sdf/11-kafka-bridge/) | **无直接对应物**（示例集全是 topic→topic） | kafka source → filter → kafka sink, two brokers | 4–6 |
+| [12-custom-serialization](sdf/12-custom-serialization/) | `primitives/custom-serialization/struct/{deserialize,serialize}` | JSON field read · new shape · identity round-trip | 9–11 |
+| [13-parse-sentence](sdf/13-parse-sentence/) | `packages/parse-sentence`（`sentence-to-words` + `word-length`） | sandboxed flat-map → `string(len(value))` rule | 12 |
 
 Run everything:
 
 ```bash
 scripts/build-operators.sh                  # the filter/flat-map guests must exist
-scripts/e2e-p29-examples.sh                 # 01–08: 8 legs, byte-exact, no network
+scripts/e2e-p29-examples.sh                 # 01–08 + 12–13: 12 legs, byte-exact, no network
 scripts/e2e-p30-connector-examples.sh       # 09–11: 6 legs against local test peers
 ```
 

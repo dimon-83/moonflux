@@ -1,0 +1,13 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-12-roundtrip" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/12-custom-serialization/cars.jsonl" },
+    "topic": { "name": "sdf-12-roundtrip" },
+    "transforms": [
+      { "type": "expr", "expr": "toJSON(fromPairs(toPairs(fromJSON(value))))" }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

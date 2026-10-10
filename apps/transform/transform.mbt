@@ -101,6 +101,97 @@ pub fn compile(expr : String) -> Result[Transform, String] {
 }
 
 ///|
+/// The characters a probe key may contain: JSON field-name material, and
+/// nothing that would need escaping inside a JSON string.
+fn probe_key_char_ok(c : UInt16) -> Bool {
+  (c >= 97 && c <= 122) ||
+  (c >= 65 && c <= 90) ||
+  (c >= 48 && c <= 57) ||
+  c == 45 ||
+  c == 46 ||
+  c == 95
+}
+
+///|
+/// The JSON-safe string literals an expression names, in first-seen
+/// order. Splitting on the quote is enough: a literal containing an
+/// escape carries a backslash and is skipped, and an invented key only
+/// widens the probe.
+fn probe_keys(expr : String) -> Array[String] {
+  let keys : Array[String] = []
+  let parts = expr.split("\"").map(fn(v) { v.to_owned() }).to_array()
+  let mut i = 1
+  while i < parts.length() {
+    let part = parts[i]
+    let mut ok = part.length() > 0 && part.length() <= 64
+    if ok {
+      for j in 0..<part.length() {
+        if !probe_key_char_ok(part[j]) {
+          ok = false
+          break
+        }
+      }
+    }
+    if ok && !keys.contains(part) {
+      keys.push(part)
+    }
+    i = i + 2
+  }
+  keys
+}
+
+///|
+/// The probe payload for `value`: a JSON object whose keys are the
+/// literals the expression names. `numeric` picks the value type — a
+/// string (`{"ssn":"ssn"}`) or a number (`{"ssn":1}`) — because one fixed
+/// shape cannot serve both `replace(get(...), "-", "*")` and
+/// `get(...) > 60`, and the expression itself is the only thing that
+/// knows which one it means.
+fn probe_value(expr : String, numeric : Bool) -> String {
+  let keys = probe_keys(expr)
+  if keys.length() == 0 {
+    return "{}"
+  }
+  let mut out = "{"
+  let mut first = true
+  for k in keys {
+    if !first {
+      out = out + ","
+    }
+    first = false
+    if numeric {
+      out = out + "\"" + k + "\":1"
+    } else {
+      out = out + "\"" + k + "\":\"" + k + "\""
+    }
+  }
+  out + "}"
+}
+
+///|
+/// Runs the checked evaluation (mbel Compile mode: parse, type-check, name
+/// check, then evaluate) against one probe shape. `None` means the
+/// expression holds there; `Some(error)` carries the reason it does not.
+fn probe_accepts(
+  engine : @mengine.Engine,
+  expr : String,
+  value_json : String,
+) -> String? {
+  // the probe mirrors the runtime field types: value/key strings,
+  // timestamp/headers_count numeric
+  let probe = @ast.ObjectVal([
+    ("value", @ast.StrVal(value_json)),
+    ("key", @ast.StrVal("")),
+    ("timestamp", @ast.NumVal(1726000000000.0)),
+    ("headers_count", @ast.NumVal(0.0)),
+  ])
+  let _ = engine.eval_expr_checked(expr, probe) catch {
+    e => return Some(error_text(e))
+  }
+  None
+}
+
+///|
 /// Compiles an expression with a function set registered first. Order
 /// is load-bearing: the strict publish-time check consults the engine's
 /// function table, so custom names only resolve (and only get
@@ -122,16 +213,19 @@ pub fn compile_with(
       e => return Err(bounded("function set: \{error_text(e)}"))
     }
   }
-  // strict publish-time check: probe context mirrors the runtime
-  // field types (value/key strings, numeric timestamp/headers_count)
-  let probe = @ast.ObjectVal([
-    ("value", @ast.StrVal("a")),
-    ("key", @ast.StrVal("")),
-    ("timestamp", @ast.NumVal(1726000000000.0)),
-    ("headers_count", @ast.NumVal(0.0)),
-  ])
-  let _ = engine.eval_expr_checked(expr, probe) catch {
-    e => return Err(bounded("static check: \{error_text(e)}"))
+  // Strict publish-time check, over two probe shapes. The probe is a
+  // claim about the input, and no single claim fits every expression: a
+  // bare literal once claimed the record was not JSON (rejecting
+  // `fromJSON(value)` before a record flowed), while a string-valued
+  // object still rejects numeric fields. Either shape holding is enough
+  // to publish; literal, type and name errors fail both shapes, and
+  // unknown data stays fail-closed per record at runtime (T108).
+  let as_text = probe_accepts(engine, expr, probe_value(expr, false))
+  if as_text is Some(first_error) {
+    match probe_accepts(engine, expr, probe_value(expr, true)) {
+      Some(_) => return Err(bounded("static check: \{first_error}"))
+      None => ()
+    }
   }
   let compiled = engine.compile(expr) catch {
     e => return Err(bounded("compile: \{error_text(e)}"))

@@ -1,0 +1,16 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-12-projection" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/12-custom-serialization/cars.jsonl" },
+    "topic": { "name": "sdf-12-projected" },
+    "transforms": [
+      {
+        "type": "expr",
+        "expr": "toJSON(fromPairs([[\"car\", get(fromJSON(value), \"maker\")], [\"fast\", get(fromJSON(value), \"mph\") > 60]]))"
+      }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

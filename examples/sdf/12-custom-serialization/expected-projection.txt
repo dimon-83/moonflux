@@ -1,0 +1,2 @@
+{"car":"Ford","fast":true}
+{"car":"Toyota","fast":false}

@@ -52,6 +52,48 @@ fi
 grep -q "rejected" "$WORK/bad.out" || fail "apply rejection lacks reason"
 pass "publish-time static check rejects bad rules"
 
+# ---- T108: the probe names a shape the expression declares --------------
+# A fixed literal probe claimed the record was not JSON, so fromJSON(value)
+# was rejected before any record flowed. The probe now builds a JSON object
+# out of the literals the expression itself names: field access publishes,
+# while every literal, type and name rejection stays.
+printf '{"name":"Alice","ssn":"123-45-6789"}\n{"name":"Bob","ssn":"987-65-4321"}\n' > "$WORK/ssn.txt"
+ssn_spec() { # $1 = expr, $2 = out
+  local expr_json
+  expr_json="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1")"
+  cat > "$2" <<EOF
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "json-fields" },
+  "spec": {
+    "source": { "type": "file", "path": "$WORK/ssn.txt" },
+    "transforms": [ { "type": "expr", "expr": $expr_json } ],
+    "topic": { "name": "ssn-events" },
+    "sink": { "type": "stdout" }
+  }
+}
+EOF
+}
+
+ssn_spec 'replace(get(fromJSON(value), "ssn"), "-", "*")' "$WORK/spec-ssn.json"
+"$EXE" pipeline run --data-dir "$WORK/ssn-data" --spec "$WORK/spec-ssn.json" \
+  > "$WORK/ssn.out" 2> "$WORK/ssn.err" ||
+  { cat "$WORK/ssn.err"; fail "JSON field access should publish and run"; }
+printf '123*45*6789\n987*65*4321\n' > "$WORK/ssn.expect"
+diff -u "$WORK/ssn.expect" "$WORK/ssn.out" || fail "field access output"
+pass "the publish-time probe accepts JSON field access the expression names (T108)"
+
+for bad in 'fromJSON("a")' 'get(fromJSON(value), "ssn") + 1' 'fromJSON_missing(value)'; do
+  ssn_spec "$bad" "$WORK/spec-bad-json.json"
+  if "$EXE" pipeline apply -f "$WORK/spec-bad-json.json" --data-dir "$WORK/bad-json-data" \
+    > "$WORK/bad-json.out" 2>&1; then
+    fail "the widened probe must still reject: $bad"
+  fi
+  grep -q "rejected" "$WORK/bad-json.out" || fail "rejection of '$bad' lacks reason"
+done
+pass "the widened probe keeps the literal / type / name rejections (T108)"
+
 # valid rule: uppercase the value
 make_spec 'upper(value)' "$WORK/spec-upper.json"
 "$EXE" pipeline apply -f "$WORK/spec-upper.json" --data-dir "$DATA" > /dev/null \

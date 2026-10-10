@@ -17,7 +17,7 @@
 
 ## 2. 逐案例对照
 
-十一个案例都在 [`examples/sdf/`](../examples/sdf/)，每例含 spec + 夹具 + `expected*.txt` + 说明；01–08 由 `scripts/e2e-p29-examples.sh`（8 腿）验真，09–11 由 `scripts/e2e-p30-connector-examples.sh`（6 腿，对端是仓库自带的测试 broker/HTTP 服务）验真。
+十三个案例都在 [`examples/sdf/`](../examples/sdf/)，每例含 spec + 夹具 + `expected*.txt` + 说明；01–08 与 12–13 由 `scripts/e2e-p29-examples.sh`（12 腿）验真，09–11 由 `scripts/e2e-p30-connector-examples.sh`（6 腿，对端是仓库自带的测试 broker/HTTP 服务）验真。
 
 | # | 案例 | SDF 出处 | moonflux 形状 | 门禁腿 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -32,6 +32,8 @@
 | 9 | [`09-http-source`](../examples/sdf/09-http-source/) | `dataflows/car-processing`、`dataflows/ny-transit`（入湖段） | **spec 内的 HTTP 源**（SDF 是独立部署的 `http-source` 连接器）→ 沙箱过滤 → 主题；日志保留原始抓取 | 1 |
 | 10 | [`10-mqtt-transit`](../examples/sdf/10-mqtt-transit/) | `dataflows/helsinki-transit`（入湖段） | **spec 内的 MQTT 订阅源**（流式，不停机）→ 主题；线上形状由仓库自带的 MQTT 测试 broker 断言 | 2–3 |
 | 11 | [`11-kafka-bridge`](../examples/sdf/11-kafka-bridge/) | **无直接对应物**（示例集全是 topic→topic，连接器在数据流之外） | **kafka 源 → 过滤 → kafka 汇**、两个 broker；断言读的是对端自己的 received 文件 | 4–6 |
+| 12 | [`12-custom-serialization`](../examples/sdf/12-custom-serialization/) | `primitives/custom-serialization/struct/{deserialize,serialize}` | 载荷不透明 + 表达式做字段读写：`get(fromJSON(value), k)` 读、`toJSON(fromPairs([...]))` 写、`toPairs/fromPairs` 恒等往返 | 9–11 |
+| 13 | [`13-parse-sentence`](../examples/sdf/13-parse-sentence/) | `packages/parse-sentence`（`sentence-to-words` + `word-length`） | 沙箱 flat-map 做分词 + 规则 `string(len(value))` 做长度（规则必须返回字符串，故显式 stringify） | 12 |
 
 **为此新增的两个 guest 算子**（SDF 的 `filter`/`flat-map` 在 moonflux 里必须落在沙箱，因为 mbel 表达式**必须返回字符串**，无法表达"丢弃"）：
 
@@ -64,8 +66,8 @@
 1. **服务内持久键控状态**。moonflux 的算子是无状态纯函数（guest 无导入、无时钟、无随机源——结构性事实而非约定），宿主也不持有 per-key 状态。影响：`update-state`、`bank-processing` 的余额、`car-processing` 的按色计数、`word-counter`/`word-probe`/`helsinki-transit`/`ny-transit`/`openai-callout` 全部无法等价移植。**moonflux 的替代是"日志即状态"**：全量重放 + 键控压实（每键最新）+ 消费者自己持有聚合状态。这是不同的架构承诺，不是同一件事的另一种写法。
 2. **窗口与水位**。没有 tumbling/hopping window，没有 watermark，没有"水位推进才 flush"的语义；也就没有 SDF `word-counter` README 提到的那个已知缺口（无 idle 触发器）——这里根本不存在该机制。
 3. **SQL 引擎**。`sql()` 是 SDF 宿主函数（表=状态对象、`_key` 隐式列、支持 `FULL OUTER JOIN`/`GROUP BY`/`ORDER BY`）。moonflux 没有查询引擎，也不打算把 SQL 塞进数据路径（见 §5）。
-4. **schema 类型语言与 codegen**。`types:` 的对象/列表/枚举（`oneOf`）、字段重命名、per-schema converter、以及"hyphenated 字段 → snake_case"的隐式转换，均无对应物。
-5. **Rust/SmartModule 工具链**。`sdfg@0.13` + `#[sdf(fn_name=...)]` + `wasm32-wasip2` + crates.io 依赖解析 + Hub 分发。moonflux 的 guest 是 MoonBit 写的（`apps/operator-sdk`），不提供 Rust 编译链，也不从 crates.io 取依赖（AGENTS §1.1 依赖合规）。
+4. **schema 类型语言与 codegen**。`types:` 的对象/列表/枚举（`oneOf`）、字段重命名、per-schema converter、以及"hyphenated 字段 → snake_case"的隐式转换，均无对应物。**部分收口（2026-10-10，T108）**：字段级读写已可直接用 `get(fromJSON(value), k)` / `toJSON(fromPairs([...]))`（案例 12 三腿，含恒等往返）——缺的只是**编译期类型与生成代码**，而这是有意不做的方向（载荷保持不透明，畸形记录在运行期逐条 fail-closed）。
+5. **Rust/SmartModule 工具链**。`sdfg@0.13` + `#[sdf(fn_name=...)]` + `wasm32-wasip2` + crates.io 依赖解析 + Hub 分发。moonflux 的 guest 是 MoonBit 写的（`apps/operator-sdk`），不提供 Rust 编译链，也不从 crates.io 取依赖（AGENTS §1.1 依赖合规）。**能力等价物已在**（SDK + ABI + 探针 + 双后端对拍 + `build-operators.sh`）；缺的是**作者面**：一份"如何写一个算子"指南与稳定的 C ABI 头（进行中）。
 6. **`split` 拓扑**。一服务多汇（sink-scoped transforms）在 moonflux 里没有对应物：一份 spec 一个汇、一个主题；一节点一份已应用拓扑。
 7. **pipeline 不能以主题为源**。moonflux 的 spec 源只有 file/http/stdin/mqtt/kafka；"主题→主题"的服务形态要靠服务端的已应用拓扑（消费侧变换），而不是再写一条 pipeline。这是有意的分工，但对 SDF 的读者是首要的心智落差。
 8. **函数集没有本地创建路径**（实测，CLI 缺口）。`function-set create` 只接受 `--remote`；单机用户必须先起一个 `serve`（哪怕只是把资产写进同一个 data dir），案例 1 的步骤里保留了这一步并注明原因。这是一个可以补齐的命令面尾巴，不是设计限制。

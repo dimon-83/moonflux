@@ -1,0 +1,2 @@
+{"maker":"Ford","model":"f-150","license":"6FAF434","mph":62}
+{"maker":"Toyota","model":"corolla","license":"7BBB123","mph":48}

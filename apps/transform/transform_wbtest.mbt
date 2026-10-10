@@ -285,3 +285,67 @@ test "long error text is truncated, short text is untouched" {
     Err(e) => assert_true(!e.contains("more chars"))
   }
 }
+
+///|
+test "the probe names the keys the expression itself mentions" {
+  assert_eq(probe_keys("upper(value)").length(), 0)
+  // only the JSON-safe literals become keys, in first-seen order, once
+  let keys = probe_keys("concat(\"ssn\", get(fromJSON(value), \"ssn\"))")
+  assert_eq(keys, ["ssn"])
+  // separators and operators are not field names, so they are dropped
+  assert_true(!probe_keys("replace(value, \"-\", \"*\")").contains("*"))
+  assert_eq(probe_value("upper(value)", false), "{}")
+  assert_eq(probe_value("upper(value)", true), "{}")
+  assert_eq(probe_value("concat(\"ssn\")", false), "{\"ssn\":\"ssn\"}")
+  // the numeric shape exists so that numeric fields can publish at all
+  assert_eq(probe_value("concat(\"ssn\")", true), "{\"ssn\":1}")
+}
+
+///|
+test "JSON field access publishes when the expression names its keys" {
+  // the T108 lesson: probing `value` with a bare literal claimed the
+  // record was not JSON, so fromJSON(value) was rejected before any
+  // record flowed, while the engine itself has always supported it
+  assert_true(compile_with("toJSON(fromJSON(value))", []) is Ok(_))
+  assert_true(
+    compile_with("replace(get(fromJSON(value), \"ssn\"), \"-\", \"*\")", [])
+    is Ok(_),
+  )
+  assert_true(
+    compile_with("string(get(fromJSON(value), \"mph\"))", []) is Ok(_),
+  )
+  // a numeric field comparison only holds under the numeric probe shape
+  assert_true(compile_with("get(fromJSON(value), \"mph\") > 60", []) is Ok(_))
+  assert_true(
+    compile_with(
+      "toJSON(fromPairs([[\"fast\", get(fromJSON(value), \"mph\") > 60]]))",
+      [],
+    )
+    is Ok(_),
+  )
+  // and it still transforms, not just compiles
+  let t = match compile_with("get(fromJSON(value), \"ssn\")", []) {
+    Ok(t) => t
+    Err(e) => abort("compile_with: \{e}")
+  }
+  let out = match apply(t, rec("{\"ssn\":\"123-45-6789\"}")) {
+    Ok(record) => @utf8.decode_lossy(record.value[0:record.value.length()])
+    Err(e) => abort("apply: \{e}")
+  }
+  assert_eq(out, "123-45-6789")
+}
+
+///|
+test "the probe widens what publishes without losing a rejection" {
+  // a literal that is not JSON is a publish-time error, probe or not
+  assert_true(compile_with("fromJSON(\"nope\")", []) is Err(_))
+  // a type violation that holds under *every* probe shape is still
+  // caught: `value` is a string under both, so adding a number cannot
+  // type-check. (Arithmetic on a *named* key is allowed on purpose —
+  // the numeric shape exists precisely so a JSON number can be used as
+  // one; the runtime still fails closed if a record disagrees.)
+  assert_true(compile_with("value + 1", []) is Err(_))
+  // an unknown name is still caught (the probe does not invent those)
+  assert_true(compile_with("no_such_fn(value)", []) is Err(_))
+  assert_true(compile_with("fromJSON_missing(value)", []) is Err(_))
+}

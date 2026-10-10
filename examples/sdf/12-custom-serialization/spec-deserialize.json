@@ -1,0 +1,13 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-12-deserialize" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/12-custom-serialization/cars.jsonl" },
+    "topic": { "name": "sdf-12-deserialized" },
+    "transforms": [
+      { "type": "expr", "expr": "get(fromJSON(value), \"maker\")" }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}
