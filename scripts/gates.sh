@@ -40,9 +40,11 @@ step "moon fmt --check" moon fmt --check
 # apply fails. Eleven gates died silently that way on the Linux full run (the
 # failure was invisible because stdout was redirected and `set -e` exited).
 # A platform-dependent death that says nothing is worth a five-line guard.
-step "no gate feeds a spec through /dev/stdin" bash -c '
-  if grep -ln "f /dev/stdin" scripts/e2e-*.sh; then
-    echo "these gates feed a spec through /dev/stdin; write it to a file instead (see scripts/gates.sh):" >&2
+step "no gate routes data through /dev/stdin" bash -c '
+  if grep -ln "/dev/stdin" scripts/e2e-*.sh; then
+    echo "these gates route data through /dev/stdin; write it to a file instead:" >&2
+    echo "bash materialises heredocs/here-strings as pipes on Linux, and a" >&2
+    echo "sized-then-pread reader fails on a pipe (see scripts/gates.sh)." >&2
     exit 1
   fi'
 

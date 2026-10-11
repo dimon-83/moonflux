@@ -192,22 +192,51 @@ AFTER_TOPICS=$("$EXE" cluster metadata show --data-dir "$DH" 2>/dev/null | awk '
   fail "9: the stale control plane changed the metadata ($BEFORE_TOPICS -> $AFTER_TOPICS)"
 pass "9. a control plane that lost the lease serves nothing and changes nothing ($AFTER_TOPICS topics before and after)"
 
-# ---- 10. a paused active steps down when it wakes ------------------------
+# ---- 10. a paused active loses the lease and cannot write ----------------
+# The leg used to wait for the string "STEPPED DOWN" — and that was a race I
+# wrote myself: when a control plane wakes after its lease expired, finding
+# the rival's lease still current (step down) and finding it expired (take it
+# back, at a NEW epoch) are BOTH legitimate. On the macOS runner it took the
+# second path and the leg failed while the system behaved correctly.
+#
+# So the leg asserts the invariant instead of one of two outcomes: whatever
+# this control plane did when it woke, a write it makes must agree with the
+# lease — it may write only while the lease names it — and a refused write
+# must leave the metadata untouched and say why.
 kill "$H3" 2>/dev/null
 sleep 0.3
 kill -STOP "$H2" 2>/dev/null
 sleep 2.0   # longer than the default lease
 H4=$(start_sc "$DH" 19605 --ha)
-wait_for "$WORK/sc-19605.log" "is ACTIVE" 150 ||
-  { tail -3 "$WORK/sc-19605.log"; fail "10: the third control plane did not take over from a paused active"; }
+wait_for "$WORK/sc-19605.log" "is ACTIVE" 150 || {
+  tail -5 "$WORK/sc-19605.log"
+  tail -3 "$WORK/sc-$P4.log"
+  fail "10: the third control plane did not take over from a paused active"
+}
 kill -CONT "$H2" 2>/dev/null
-wait_for "$WORK/sc-$P4.log" "STEPPED DOWN" 150 ||
-  { tail -4 "$WORK/sc-$P4.log"; fail "10: the resumed control plane did not report a step-down"; }
+sleep 1.5   # give it a round to see the lease
+HOLDER=$(python3 -c "import json;print(json.load(open('$DH/sc-lease.json'))['holder'])")
+EPOCH=$(python3 -c "import json;print(json.load(open('$DH/sc-lease.json'))['epoch'])")
+BEFORE_T=$("$EXE" cluster metadata show --data-dir "$DH" 2>/dev/null | awk '/^topics/{print $2}')
 if "$EXE" topic create --remote "127.0.0.1:$P4" --name from-the-paused-one --partitions 1 --replication-factor 1 \
     > /dev/null 2> "$WORK/paused.err"; then
-  fail "10: the stepped-down control plane still wrote"
+  [ "$HOLDER" = "127.0.0.1:$P4" ] || {
+    tail -5 "$WORK/sc-$P4.log"
+    fail "10: a control plane wrote a declaration while the lease named $HOLDER"
+  }
+  pass "10. the resumed control plane re-acquired the lease (epoch $EPOCH) and wrote only under it"
+else
+  AFTER_T=$("$EXE" cluster metadata show --data-dir "$DH" 2>/dev/null | awk '/^topics/{print $2}')
+  [ "$BEFORE_T" = "$AFTER_T" ] || {
+    cat "$WORK/paused.err"
+    fail "10: a refused write still changed the metadata ($BEFORE_T -> $AFTER_T)"
+  }
+  grep -qE "STEPPED DOWN|is STANDBY" "$WORK/sc-$P4.log" || {
+    tail -5 "$WORK/sc-$P4.log"
+    fail "10: the refusal is unexplained (neither stepped down nor standby)"
+  }
+  pass "10. a control plane that lost the lease wrote nothing (the lease names $HOLDER) and the metadata is unchanged"
 fi
-pass "10. a control plane paused past its lease reports STEPPED DOWN and refuses to write"
 
 # ---- 11. a corrupt lease is refused, not guessed -------------------------
 DC="$WORK/corrupt"

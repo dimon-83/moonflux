@@ -368,10 +368,13 @@ pass "$MOVED partition(s) elected replacements; every other leader stayed put"
 # give the returning node a divergent tail: write into its own log
 # while it was away, then let it rejoin and watch it cut back to the
 # leader's end — reported, never silent
-"$EXE" produce --topic "$TOPIC" --partition 0 --file /dev/stdin \
-  --data-dir "$VICTIM_DATA" <<< "divergent-1
-divergent-2
-" > /dev/null
+# a real file, not a here-string on /dev/stdin: bash materialises `<<<` as a
+# pipe on Linux, and the reader sizes before it reads (see the guard in
+# scripts/gates.sh) — on Linux this leg's divergent tail was never created,
+# so the node had nothing to truncate and the leg failed for the wrong reason
+printf 'divergent-1\ndivergent-2\n' > "$WORK/divergent.txt"
+"$EXE" produce --topic "$TOPIC" --partition 0 --file "$WORK/divergent.txt" \
+  --data-dir "$VICTIM_DATA" > /dev/null || fail "could not write the divergent tail"
 
 if [ "$VICTIM_PORT" = "$A_PORT" ]; then
   A_PID="$(start_spu spu-a "$A_PORT")"
