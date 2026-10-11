@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-topwords: the top-N words of each tumbling window, flushed
+// when that window closes (wasm guest, ABI v1 + v3). This is the reference
+// word-counter example's real shape: split the sentence into words, count
+// them per 20-second window, and on window close emit the top three.
+//
+// The window closes on a later EVENT, never on a clock — the reference's own
+// README says the same ("produce one more record after the 20-second mark").
+// A pipeline with no further traffic has nothing to flush, and that boundary
+// is stated rather than papered over with a timer.
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_state_abi_version",
+        "mf_op_state_apply",
+      ],
+    },
+  },
+)

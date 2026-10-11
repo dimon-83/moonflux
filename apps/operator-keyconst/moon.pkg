@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-keyconst: stamp one constant key on every record (wasm
+// guest, ABI v1). A global aggregation (top-N over a window, a global
+// counter) needs ONE state entry to accumulate into, and state is fetched per
+// record key — so the key has to be constant, and a spec that does that
+// should say so with an operator whose whole job is saying it.
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+      ],
+    },
+  },
+)

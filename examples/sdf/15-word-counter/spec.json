@@ -1,23 +1,41 @@
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
-  "metadata": { "name": "sdf-word-counter" },
+  "metadata": {
+    "name": "sdf-word-counter-top-words"
+  },
   "spec": {
-    "source": { "type": "file", "path": "examples/sdf/15-word-counter/sentences.txt" },
-    "topic": { "name": "sentences" },
-    "state": { "topic": "word-counts" },
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/15-word-counter/sentences.jsonl"
+    },
+    "topic": {
+      "name": "sentence"
+    },
+    "state": {
+      "topic": "top-words"
+    },
     "transforms": [
       {
         "type": "wasm",
-        "module": "_build/wasm/debug/build/apps/operator-wordkeys/operator-wordkeys.wasm",
-        "config": {}
+        "module": "_build/wasm/debug/build/apps/operator-keyconst/operator-keyconst.wasm",
+        "config": {
+          "key": "sentences"
+        }
       },
       {
         "type": "wasm",
-        "module": "_build/wasm/debug/build/apps/operator-counter/operator-counter.wasm",
-        "config": {}
+        "module": "_build/wasm/debug/build/apps/operator-topwords/operator-topwords.wasm",
+        "config": {
+          "sentence_field": "sentence",
+          "time_field": "tst",
+          "window_ms": 20000,
+          "top": 3
+        }
       }
     ],
-    "sink": { "type": "stdout" }
+    "sink": {
+      "type": "stdout"
+    }
   }
 }

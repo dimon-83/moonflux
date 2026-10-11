@@ -1,0 +1,2 @@
+{"window_start":1700000000000,"top_words":[{"word":"the","count":4},{"word":"on","count":2},{"word":"sat","count":2}]}
+{"window_start":1700000020000,"top_words":[{"word":"the","count":4},{"word":"ate","count":2},{"word":"rat","count":2}]}

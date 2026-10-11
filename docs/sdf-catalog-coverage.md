@@ -9,7 +9,7 @@
 
 | 参考条目 | 类别 | 状态 | 我们的案例 | 门禁 / 说明 |
 | :--- | :--- | :--- | :--- | :--- |
-| `dataflows/word-counter` | dataflow | ported | examples/sdf/15-word-counter | p29 腿 16–17（每词运行计数 + 续跑） |
+| `dataflows/word-counter` | dataflow | ported | examples/sdf/15-word-counter | p29 腿 16–17（**20 秒窗口 + 关闭时 flush top-3** = 参考的真实形状；另附计数半的续跑） |
 | `dataflows/word-probe` | dataflow | ported | examples/sdf/16-word-probe | p29 腿 18–19（两条管道共享状态主题；探测零写入） |
 | `dataflows/bank-processing` | dataflow | ported | examples/sdf/17-bank-processing | p29 腿 20–22（参考样本原样；debit/credit 拆分；透支选流） |
 | `dataflows/unreal-engine-analytics` | dataflow | ported | examples/sdf/18-unreal-engine-analytics | p29 腿 23–25（183 事件原样；标签映射；10 秒窗口） |

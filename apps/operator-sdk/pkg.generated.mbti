@@ -36,6 +36,8 @@ pub fn output_len() -> Int
 
 pub fn parse_config(Bytes) -> Result[Map[String, Json], String]
 
+pub fn parse_iso8601_ms(String) -> Result[Int64, String]
+
 pub fn passthrough() -> GuestOperator
 
 pub fn run_buffered(GuestOperator, Bytes) -> Int

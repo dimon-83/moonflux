@@ -325,24 +325,39 @@ grep -q "unsupported" "$WORK/14bad.out" ||
   { cat "$WORK/14bad.out"; fail "case 14: the refusal does not name the unsupported construct"; }
 pass "15. regex: an unsupported construct (lookahead) is refused at apply, by name"
 
-# ---- 16-17. word-counter: keyed state, per-word counts -----------------
-# The stateful case: the words become record keys, and a v3 operator counts
-# them per key. Leg 16 is the byte-exact stream; leg 17 is the state topic
-# (the durable half) plus a second run, which must continue rather than
-# restart. That second run is the whole point of "state lives in a log".
+# ---- 16-17. word-counter: the windowed top-3 flush, and the counting half --
+# The reference's word-counter is a 20-second tumbling window whose FLUSH
+# emits the top three words when the window closes — and its own README says
+# a window closes on a later EVENT ("produce one more record after the
+# 20-second mark"). Leg 16 is that shape, byte for byte, including the proof
+# that a window with nothing after it produces nothing.
 DWC="$WORK/p29-wordcounter"
 "$EXE" pipeline run --data-dir "$DWC" --spec "$EXAMPLES/15-word-counter/spec.json" \
   > "$WORK/16.out" 2> "$WORK/16.err" || { cat "$WORK/16.err"; fail "case 16: word-counter run failed"; }
-check "16 word-counter counts" "$WORK/16.out" "$EXAMPLES/15-word-counter/expected.txt"
-pass "16. word-counter: one running count per word occurrence, byte for byte"
+check "16 window close summaries" "$WORK/16.out" "$EXAMPLES/15-word-counter/expected-summaries.txt"
+[ "$(wc -l < "$WORK/16.out" | tr -d ' ')" = "2" ] ||
+  fail "case 16: expected exactly two summaries (the third window never closes)"
+"$EXE" consume --topic top-words --from 0 --data-dir "$DWC" 2>/dev/null | cut -f3,4 \
+  > "$WORK/16.acc"
+check "16 open window accumulator" "$WORK/16.acc" "$EXAMPLES/15-word-counter/expected-accumulator.txt"
+grep -q "jam:1" "$WORK/16.acc" ||
+  fail "case 16: the still-open window is not in the accumulator"
+pass "16. two windows flushed their top three words on close, and the third is still open (as the reference documents)"
 
-"$EXE" consume --topic word-counts --from 0 --data-dir "$DWC" 2>/dev/null | cut -f3,4 | sort \
+# The counting half: the same words, counted per word with no window. Its
+# first run, its state topic and a second run (which must continue rather
+# than restart) are all frozen.
+DWC2="$WORK/p29-wordcounter-counts"
+"$EXE" pipeline run --data-dir "$DWC2" --spec "$EXAMPLES/15-word-counter/spec-counts.json" \
+  > "$WORK/17.out" 2> "$WORK/17.err" || { cat "$WORK/17.err"; fail "case 17: counting half failed"; }
+check "17 running counts" "$WORK/17.out" "$EXAMPLES/15-word-counter/expected.txt"
+"$EXE" consume --topic word-counts --from 0 --data-dir "$DWC2" 2>/dev/null | cut -f3,4 | sort \
   > "$WORK/17.state"
 check "17 state topic per word" "$WORK/17.state" "$EXAMPLES/15-word-counter/expected-state.txt"
-"$EXE" pipeline run --data-dir "$DWC" --spec "$EXAMPLES/15-word-counter/spec.json" \
-  > "$WORK/17.out" 2> "$WORK/17.err" || { cat "$WORK/17.err"; fail "case 17: second run failed"; }
-check "17 second run continues" "$WORK/17.out" "$EXAMPLES/15-word-counter/expected-second-run.txt"
-pass "17. the state topic holds one entry per word, and the second run continues from it"
+"$EXE" pipeline run --data-dir "$DWC2" --spec "$EXAMPLES/15-word-counter/spec-counts.json" \
+  > "$WORK/17b.out" 2> "$WORK/17b.err" || { cat "$WORK/17b.err"; fail "case 17: second run failed"; }
+check "17 second run continues" "$WORK/17b.out" "$EXAMPLES/15-word-counter/expected-second-run.txt"
+pass "17. the counting half keeps one state entry per word, and its second run continues from the log"
 
 # ---- 18-19. word-probe: the same state, read by another pipeline -------
 # SDF has two services here, the second referencing the first's state. In

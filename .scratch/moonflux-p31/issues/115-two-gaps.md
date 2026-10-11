@@ -1,0 +1,32 @@
+# T116 · 把如实留档的两处补成真能力（P31）
+
+**来源**：收官报告里"需要你留意"的第 1、2 条。目标 = 案例不再是"变通"，而是与参考等价。
+
+## (2) 三处不等价
+
+- [x] **③ 窗口关闭的汇总 flush**（决策 69，2026-10-11）：`apps/operator-topwords` + `apps/operator-keyconst`。
+      判据是**数据**：水位 = 已见最大事件时间，"来了属于更晚窗口的记录"就关闭前一窗（= 参考 README 自己写的
+      "produce one more record after the 20-second mark"）。并列名次按词升序打破（确定性）；迟到记录**按名拒绝**。
+      案例 15 重写为参考的真实形状（20 秒窗口 + flush top-3），五份冻结期望 + 腿 16–17 重写。
+      **同时纠正一处我写错的记录**：我曾在案例 15 的 README 里声称"SDF 在状态更新前跑 `dedupe`"——
+      参考的 `word-counter` 里没有 dedupe，真实差异是**窗口形状**（已补）与两条（迟到拒绝、ASCII 过滤）。
+      顺带把 ISO-8601 解析移进 `apps/operator-sdk`（两个算子共用，避免闰年规则两份实现）。
+- [ ] **① dedupe primitive**：SDF 提供 `dedupe`（按 key 去重），本示例集**没有用到**它——所以它是"SDF 有而我们没有"
+      的能力，不是目录缺口。要做就做成有状态算子（ABI v3：键 = 去重维度，状态 = 已见标记），并按"窗口内去重"
+      定义边界（无 idle 触发器 ⇒ 去重窗口也只随数据推进）。
+- [ ] **② 状态字段级合并**：参考的 `row.update()` 只更新被赋值的字段；我们的状态值由算子整行重写。
+      能力已具备（算子能读到旧值再合并），缺的是**算子与证明**：给 `operator-loadtable` 加 `"merge": true`
+      （只覆盖本记录里出现的字段），并在案例 23 用夹具证明"只更新 temperature 时 sensor 仍存活"。
+
+## (1) pipeline 以主题为源 + 主题汇（缺口 7，架构级）
+
+- [ ] 源：`{"type":"topic","name":"T","from":"beginning"|"end"|N}`；语义 = 流式（追平后 `Quiet`，不假称 `Exhausted`）、
+      起始偏移显式、**与 `spec.topic`/`spec.state.topic` 的环校验**（自己读自己写 = 环，申请即拒）。
+- [ ] 汇：`{"type":"topic","name":"T"}`——转换后的记录写进主题，而不只是 stdout/外部队列。
+- [ ] 影响面：`pipeline run` 的"先 append 再回读"流程对主题源不适用（记录已在主题里，偏移已存在），
+      要按源类型分派；`pipeline apply`/serve 的已应用拓扑与"数据主题"的关系要写清楚。
+- [ ] 案例升级：16（word-probe）、17（bank 的两条流）、23（update-state）、25（hackernews）从
+      "文件夹具 + 共享状态主题"升级为**真正的主题接力**；每例 README 的"替代"段落随之下线。
+- [ ] 门禁：新增 `scripts/e2e-p33-topic-relay.sh`（起点偏移三种、流式不退出、环拒绝、汇后可见、v1 源回归）。
+
+**Status**: 2③ ✅；2①② 与 1 待做。
