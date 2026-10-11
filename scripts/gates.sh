@@ -140,6 +140,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p30-connector-examples.sh" scripts/e2e-p30-connector-examples.sh
   step "e2e-p31-state.sh" scripts/e2e-p31-state.sh
   step "e2e-p32-callout.sh" scripts/e2e-p32-callout.sh
+  step "e2e-p33-topic-relay.sh" scripts/e2e-p33-topic-relay.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh

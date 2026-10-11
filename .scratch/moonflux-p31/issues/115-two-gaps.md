@@ -21,13 +21,13 @@
 
 ## (1) pipeline 以主题为源 + 主题汇（缺口 7，架构级）
 
-- [ ] 源：`{"type":"topic","name":"T","from":"beginning"|"end"|N}`；语义 = 流式（追平后 `Quiet`，不假称 `Exhausted`）、
+- [x] 源：`{"type":"topic","name":"T","from":"beginning"|"end"|N}`（决策 72，2026-10-11）；语义 = 流式（追平后 `Quiet`，不假称 `Exhausted`）、
       起始偏移显式、**与 `spec.topic`/`spec.state.topic` 的环校验**（自己读自己写 = 环，申请即拒）。
-- [ ] 汇：`{"type":"topic","name":"T"}`——转换后的记录写进主题，而不只是 stdout/外部队列。
-- [ ] 影响面：`pipeline run` 的"先 append 再回读"流程对主题源不适用（记录已在主题里，偏移已存在），
-      要按源类型分派；`pipeline apply`/serve 的已应用拓扑与"数据主题"的关系要写清楚。
+- [x] 汇：`{"type":"topic","name":"T"}`——转换后的记录写进主题，而不只是 stdout/外部队列。
+- [x] 影响面：主题源**不复制**（`spec.topic` 必须就是被消费主题，解析器强制）；`pipeline run` 按源类型分派；
+      **跟随者旁路日志缓存**（P16 的"一个进程一个写入者"前提在跟随者身上不成立——实测 bug）。
 - [ ] 案例升级：16（word-probe）、17（bank 的两条流）、23（update-state）、25（hackernews）从
       "文件夹具 + 共享状态主题"升级为**真正的主题接力**；每例 README 的"替代"段落随之下线。
-- [ ] 门禁：新增 `scripts/e2e-p33-topic-relay.sh`（起点偏移三种、流式不退出、环拒绝、汇后可见、v1 源回归）。
+- [x] 门禁：`scripts/e2e-p33-topic-relay.sh` **11 腿**（起点三种、跨进程跟随、三段接力、四条环拒绝、常驻），已入 `gates.sh`（50 步）。
 
-**Status**: 2③ ✅；2①② 与 1 待做。
+**Status**: 2①✅ 2②✅ 2③✅；1 的**能力**✅（案例 16/17/23/25 的接力升级待做）。

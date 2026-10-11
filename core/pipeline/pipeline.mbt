@@ -62,6 +62,11 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
     StdinSource => ("source-runner", "stdin source")
     MqttSource(url) => ("source-runner", "mqtt subscription: \{url}")
     KafkaSource(url) => ("source-runner", "kafka consumer: \{url}")
+    TopicSource(name, from) =>
+      (
+        "source-runner",
+        "topic source: \{name} (from \{from}) — reads this node's own log, no connector",
+      )
   }
   processes.push(Process::{
     name: "source-runner",
@@ -104,6 +109,7 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
     HttpSink(url) => "http sink: \{url}"
     MqttSink(url) => "mqtt publish: \{url}"
     KafkaSink(url) => "kafka publish: \{url}"
+    TopicSink(name) => "topic sink: \{name} — appends to this node's own log"
   }
   processes.push(Process::{
     name: "sink-runner",

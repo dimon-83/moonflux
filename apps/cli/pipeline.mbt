@@ -251,6 +251,106 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
 }
 
 ///|
+
+///|
+/// How many records one read window of a topic source hands the chain. The
+/// chain may split this further (the operator batch cap), and a window that
+/// is too large would simply be a longer pause between sinks.
+let topic_source_window : Int = 256
+
+///|
+/// How long a caught-up topic source waits before re-opening the log to look
+/// for another process's appends. A follower's idle poll costs one tail scan
+/// (recovery), so this is the knob that trades latency for CPU; 100ms is the
+/// same order as the connectors' quiet poll.
+fn topic_source_poll_ms() -> Int {
+  match @env.get_env_var("MOONFLUX_TOPIC_POLL_MS") {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) => if n > 0 { n } else { DEFAULT_TOPIC_POLL_MS }
+        Err(_) => DEFAULT_TOPIC_POLL_MS
+      }
+    None => DEFAULT_TOPIC_POLL_MS
+  }
+}
+
+///|
+const DEFAULT_TOPIC_POLL_MS : Int = 100
+
+///|
+/// Runs the consumption loop for a topic source: read from the pipeline's own
+/// log at a cursor, apply the chain, deliver, advance by the last offset + 1
+/// (P18's rule: records can be missing from a window, so counting records
+/// would re-read).
+///
+/// It never reports Exhausted: catching up on a topic means "nothing new
+/// right now", which is `Quiet` — the same three-state contract the
+/// subscription sources follow (P19). A run therefore streams until it is
+/// stopped, which is what a relay's second half has to do.
+fn topic_source_loop(
+  applied : Applied,
+  sink : @connectors.Sink,
+  chain : Array[CompiledNode],
+  state : StateContext?,
+  data_dir : String,
+  from : String,
+) -> Unit {
+  let name = applied.spec.topic.name
+  let mut log = match open_topic_log_shared(data_dir, name) {
+    Ok(log) => log
+    Err(e) => fail("topic source \{name}: \{e}")
+  }
+  let mut cursor = match from {
+    "beginning" => log.first_offset()
+    "end" => log.high_watermark()
+    _ => {
+      // "offset:<n>" — normalized by the spec parser
+      let text = from[7:from.length()].to_owned()
+      match (try? @string.parse_int(text)) {
+        Ok(n) => n.to_int64()
+        Err(_) => fail("topic source: from=\"\{from}\" is not a position")
+      }
+    }
+  }
+  while true {
+    let end = log.high_watermark()
+    if cursor >= end {
+      // Caught up. The writer is another process, so this handle cannot
+      // learn about new bytes: drop it and open again (see
+      // open_topic_log_shared — a cached follower handle is the bug this
+      // function exists to avoid).
+      cli_sleep_ms(topic_source_poll_ms())
+      log = match open_topic_log_shared(data_dir, name) {
+        Ok(log) => log
+        Err(e) => fail("topic source \{name}: \{e}")
+      }
+      continue
+    }
+    let entries = match log.read(cursor, topic_source_window) {
+      Ok(entries) => entries
+      Err(e) => fail("topic source \{name}: \{e}")
+    }
+    if entries.length() == 0 {
+      cli_sleep_ms(50)
+      continue
+    }
+    let pulled : Array[@protocol.Record] = []
+    for entry in entries {
+      pulled.push(entry.record)
+    }
+    let out_records = match apply_nodes(chain, pulled, state) {
+      Ok(out) => out
+      Err(e) => fail("transform: \{e}")
+    }
+    match (sink.flush)(out_records) {
+      Ok(_) => ()
+      Err(e) => fail("sink \{sink.name}: \{e}")
+    }
+    cursor = entries[entries.length() - 1].offset + 1
+  }
+}
+
+///|
 fn pipeline_run(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
@@ -291,13 +391,22 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   //    which is what makes `pipeline run` a connector process rather
   //    than a one-shot pass, without changing what one-shot sources do.
   let now = @env.now().reinterpret_as_int64()
-  let source = match applied.spec.source {
-    FileSource(path) => @connectors.file_source(path, now)
+  // A topic source is not a connector: the records already live in this
+  // node's log, so there is nothing to pull from the outside world and
+  // nothing to append (the parser requires the source to name this
+  // pipeline's own topic, which is the topic the log below opens).
+  let topic_source : String? = match applied.spec.source {
+    TopicSource(_, from) => Some(from)
+    _ => None
+  }
+  let source : @connectors.Source? = match applied.spec.source {
+    TopicSource(_, _) => None
+    FileSource(path) => Some(@connectors.file_source(path, now))
     HttpSource(url, interval_ms) =>
-      @connectors.http_source(url, now, interval_ms)
-    StdinSource => @connectors.stdin_source(now)
-    MqttSource(url) => @connectors.mqtt_source(url)
-    KafkaSource(url) => @connectors.kafka_source(url)
+      Some(@connectors.http_source(url, now, interval_ms))
+    StdinSource => Some(@connectors.stdin_source(now))
+    MqttSource(url) => Some(@connectors.mqtt_source(url))
+    KafkaSource(url) => Some(@connectors.kafka_source(url))
   }
   // 2. broker: append to the topic log
   let log = match open_topic_log(data_dir, applied.spec.topic.name) {
@@ -310,6 +419,26 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     HttpSink(url) => @connectors.http_sink(url)
     MqttSink(url) => @connectors.mqtt_sink(url)
     KafkaSink(url) => @connectors.kafka_sink(url)
+    TopicSink(name) => {
+      // the first half of a relay: the transformed batch lands in a topic
+      // this node owns, and another pipeline can consume it
+      let sink_log = match open_topic_log(data_dir, name) {
+        Ok(log) => log
+        Err(e) => fail("sink topic \{name}: \{e}")
+      }
+      @connectors.Sink::{
+        name: "topic:\{name}",
+        flush: fn(records) {
+          if records.length() == 0 {
+            return Ok(())
+          }
+          match sink_log.append(records) {
+            Ok(_) => Ok(())
+            Err(e) => Err("\{e}")
+          }
+        },
+      }
+    }
   }
   // 4. state (P30/T114): a pipeline that declares a state topic gets a
   // view of it, rebuilt by replay before the first batch. The topic is the
@@ -321,6 +450,14 @@ fn pipeline_run(argv : Array[String]) -> Unit {
         Ok(ctx) => Some(ctx)
         Err(e) => fail("state \{topic}: \{e}")
       }
+  }
+  match topic_source {
+    Some(from) => topic_source_loop(applied, sink, chain, state, data_dir, from)
+    None => ()
+  }
+  let source = match source {
+    Some(source) => source
+    None => fail("a topic source has no connector to pull from")
   }
   while true {
     let pull = match (source.pull)() {

@@ -67,6 +67,7 @@
 | **宿主侧 HTTP callout**（P30/T115） | ✅ | `{"type":"callout","method":"GET|POST","url":"…{field}…","body":"…","headers":{"Authorization":"Bearer ${VAR}"},"mode":"live|record|replay","cassette":"…","timeout_ms":N}`：`mode` **必填**（确定性是显式选择）；磁带是真实记录的产物，未命中按名拒绝；凭据不进磁带；出站带期限；占位符只认 `{标识符}`；guest 仍无导入。门禁 `scripts/e2e-p32-callout.sh` 9 腿（live 由独立 Python 对端见证、record 产磁带、replay 在**对端已停**时逐字节一致、未命中拒绝、header 出得去且 token 不进磁带、挂住的端点按期限失败、plan 标 `host-io`、无 callout 的管道不回归） |
 | 状态示例（word-counter / word-probe / bank-processing / unreal-engine-analytics / car-processing / helsinki-transit / ny-transit / update-state） | ✅ | `examples/sdf/15-word-counter`（每词运行计数 + 续跑）、`16-word-probe`（**两条管道共享同一条状态主题**：计数写、`operator-probe` 只读且**零写入**）、`17-bank-processing`（参考样本 8 事件原样：`operator-bankevents` 1→2 拆 debit/credit + `operator-balance` 按 iban 累加 → Duncan 770 / Lucy 2610；透支标志 + 选流）；门禁 `e2e-p29-examples.sh` 腿 16–22 |
 | **窗口关闭的 flush**（P31，决策 69） | ✅ | `apps/operator-topwords`：窗口关闭的判据是**来了一条属于更晚窗口的记录**（水位 = 已见最大事件时间 = 输入的函数，**不读时钟**）；关闭那一刻产出一条汇总（top-N，**并列按词升序**保证确定性），窗口内不产出；迟到记录**按名拒绝**（不静默丢弃）；配套 `apps/operator-keyconst`（全局累加器 = 单键，spec 显式声明）。案例 15 与参考逐字节同形，`e2e-p29-examples.sh` 腿 16 |
+| **主题源 / 主题汇**（P31，决策 72） | ✅ | `{"type":"topic","name":"T","from":"beginning\|end\|<offset>"}` 作为源（**不复制**：`spec.topic` 必须就是它）、`{"type":"topic","name":"T"}` 作为汇；主题源是**常驻**的（追平 = `Quiet`，从不 `Exhausted`）；**跟随者旁路日志缓存**（另一进程是写入者）；环校验四条 apply 期按名拒绝。`scripts/e2e-p33-topic-relay.sh` 11 腿 |
 | **`dedupe` primitive**（P31，决策 71） | ✅ | `apps/operator-dedupe`：每个键的第一条通过（1→0）；**期限 = 键的形状**（`keyfield → tumble → dedupe` ⇒ 每窗去重一次，无窗口 ⇒ 永久，且状态上界如实写明）；无键的链在**宿主**处按名拒绝 |
 | 窗口（hopping / 定时器触发 flush） | ⏳ | 未立项：与"算子不读时钟"的红线正面冲突，要做先定义事件时间水位的来源 | 未立项：需要"水位推进才产出"的语义，与"算子不读时钟"的红线冲突，要做就得先定义事件时间水位的来源 |
 | 有状态算子 / 算子间 shuffle（跨节点） | ⏳ | 单机状态已具备（上行）；跨节点状态迁移/再均衡未立项，缺口清单见 [`sdf-examples-port.md`](sdf-examples-port.md) §4 |
@@ -119,7 +120,7 @@
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
 | 日志句柄复用（进程级有界缓存，淘汰安全） | ✅ | `apps/cli/logcache.mbt`：`open_partition_log` 命中即复用；变更经同一句柄故无需失效；`MOONFLUX_LOG_CACHE` 控制上限与 LRU 淘汰；每次真实打开在 stderr 记一行；`scripts/e2e-p16-logcache.sh`（6 腿） |
-| 门禁体系（49 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS，49 步） |
+| 门禁体系（50 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS，50 步） |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

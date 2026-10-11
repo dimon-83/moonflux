@@ -39,6 +39,29 @@ fn open_topic_log(
 }
 
 ///|
+/// Opens a topic log for a FOLLOWER — a pipeline whose source is a topic some
+/// other process writes (P31/T116).
+///
+/// It deliberately does not use the cache, because the cache's safety rests
+/// on a premise that does not hold here: `apps/cli/logcache.mbt` states it as
+/// "one process, one writer … nothing can change a log behind the cache's
+/// back, so nothing needs to invalidate it". A follower's writer IS another
+/// process, so its cached handle would report the end it saw at open and never
+/// see a single appended record (measured: service B read 11 records and then
+/// sat at "caught up" while service A appended four more).
+///
+/// So a follower opens afresh — `open_partition_log_uncached` re-runs recovery,
+/// which is how a log finds its confirmed prefix — and the handle is owned by
+/// the caller for the read that follows. The cost is one tail scan per idle
+/// poll; the poll interval (MOONFLUX_TOPIC_POLL_MS) is the knob.
+fn open_topic_log_shared(
+  data_dir : String,
+  topic : String,
+) -> Result[@log.SegmentedLog, String] {
+  open_partition_log_uncached(data_dir, topic, 0)
+}
+
+///|
 /// How many bytes a segment may hold before the log rolls to a new one
 /// (P8). Configurable because the value is a policy, not a fact: the
 /// storage gate sets it small to exercise rolling with a few records.

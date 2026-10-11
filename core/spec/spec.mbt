@@ -40,6 +40,17 @@ pub(all) enum SourceSpec {
   /// Consume a Kafka topic partition (P20) — an interoperability
   /// endpoint, not a reference system.
   KafkaSource(String)
+  /// Read this node's OWN topic log (P31/T116): the second half of a
+  /// pipeline that hands records to another pipeline. The second String is
+  /// the starting position, normalized at parse time to "beginning",
+  /// "end", or "offset:<n>".
+  ///
+  /// A run is NOT a consumer-group member: it starts where the spec says
+  /// every time, and progress is not committed anywhere. That is the honest
+  /// boundary of this feature — durable progress belongs to groups (P9), and
+  /// inventing a second progress store here would be a second answer to a
+  /// question that already has one.
+  TopicSource(String, String)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -113,6 +124,10 @@ pub(all) enum SinkSpec {
   MqttSink(String)
   /// Publish each batch to a Kafka topic partition (P20).
   KafkaSink(String)
+  /// Append each transformed batch to this node's own topic log (P31/T116)
+  /// — what makes a pipeline the first half of a relay rather than a
+  /// terminal consumer.
+  TopicSink(String)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -459,7 +474,7 @@ fn parse_body(
       reject_unknown_keys(
         "$.spec.source",
         src,
-        ["type", "path", "url", "interval_ms"],
+        ["type", "path", "url", "interval_ms", "name", "from"],
         errors,
       )
       match (src.get("type"), src.get("path"), src.get("url")) {
@@ -497,6 +512,31 @@ fn parse_body(
           None
         }
         (Some(String("stdin")), _, _) => Some(StdinSource)
+        (Some(String("topic")), _, _) =>
+          match (src.get("name"), src.get("from")) {
+            (Some(String(name)), from) =>
+              if !valid_topic_name(name) {
+                errors.push(SpecError::{
+                  path: "$.spec.source.name",
+                  code: "bad-name",
+                  message: "must be 1..128 of [a-z0-9._-] (ASCII)",
+                })
+                None
+              } else {
+                match normalize_topic_from(from, errors) {
+                  Some(from) => Some(TopicSource(name, from))
+                  None => None
+                }
+              }
+            (_, _) => {
+              errors.push(SpecError::{
+                path: "$.spec.source.name",
+                code: "missing-field",
+                message: "topic sources require a name (the topic to read)",
+              })
+              None
+            }
+          }
         (Some(String("mqtt")), _, Some(String(url))) =>
           if mqtt_url_ok(url) {
             Some(MqttSource(url))
@@ -974,9 +1014,31 @@ fn parse_body(
   // sink
   let sink : SinkSpec? = match body.get("sink") {
     Some(Object(sk)) => {
-      reject_unknown_keys("$.spec.sink", sk, ["type", "url"], errors)
+      reject_unknown_keys("$.spec.sink", sk, ["type", "url", "name"], errors)
       match (sk.get("type"), sk.get("url")) {
         (Some(String("stdout")), _) => Some(StdoutSink)
+        (Some(String("topic")), _) =>
+          match sk.get("name") {
+            Some(String(name)) =>
+              if valid_topic_name(name) {
+                Some(TopicSink(name))
+              } else {
+                errors.push(SpecError::{
+                  path: "$.spec.sink.name",
+                  code: "bad-name",
+                  message: "must be 1..128 of [a-z0-9._-] (ASCII)",
+                })
+                None
+              }
+            _ => {
+              errors.push(SpecError::{
+                path: "$.spec.sink.name",
+                code: "missing-field",
+                message: "topic sinks require a name (the topic to write)",
+              })
+              None
+            }
+          }
         (Some(String("http")), Some(String(url))) =>
           if url.has_prefix("http://") && url.length() > 7 {
             Some(HttpSink(url))
@@ -1062,10 +1124,111 @@ fn parse_body(
     }
   }
   match (source, topic, sink) {
-    (Some(source), Some(topic), Some(sink)) =>
-      Some((source, transforms, topic, sink, parse_state(body, topic, errors)))
+    (Some(source), Some(topic), Some(sink)) => {
+      let state = parse_state(body, topic, errors)
+      check_topic_wiring(source, topic, sink, state, errors)
+      Some((source, transforms, topic, sink, state))
+    }
     (_, _, _) => None
   }
+}
+
+///|
+/// Normalizes a topic source's `from` field. Absent means "beginning" (read
+/// the log as it is, which is what makes a relay deterministic on a fresh
+/// data dir). Accepted: "beginning", "end", or a non-negative offset as a
+/// JSON number.
+fn normalize_topic_from(from : Json?, errors : Array[SpecError]) -> String? {
+  match from {
+    None => Some("beginning")
+    Some(String("beginning")) => Some("beginning")
+    Some(String("end")) => Some("end")
+    Some(Number(n)) =>
+      if n < 0.0 || n.to_int64().to_double() != n {
+        errors.push(SpecError::{
+          path: "$.spec.source.from",
+          code: "bad-value",
+          message: "an offset must be a non-negative whole number",
+        })
+        None
+      } else {
+        Some("offset:\{n.to_int64()}")
+      }
+    Some(_) => {
+      errors.push(SpecError::{
+        path: "$.spec.source.from",
+        code: "bad-value",
+        message: "from must be \"beginning\", \"end\", or a non-negative offset",
+      })
+      None
+    }
+  }
+}
+
+///|
+/// The cross-field rules that make a topic wiring a wiring rather than a
+/// pile of fields (P31/T116). They live here, in the one parser both
+/// `pipeline apply` and `pipeline run` go through, so a spec cannot be
+/// accepted by one and refused by the other.
+///
+/// The rules, and why each is not optional:
+///
+///   * a topic SOURCE must name the same topic as `$.spec.topic`. The
+///     applied topology is what `consume --remote` replays over a topic, so
+///     if a pipeline consumed one topic and declared another, the applied
+///     view would describe traffic the pipeline never saw. It also kills the
+///     copy: reading a topic and appending the same records to another one
+///     would double the data for no reason.
+///   * the SINK topic must differ from the source/data topic (that is a
+///     ring: a pipeline that writes what it reads runs forever), from the
+///     state topic (an operator's memory is not a data topic), and vice
+///     versa.
+fn check_topic_wiring(
+  source : SourceSpec,
+  topic : TopicSpec,
+  sink : SinkSpec,
+  state : String?,
+  errors : Array[SpecError],
+) -> Unit {
+  match source {
+    TopicSource(name, _) =>
+      if name != topic.name {
+        errors.push(SpecError::{
+          path: "$.spec.source.name",
+          code: "bad-value",
+          message: "a topic source must name the pipeline's own topic (\"\{topic.name}\"); a pipeline whose applied topology described a different topic than it read would describe traffic it never saw",
+        })
+      }
+    _ => ()
+  }
+  match sink {
+    TopicSink(name) => {
+      if name == topic.name {
+        errors.push(SpecError::{
+          path: "$.spec.sink.name",
+          code: "bad-value",
+          message: "a ring: the sink topic is also the pipeline's source/data topic",
+        })
+      }
+      match state {
+        Some(state_topic) =>
+          if name == state_topic {
+            errors.push(SpecError::{
+              path: "$.spec.sink.name",
+              code: "bad-value",
+              message: "the sink topic is the state topic; an operator's memory is not a data topic",
+            })
+          }
+        None => ()
+      }
+    }
+    _ => ()
+  }
+  // "state == source" needs no rule of its own: a topic source must name the
+  // pipeline's own topic (above), so state == source IS state == data topic,
+  // which parse_state already refuses. A rule that can never fire would be a
+  // lie about what this function covers — the gate keeps the case and asserts
+  // the message that actually fires.
 }
 
 ///|
