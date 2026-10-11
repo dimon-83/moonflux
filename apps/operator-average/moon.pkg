@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-average: a running average per key as keyed state (wasm
+// guest, ABI v1 + v3). SDF computes these with SQL over a windowed table
+// ("average tips per zone", "average speed per vehicle"); the arithmetic is
+// the same aggregation, kept where state lives (P30/T114).
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/string",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_state_abi_version",
+        "mf_op_state_apply",
+      ],
+    },
+  },
+)

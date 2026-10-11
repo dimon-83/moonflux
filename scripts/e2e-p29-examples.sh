@@ -48,6 +48,14 @@
 #                  selections that add up to the speeding set
 #  28  car           30-second colour windows: ISO-8601 event
 #                  time, one state entry per colour@window
+#  30  helsinki      incomplete events are dropped, and the rest
+#                  average per vehicle per 5-second window
+#  32  ny-transit    average tip per pickup zone per 30-second
+#                  window, over TLC-shaped trip records
+#  33  ny-transit    the average's state is sum,count, so the
+#                  running mean can be checked by hand
+#  31  helsinki      the state is sum,count (not a self-referential
+#                  average), so the arithmetic can be checked
 #  29  car           a registered plate on a different car is a
 #                  stolen plate, and the check writes nothing
 #  25  unreal        10-second tumbling counts: the same label
@@ -448,4 +456,43 @@ diff -u "$WORK/29.table" "$WORK/29.after" ||
   fail "case 29: the stolen-plate check wrote to the table it was checking"
 pass "29. one plate registered to a different car is reported, and the read-only check left the table untouched"
 
-echo "E2E-P29-EXAMPLES: 29 legs green (19 case specs across 19 example applications)"
+# ---- 30-31. helsinki-transit: clean, then average per vehicle window ---
+# The fixture's first record is the reference package's own sample event
+# (vehicle 1271, route 1040, speed 8.09); three of the ten are incomplete
+# (missing speed / lat / long) because dropping those is clean-events' job.
+DHEL="$WORK/p29-helsinki"
+"$EXE" pipeline run --data-dir "$DHEL" --spec "$EXAMPLES/20-helsinki-transit/spec-vehicle-stats.json" \
+  > "$WORK/30.stream" 2> "$WORK/30.err" || { cat "$WORK/30.err"; fail "case 30: helsinki run failed"; }
+check "30 vehicle-speed stream" "$WORK/30.stream" "$EXAMPLES/20-helsinki-transit/expected-stream.txt"
+[ "$(wc -l < "$WORK/30.stream" | tr -d ' ')" = "7" ] ||
+  fail "case 30: expected 7 records out of 10 (three incomplete events must be dropped)"
+grep -q "avg_speed" "$WORK/30.stream" || fail "case 30: the average field is missing"
+pass "30. the three incomplete events are dropped and the other seven get a running average per vehicle@window"
+
+"$EXE" consume --topic vehicle-speed --from 0 --data-dir "$DHEL" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/31.state"
+check "31 vehicle window state" "$WORK/31.state" "$EXAMPLES/20-helsinki-transit/expected-state.txt"
+grep -q "^1271@1748558765000	27.41,2$" "$WORK/31.state" ||
+  fail "case 31: the state is not sum,count for the two-sample window (expected 27.41,2)"
+pass "31. the state keeps sum and count (27.41,2), which is why 11.5 then 13.705 can be checked by hand"
+
+# ---- 32-33. ny-transit: average tip per pickup zone, 30-second windows --
+# TLC-shaped trip records (the reference links the public dataset's schema;
+# the fixture follows it and carries UTC instants, because our windows refuse
+# to invent an offset for a naive local timestamp).
+DNY="$WORK/p29-ny-transit"
+"$EXE" pipeline run --data-dir "$DNY" --spec "$EXAMPLES/21-ny-transit/spec-pu-tips.json" \
+  > "$WORK/32.stream" 2> "$WORK/32.err" || { cat "$WORK/32.err"; fail "case 32: ny-transit run failed"; }
+check "32 zone tip averages" "$WORK/32.stream" "$EXAMPLES/21-ny-transit/expected-stream.txt"
+grep -q '"key":"ZoneA@' "$WORK/32.stream" || fail "case 32: the zone window key is missing"
+grep -q '"avg_tip"' "$WORK/32.stream" || fail "case 32: the average field is missing"
+pass "32. eight trips land in their zone@30s windows and report the running average tip"
+
+"$EXE" consume --topic pu-tips --from 0 --data-dir "$DNY" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/33.state"
+check "33 zone window state" "$WORK/33.state" "$EXAMPLES/21-ny-transit/expected-state.txt"
+grep -q "^ZoneA@1710432750000	8,2$" "$WORK/33.state" ||
+  fail "case 33: the state is not sum,count for the two-trip zone window (expected 8,2)"
+pass "33. the state keeps sum and count (8,2), which is why the running 3 then 4 can be checked by hand"
+
+echo "E2E-P29-EXAMPLES: 33 legs green (21 case specs across 21 example applications)"

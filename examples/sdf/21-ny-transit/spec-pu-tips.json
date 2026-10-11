@@ -1,0 +1,49 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-ny-transit-pu-tips"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/21-ny-transit/trips.jsonl"
+    },
+    "topic": {
+      "name": "trips"
+    },
+    "state": {
+      "topic": "pu-tips"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "PULocationID"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-tumble/operator-tumble.wasm",
+        "config": {
+          "window_ms": 30000,
+          "time_field": "dropoff_datetime",
+          "time_format": "iso8601"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-average/operator-average.wasm",
+        "config": {
+          "field": "tips",
+          "emit": "avg_tip",
+          "count_field": "trips"
+        }
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

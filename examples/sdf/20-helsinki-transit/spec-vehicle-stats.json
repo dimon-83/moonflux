@@ -1,0 +1,78 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-helsinki-vehicle-stats"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/20-helsinki-transit/events.jsonl"
+    },
+    "topic": {
+      "name": "transit-events"
+    },
+    "state": {
+      "topic": "vehicle-speed"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-predicate/operator-predicate.wasm",
+        "config": {
+          "field": "lat",
+          "op": "ge",
+          "value": -90,
+          "missing": "drop"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-predicate/operator-predicate.wasm",
+        "config": {
+          "field": "long",
+          "op": "ge",
+          "value": -180,
+          "missing": "drop"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-predicate/operator-predicate.wasm",
+        "config": {
+          "field": "speed",
+          "op": "ge",
+          "value": 0,
+          "missing": "drop"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "vehicle"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-tumble/operator-tumble.wasm",
+        "config": {
+          "window_ms": 5000,
+          "time_field": "tst",
+          "time_format": "iso8601"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-average/operator-average.wasm",
+        "config": {
+          "field": "speed",
+          "emit": "avg_speed"
+        }
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

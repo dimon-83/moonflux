@@ -1,0 +1,8 @@
+{"key":"ZoneA@1710432750000","avg_tip":3,"trips":1}
+{"key":"ZoneA@1710432750000","avg_tip":4,"trips":2}
+{"key":"ZoneB@1710432750000","avg_tip":6.5,"trips":1}
+{"key":"ZoneA@1710432780000","avg_tip":2.5,"trips":1}
+{"key":"ZoneC@1710432780000","avg_tip":4,"trips":1}
+{"key":"ZoneB@1710432810000","avg_tip":0,"trips":1}
+{"key":"ZoneA@1710432810000","avg_tip":7.5,"trips":1}
+{"key":"ZoneC@1710432840000","avg_tip":1.5,"trips":1}
