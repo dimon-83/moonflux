@@ -1,0 +1,5 @@
+jump	113
+other	16
+sample_location	38
+session_end	8
+session_start	8

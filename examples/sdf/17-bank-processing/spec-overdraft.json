@@ -1,11 +1,20 @@
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
-  "metadata": { "name": "sdf-bank-overdraft" },
+  "metadata": {
+    "name": "sdf-bank-overdraft"
+  },
   "spec": {
-    "source": { "type": "file", "path": "examples/sdf/17-bank-processing/events-overdraft.jsonl" },
-    "topic": { "name": "business-events-overdraft" },
-    "state": { "topic": "account-balance-overdraft" },
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/17-bank-processing/events-overdraft.jsonl"
+    },
+    "topic": {
+      "name": "business-events-overdraft"
+    },
+    "state": {
+      "topic": "account-balance-overdraft"
+    },
     "transforms": [
       {
         "type": "wasm",
@@ -19,10 +28,16 @@
       },
       {
         "type": "wasm",
-        "module": "_build/wasm/debug/build/apps/operator-filter/operator-filter.wasm",
-        "config": { "contains": "\"overdraft\":true" }
+        "module": "_build/wasm/debug/build/apps/operator-predicate/operator-predicate.wasm",
+        "config": {
+          "field": "overdraft",
+          "op": "eq",
+          "value": true
+        }
       }
     ],
-    "sink": { "type": "stdout" }
+    "sink": {
+      "type": "stdout"
+    }
   }
 }

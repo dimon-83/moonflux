@@ -39,21 +39,13 @@ let state : BalanceState = BalanceState::{ commit: true, }
 ///|
 /// Reads one integer field out of a delta record's JSON value.
 fn delta_of(value : Bytes) -> Result[(String, Int, String, String), String] {
-  let text = @utf8.decode_lossy(value[0:value.length()])
-  let parsed = match (try? @json.parse(text)) {
-    Ok(json) => json
-    Err(_) => return Err("balance record is not JSON")
+  let iban = match @sdk.json_field(value, "iban") {
+    Ok(Some(@sdk.ScalarText(text))) => text
+    Ok(_) => return Err("balance record has no iban")
+    Err(e) => return Err(e)
   }
-  let obj = match parsed {
-    Object(obj) => obj
-    _ => return Err("balance record is not a JSON object")
-  }
-  let iban = match obj.get("iban") {
-    Some(String(s)) => s
-    _ => return Err("balance record has no iban")
-  }
-  let delta = match obj.get("delta") {
-    Some(Number(d)) => {
+  let delta = match @sdk.json_field(value, "delta") {
+    Ok(Some(@sdk.ScalarNumber(d))) => {
       let n = d.to_int64()
       if n.to_double() != d {
         return Err(
@@ -62,14 +54,15 @@ fn delta_of(value : Bytes) -> Result[(String, Int, String, String), String] {
       }
       n.to_int()
     }
-    _ => return Err("balance record has no numeric delta")
+    Ok(_) => return Err("balance record has no numeric delta")
+    Err(e) => return Err(e)
   }
-  let operation = match obj.get("operation") {
-    Some(String(s)) => s
+  let operation = match @sdk.json_field(value, "operation") {
+    Ok(Some(@sdk.ScalarText(text))) => text
     _ => "Unknown"
   }
-  let txid = match obj.get("txid") {
-    Some(String(s)) => s
+  let txid = match @sdk.json_field(value, "txid") {
+    Ok(Some(@sdk.ScalarText(text))) => text
     _ => ""
   }
   Ok((iban, delta, operation, txid))

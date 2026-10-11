@@ -4,6 +4,7 @@
 // lines: only moonbitlang/core, no IO.
 
 import {
+  "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "moonflux/core/operator",

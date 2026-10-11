@@ -24,6 +24,8 @@ pub fn encode_output(Array[@protocol.Record]) -> Bytes
 
 pub fn identity() -> GuestOperator
 
+pub fn json_field(Bytes, String) -> Result[JsonScalar?, String]
+
 pub fn last_error_bytes() -> Bytes
 
 pub fn last_error_text() -> String
@@ -70,6 +72,13 @@ pub(all) struct GuestStatefulOperator {
   name : String
   process : (Array[@operator.StateEntry], Array[@protocol.Record]) -> Result[(Array[@operator.StateEntry], Array[@protocol.Record]), String]
 }
+
+pub(all) enum JsonScalar {
+  ScalarText(String)
+  ScalarNumber(Double)
+  ScalarBool(Bool)
+  ScalarNull
+} derive(Eq, @debug.Debug)
 
 pub(all) enum ScalarKind {
   KStr

@@ -53,40 +53,34 @@ let state : TumbleState = TumbleState::{
 /// non-number is a named refusal: silently windowing on the read-time
 /// timestamp would produce plausible-looking wrong buckets.
 fn field_int64(value : Bytes, field : String) -> Result[Int64, String] {
-  let text = @utf8.decode_lossy(value[0:value.length()])
-  let parsed = match (try? @json.parse(text)) {
-    Ok(json) => json
-    Err(_) => return Err("value is not JSON, so \{field} cannot be read")
-  }
-  let obj = match parsed {
-    Object(obj) => obj
-    _ => return Err("value is not a JSON object, so \{field} cannot be read")
-  }
-  match obj.get(field) {
-    Some(Number(d)) => Ok(d.to_int64())
-    Some(_) => Err("field \{field} is not a number")
-    None => Err("field \{field} is missing from the value")
+  match @sdk.json_field(value, field) {
+    Ok(Some(@sdk.ScalarNumber(d))) => {
+      let n = d.to_int64()
+      if n.to_double() == d {
+        Ok(n)
+      } else {
+        Err("field \{field} is not a whole number of milliseconds")
+      }
+    }
+    Ok(Some(@sdk.ScalarText(_text))) =>
+      Err("field \{field} is text, not a number")
+    Ok(Some(_)) => Err("field \{field} is not a number")
+    Ok(None) => Err("field \{field} is missing from the value")
+    Err(e) => Err(e)
   }
 }
 
 ///|
-/// Reads a text JSON field out of a record's value (a key that lives in the
+/// Reads a text field out of a record's value (a key that lives in the
 /// payload rather than in the record key).
 fn field_text(value : Bytes, field : String) -> Result[String, String] {
-  let text = @utf8.decode_lossy(value[0:value.length()])
-  let parsed = match (try? @json.parse(text)) {
-    Ok(json) => json
-    Err(_) => return Err("value is not JSON, so \{field} cannot be read")
-  }
-  let obj = match parsed {
-    Object(obj) => obj
-    _ => return Err("value is not a JSON object, so \{field} cannot be read")
-  }
-  match obj.get(field) {
-    Some(String(s)) => Ok(s)
-    Some(Number(d)) => Ok(d.to_int64().to_string())
-    Some(_) => Err("field \{field} is not text")
-    None => Err("field \{field} is missing from the value")
+  match @sdk.json_field(value, field) {
+    Ok(Some(@sdk.ScalarText(text))) => Ok(text)
+    Ok(Some(@sdk.ScalarNumber(d))) => Ok(d.to_int64().to_string())
+    Ok(Some(@sdk.ScalarBool(b))) => Ok(b.to_string())
+    Ok(Some(@sdk.ScalarNull)) => Err("field \{field} is null")
+    Ok(None) => Err("field \{field} is missing from the value")
+    Err(e) => Err(e)
   }
 }
 

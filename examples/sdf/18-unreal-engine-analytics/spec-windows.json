@@ -1,0 +1,52 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-unreal-windows"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/18-unreal-engine-analytics/events-windowed.jsonl"
+    },
+    "topic": {
+      "name": "analytics-events-windowed"
+    },
+    "state": {
+      "topic": "event-window-counts"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "event_name",
+          "map": {
+            "AnalyticsSessionStart": "session_start",
+            "AnalyticsSessionEnd": "session_end",
+            "jump": "jump",
+            "sampleLocation": "sample_location",
+            "mapFault": "map_fault"
+          },
+          "default": "other"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-tumble/operator-tumble.wasm",
+        "config": {
+          "window_ms": 10000,
+          "time_field": "ts"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-counter/operator-counter.wasm",
+        "config": {}
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

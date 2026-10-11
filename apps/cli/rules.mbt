@@ -193,6 +193,64 @@ fn compile_node(
 ///|
 /// Applies a compiled chain over a batch. mbel nodes run per record,
 /// wasm nodes run per batch (their ABI v1 envelope IS a batch).
+
+///|
+/// How many records one operator call may carry. Fuel is a PER-CALL budget
+/// (decision 33: it is the enforced meter, and a clock is not), so the host
+/// must not hand a guest an unbounded batch. Measured while porting the
+/// Unreal Engine counter: a JSON-reading operator cost ~312k instructions
+/// per record at the time, i.e. ~160 records reached the internal tier's
+/// 50M — so the cap is 128, which leaves headroom for the same work on
+/// slightly bigger values.
+///
+/// This is a policy knob, not a semantic claim. Operators must never assume
+/// a whole pull arrives in one call: a file read already arrives as one
+/// batch and an HTTP poll as smaller ones, so a batch boundary inside a pull
+/// is the same kind of boundary the platform has everywhere else.
+fn op_batch_records() -> Int {
+  match @env.get_env_var("MOONFLUX_OP_BATCH_RECORDS") {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) => if n > 0 { n } else { DEFAULT_OP_BATCH_RECORDS }
+        Err(_) => DEFAULT_OP_BATCH_RECORDS
+      }
+    None => DEFAULT_OP_BATCH_RECORDS
+  }
+}
+
+///|
+/// Splits a batch into call-sized pieces (at least one, so an empty batch
+/// still makes exactly one call — "no records" is a valid batch).
+fn op_batches(
+  records : Array[@protocol.Record],
+) -> Array[Array[@protocol.Record]] {
+  let cap = op_batch_records()
+  let out : Array[Array[@protocol.Record]] = []
+  if records.length() == 0 {
+    out.push([])
+    return out
+  }
+  let mut i = 0
+  while i < records.length() {
+    let end = if i + cap > records.length() {
+      records.length()
+    } else {
+      i + cap
+    }
+    let piece : Array[@protocol.Record] = []
+    for k in i..<end {
+      piece.push(records[k])
+    }
+    out.push(piece)
+    i = end
+  }
+  out
+}
+
+///|
+const DEFAULT_OP_BATCH_RECORDS : Int = 128
+
+///|
 fn apply_nodes(
   nodes : Array[CompiledNode],
   records : Array[@protocol.Record],
@@ -219,25 +277,29 @@ fn apply_nodes(
               "a stateful operator needs a state topic: add \"state\": {\"topic\": \"...\"} to the spec (a fetch path has nowhere to keep state)",
             )
         }
-        let keys = match state_batch_keys(current) {
-          Ok(keys) => keys
-          Err(e) => return Err(e)
-        }
-        // the batch is one transaction: state in, records and state out
-        let payload = @operator.encode_state_payload(
-          ctx.entries_for(keys),
-          current,
-        )
-        match (instance.process_state)(payload) {
-          Ok((updates, out)) => {
-            match ctx.apply(updates) {
-              Ok(_) => ()
-              Err(e) => return Err(e)
-            }
-            current = out
+        let mut collected : Array[@protocol.Record] = []
+        for piece in op_batches(current) {
+          let keys = match state_batch_keys(piece) {
+            Ok(keys) => keys
+            Err(e) => return Err(e)
           }
-          Err(e) => return Err("wasm: \{e}")
+          // one piece is one transaction: state in, records and state out
+          let payload = @operator.encode_state_payload(
+            ctx.entries_for(keys),
+            piece,
+          )
+          match (instance.process_state)(payload) {
+            Ok((updates, out)) => {
+              match ctx.apply(updates) {
+                Ok(_) => ()
+                Err(e) => return Err(e)
+              }
+              collected = collected + out
+            }
+            Err(e) => return Err("wasm: \{e}")
+          }
         }
+        current = collected
       }
       Regex(re, invert) => {
         // a filter is a shorter batch (the same shape the sandbox
@@ -251,26 +313,30 @@ fn apply_nodes(
         }
         current = out
       }
-      Wasm(instance) =>
-        match (instance.process)(current) {
-          Ok(out) => {
-            current = out
-            // the wall clock is reported, not enforced (README 决策
-            // 33): a call over its tier's hint is worth saying out
-            // loud, and killing it would make the same batch pass or
-            // fail by machine load
-            match (instance.last_call_ms)() {
-              Some(elapsed) =>
-                if @operator.over_time_hint(Internal, elapsed) {
-                  note(
-                    "warning: operator call took \{elapsed}ms (internal hint \{@operator.call_timeout_hint_ms(Internal)}ms); fuel is the enforced budget",
-                  )
-                }
-              None => ()
-            }
+      Wasm(instance) => {
+        // fuel is a per-call budget, so the host bounds the call: one pull
+        // may be several calls (README 决策 63)
+        let mut collected : Array[@protocol.Record] = []
+        for piece in op_batches(current) {
+          match (instance.process)(piece) {
+            Ok(out) => collected = collected + out
+            Err(e) => return Err("wasm: \{e}")
           }
-          Err(e) => return Err("wasm: \{e}")
         }
+        current = collected
+        // the wall clock is reported, not enforced (README 决策 33): a
+        // call over its tier's hint is worth saying out loud, and killing
+        // it would make the same batch pass or fail by machine load
+        match (instance.last_call_ms)() {
+          Some(elapsed) =>
+            if @operator.over_time_hint(Internal, elapsed) {
+              note(
+                "warning: operator call took \{elapsed}ms (internal hint \{@operator.call_timeout_hint_ms(Internal)}ms); fuel is the enforced budget",
+              )
+            }
+          None => ()
+        }
+      }
       Scalar(name, instance, max_calls) => {
         // v2 (P26): one evaluation per record — the record's value
         // crosses as a string (the design's record-mapping boundary;

@@ -38,6 +38,12 @@
 #                  sample events, byte for byte
 #  21  bank          the state topic converges to one balance
 #                  per account
+#  23  unreal        per-label event counts over the reference's
+#                  own 183-event sample, byte for byte
+#  24  unreal        the label table's catch-all: beginPlay and
+#                  endPlay both land in `other`
+#  25  unreal        10-second tumbling counts: the same label
+#                  in two windows is two state entries
 #  22  bank          an overdrawing withdrawal is flagged and
 #                  selected into its own stream
 #  19  word-probe   the probe writes nothing (state record
@@ -356,4 +362,35 @@ grep -q '"overdraft":true' "$WORK/22.overdraft" || fail "case 22: the overdraft 
 grep -q '"balance":-130' "$WORK/22.overdraft" || fail "case 22: the overdrawn balance is wrong"
 pass "22. an overdrawing withdrawal is flagged and selected: one line, balance -130"
 
-echo "E2E-P29-EXAMPLES: 22 legs green (17 case specs across 17 example applications)"
+# ---- 23-25. unreal-engine-analytics: labels, and 10-second windows ----
+# The reference's own 183-event sample, verbatim. Its windowed dataflow
+# reads a CLOCK to stamp records; our transforms do not (kernel red line),
+# so the windowed fixture carries event time instead — that is why leg 25
+# uses events-windowed.jsonl (the same events plus `ts`).
+DUE="$WORK/p29-unreal"
+"$EXE" pipeline run --data-dir "$DUE" --spec "$EXAMPLES/18-unreal-engine-analytics/spec-counters.json" \
+  > "$WORK/23.counts" 2> "$WORK/23.err" || { cat "$WORK/23.err"; fail "case 23: unreal counters failed"; }
+check "23 per-event count stream" "$WORK/23.counts" "$EXAMPLES/18-unreal-engine-analytics/expected-counters.txt"
+"$EXE" consume --topic event-counts --from 0 --data-dir "$DUE" 2>/dev/null \
+  | awk -F'	' '{last[$3]=$4} END {for (k in last) print k"\t"last[k]}' | sort > "$WORK/23.final"
+check "23 final label counts" "$WORK/23.final" "$EXAMPLES/18-unreal-engine-analytics/expected-final-counts.txt"
+pass "23. every event of the reference's own sample counted under its label, byte for byte"
+
+grep -q "^other	16$" "$WORK/23.final" ||
+  fail "case 24: the label table's catch-all did not collect beginPlay/endPlay (expected other=16)"
+grep -qE "^jump	113$" "$WORK/23.final" || fail "case 24: jump is not 113"
+grep -qE "^(beginPlay|endPlay)	" "$WORK/23.final" &&
+  fail "case 24: an unmapped name became its own label instead of falling into the default"
+pass "24. unmapped event names fall into \`other\` (beginPlay + endPlay = 16), not into labels of their own"
+
+DUW="$WORK/p29-unreal-window"
+"$EXE" pipeline run --data-dir "$DUW" --spec "$EXAMPLES/18-unreal-engine-analytics/spec-windows.json" \
+  > "$WORK/25.windows" 2> "$WORK/25.err" || { cat "$WORK/25.err"; fail "case 25: unreal windows failed"; }
+check "25 windowed count stream" "$WORK/25.windows" "$EXAMPLES/18-unreal-engine-analytics/expected-windows.txt"
+"$EXE" consume --topic event-window-counts --from 0 --data-dir "$DUW" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/25.state"
+check "25 window state entries" "$WORK/25.state" "$EXAMPLES/18-unreal-engine-analytics/expected-window-state.txt"
+grep -q "@1700000000000" "$WORK/25.state" || fail "case 25: the window start is not visible in the state key"
+pass "25. 10-second tumbling windows: the same label in two windows is two independent state entries"
+
+echo "E2E-P29-EXAMPLES: 25 legs green (18 case specs across 18 example applications)"

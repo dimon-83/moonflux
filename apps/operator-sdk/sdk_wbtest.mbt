@@ -203,3 +203,48 @@ test "a malformed state payload is refused before the guest runs" {
   assert_eq(run_stateful(never, input), 1)
   assert_true(last_error_text().contains("state payload"))
 }
+
+///|
+test "json_field reads a top-level scalar without parsing the document" {
+  let line = @utf8.encode(
+    "{\"event_name\":\"jump\",\"attributes\":[{\"key\":\"event_name\",\"val\":\"trap\"}],\"ts\":1234,\"ok\":true,\"note\":null}",
+  )
+  assert_eq(json_field(line, "event_name"), Ok(Some(ScalarText("jump"))))
+  // a key that only exists INSIDE a nested value is absent at the top
+  // level — `Ok(None)`, not the nested occurrence. This is the assertion
+  // that a substring search would fail: the text `"val"` is right there.
+  assert_eq(json_field(line, "val"), Ok(None))
+  assert_true(json_field(line, "key") is Ok(None))
+  assert_eq(json_field(line, "ts"), Ok(Some(ScalarNumber(1234.0))))
+  assert_eq(json_field(line, "ok"), Ok(Some(ScalarBool(true))))
+  assert_eq(json_field(line, "note"), Ok(Some(ScalarNull)))
+  assert_eq(json_field(line, "absent"), Ok(None))
+  assert_eq(
+    json_field(line, "attributes"),
+    Err("field attributes is not a scalar"),
+  )
+}
+
+///|
+test "json_field decodes escapes and refuses malformed input" {
+  let escaped = @utf8.encode(
+    "{\"a\":\"quote \\\" tab\\t unicode \\u00e9 pair \\ud83d\\ude00\",\"b\":\"tail\"}",
+  )
+  match json_field(escaped, "a") {
+    Ok(Some(ScalarText(s))) => {
+      assert_true(s.contains("quote \" tab\t unicode"))
+      assert_true(s.contains("pair "))
+      assert_false(s.contains("tail"))
+    }
+    _ => abort("escaped string: unexpected shape")
+  }
+  assert_eq(json_field(escaped, "b"), Ok(Some(ScalarText("tail"))))
+  // malformed inputs are errors, never a guess
+  assert_true(json_field(@utf8.encode("[1,2]"), "a") is Err(_))
+  assert_true(json_field(@utf8.encode("{"), "a") is Err(_))
+  assert_true(json_field(@utf8.encode("{\"a\":"), "a") is Err(_))
+  assert_true(json_field(@utf8.encode("{\"a\":\"unterminated"), "a") is Err(_))
+  assert_true(json_field(@utf8.encode("{\"a\":\"\\ud83d\"}"), "a") is Err(_))
+  assert_true(json_field(@utf8.encode("{\"a\":\"\\q\"}"), "a") is Err(_))
+  assert_true(json_field(@utf8.encode("{\"a\":nope}"), "a") is Err(_))
+}

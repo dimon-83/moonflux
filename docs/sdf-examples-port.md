@@ -28,6 +28,7 @@
 | 5 | [`05-split-two-streams`](../examples/sdf/05-split-two-streams/) | `primitives/split/filter` | **两条入口 spec**（各一个过滤分支、各自主题），断言两个分支不相交 | 5 |
 | 6 | [`06-merge-two-sources`](../examples/sdf/06-merge-two-sources/) | `primitives/merge` | **两条入口 spec 写同一个主题**；主题即合并后的流（偏移 0..3 连续） | 6 |
 | 7 | [`07-key-value-keys`](../examples/sdf/07-key-value-keys/) | `primitives/key-value/{input,output,chained}` | key 是**日志的一列**：`produce --key-separator` 打戳、`consume` 第 3 列可见、跨存储存活 | 7 |
+| 18 | [`18-unreal-engine-analytics`](../examples/sdf/18-unreal-engine-analytics/) | `dataflows/unreal-engine-analytics` | 参考样本 183 事件原样；`keyfield`（标签映射表 + `_ => other`）+ `counter`；窗口管道 = 同一批事件加事件时间 `ts` + `tumble(10s)`（参考实现此处**读时钟**，我们不读——如实边界） | 23 / 24 / 25 |
 | 17 | [`17-bank-processing`](../examples/sdf/17-bank-processing/) | `dataflows/bank-processing` | 参考样本 8 事件原样入夹具；`bankevents`（1→2 拆 debit/credit + 设键）+ `balance`（ABI v3 按 iban 累加）；透支标志 + `filter` 选流 | 20 / 21 / 22 |
 | 16 | [`16-word-probe`](../examples/sdf/16-word-probe/) | `dataflows/word-probe` | 两条管道共享同一条状态主题（计数写、探测只读）；冻结流/状态/探测答案/缺失词 | 18 / 19 |
 | 15 | [`15-word-counter`](../examples/sdf/15-word-counter/) | `dataflows/word-counter` | `wordkeys`（设键）+ `counter`（ABI v3 状态）；字节级冻结首跑/续跑/状态主题三份 | 16 / 17 |
