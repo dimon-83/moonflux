@@ -30,7 +30,7 @@
 | `primitives/key-value` | primitive | ported | examples/sdf/07-key-value-keys | p29 腿 7 |
 | `primitives/regex` | primitive | ported | examples/sdf/14-regex-genz | p29 腿 13–15（内核自带引擎；子集按名拒绝） |
 | `primitives/custom-serialization` | primitive | ported | examples/sdf/12-custom-serialization | p29 腿 9–12（变通：`fromJSON`/`toJSON` + 恒等往返） |
-| `primitives/update-state` | primitive | ported | examples/sdf/23-update-state | p29 腿 36–37（键控行最后写入胜出 = 压实后的表） |
+| `primitives/update-state` | primitive | ported | examples/sdf/23-update-state | p29 腿 36–37/37b（键控行：最后写入胜出 = 压实后的表；**字段级合并** = 参考 `row.update()` 语义，未携带的字段存活） |
 | `primitives/sql` | primitive | non-goal | — | 理由：SQL 引擎不是本项目的目标（AGENTS §9）；替代：mbel 表达式 + 状态算子（`counter`/`average`/`balance`）+ 消费者侧查询，见缺口语录 §缺口 3 |
 | `packages/mask-ssn` | package | ported | examples/sdf/01-map-mask-ssn | p29 腿 1 |
 | `packages/parse-sentence` | package | ported | examples/sdf/13-parse-sentence | p29 腿 8（`flatmap` 分词 + `string(len(value))` 取长度） |

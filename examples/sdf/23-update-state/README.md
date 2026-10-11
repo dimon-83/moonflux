@@ -29,9 +29,25 @@ $EXE consume --topic temperature --from 0 --data-dir "$D"          # 写入历�
 | `show state` 看到的那张表 | 状态主题**压实后的形态**（每键最新）——门禁同时断言**写入历史 4 条**与**表 3 行** |
 | 没有 sink（只在 `show state` 里可见） | 加载器把记录照原样发出，于是"表写好了"这件事在流里可见 |
 
-**如实说明**：参考的 `update-state` 是**在 SQL/表之上**的更新（`row.update()` 语义含字段级合并）；这里是
-**整行覆盖**（`loadtable` 用本记录选定的字段重写该键的值）。对"最后一条记录决定该键整行"的示例数据，
-两者结果完全一致；**部分字段更新**（只更新 `temperature` 而保留 `sensor`）在我们这里需要算子先把旧行读进来
-再合并——能力已具备（v3 状态进出），但没有现成算子，如实留档而非假装等价。
+## 字段级合并（`"merge": true`）：参考 `row.update()` 的语义
+
+参考的 `row.update()` 只写它**赋过值**的字段；默认的加载器是**整行重写**，所以一条只带 `temperature` 的
+记录会把 `sensor` 抹掉。`spec-merge.json` 打开合并：**记录里没有的字段沿用已存行里的值**，两边都没有的字段
+**按名拒绝**（`value field … is in neither the record nor the stored row`）——没有值可写时编一个比失败更糟。
+
+```bash
+$EXE pipeline run --data-dir "$(mktemp -d)" --spec $O/spec-merge.json
+# 表：0 → {"sensor":"SF","temperature":51}   ← 两次"只带 temperature"的更新之后 sensor 仍在
+#     1 → {"sensor":"LA","temperature":30}
+```
+
+夹具在**同一批**里就包含"先写整行、再只写 temperature"，这正是写这个功能时抓到的一个真问题：
+宿主交给算子的状态是**批开始时的快照**，所以同批先前记录刚构造的行**不在**状态输入里——第一版因此拒绝了
+自己的第二条记录。修法是算子自己维护**批内进行中的行**（这才是 `row.update()` 的语义），这条已经写进
+算子的注释里，因为它是"批是一次事务"这条纪律的具体后果。
+
+**同一轮里的一处语义收紧**：加载器现在**每批每键只写一次**（写批结束时的行），不再逐记录写——
+与 `counter`/`balance`/`average` 一致，批即事务，中间行是噪声。所以案例 23 的"写入历史"从 4 条变成
+**3 条**（4 条记录、3 个键），表仍是每键最后一行。
 
 冻结期望：`expected-stream.txt`（4 行）、`expected-state-history.txt`（写入历史）、`expected-table.txt`（压实后的表）。

@@ -3,6 +3,16 @@
 //
 // Config (through mf_op_init; unknown keys are refused):
 //   {"key_field": "license", "value_fields": ["maker", "model"]}
+//   {…, "merge": true}   partial update: fields the record does not carry
+//                        keep the value they already have in the row
+//
+// `merge` is the reference's `row.update()` semantics: it assigns the fields
+// it was given and leaves the rest of the row alone. Without it this operator
+// rewrites the whole row, so a record carrying only `temperature` would drop
+// `sensor`. With it, a field that is absent from the record but present in
+// the stored row is carried over — and a field that is in NEITHER is refused
+// by name, because there is no value to write and inventing one is worse than
+// failing.
 //
 // For each record: the key becomes the `key_field`'s text, and the state
 // value becomes a JSON object carrying `value_fields` — a table any other
@@ -21,11 +31,12 @@
 ///|
 priv struct LoadState {
   mut key_field : String
+  mut merge : Bool
   values : Array[String]
 }
 
 ///|
-let state : LoadState = LoadState::{ key_field: "", values: [], }
+let state : LoadState = LoadState::{ key_field: "", merge: false, values: [], }
 
 ///|
 fn json_escape(text : String) -> String {
@@ -61,7 +72,7 @@ pub fn mf_op_init(config : Bytes) -> Int {
   }
   for key in cfg.keys() {
     match key {
-      "key_field" | "value_fields" => ()
+      "key_field" | "value_fields" | "merge" => ()
       _ => return -1
     }
   }
@@ -73,6 +84,12 @@ pub fn mf_op_init(config : Bytes) -> Int {
       state.key_field = f
     }
     None => return -1
+  }
+  match cfg.get("merge") {
+    None => ()
+    Some(True) => state.merge = true
+    Some(False) => state.merge = false
+    Some(_) => return -1
   }
   match cfg.get("value_fields") {
     Some(Array(fields)) => {
@@ -134,8 +151,23 @@ pub fn mf_op_state_abi_version() -> Int {
 pub fn mf_op_state_apply(input : Bytes) -> Bytes {
   let loader = @sdk.GuestStatefulOperator::{
     name: "loadtable",
-    process: fn(_state_in, records) {
-      let updates : Array[@operator.StateEntry] = []
+    process: fn(state_in, records) {
+      // the CURRENT row per key: the state the host handed over, updated by
+      // the records of this batch as they are processed. A later record in
+      // the same batch must see the row an earlier one built — that is what
+      // a partial update means, and the host's state input alone cannot show
+      // it (it is the batch's opening snapshot; measured while gating merge:
+      // the first partial record was refused because `sensor` existed only in
+      // a row this same batch had written a moment earlier).
+      let rows : Map[String, Bytes] = {}
+      let order : Array[String] = []
+      for e in state_in {
+        let k = match (try? @utf8.decode(e.key[0:e.key.length()])) {
+          Ok(text) => text
+          Err(_) => return Err("state key is not UTF-8 text")
+        }
+        rows[k] = e.value
+      }
       let out : Array[@protocol.Record] = []
       for r in records {
         // the key extraction is deliberately the same shape as
@@ -173,7 +205,8 @@ pub fn mf_op_state_apply(input : Bytes) -> Bytes {
           row.write_string("\"")
           row.write_string(json_escape(field))
           row.write_string("\":")
-          match @sdk.json_field(r.value, field) {
+          let from_record = @sdk.json_field(r.value, field)
+          match from_record {
             Ok(Some(@sdk.ScalarText(text))) => {
               row.write_string("\"")
               row.write_string(json_escape(text))
@@ -189,19 +222,67 @@ pub fn mf_op_state_apply(input : Bytes) -> Bytes {
             }
             Ok(Some(@sdk.ScalarBool(b))) => row.write_string(b.to_string())
             Ok(Some(@sdk.ScalarNull)) => row.write_string("null")
-            Ok(None) =>
-              return Err(
-                "value field \{field} is missing from the record for key \{key}",
-              )
+            Ok(None) => {
+              // merging: the field keeps whatever the stored row says. A
+              // field that is in neither is refused — a partial update with
+              // nothing to update is a mistake, not a default.
+              let carried = if state.merge {
+                match rows.get(key) {
+                  Some(old) => @sdk.json_field(old, field)
+                  None => Ok(None)
+                }
+              } else {
+                Ok(None)
+              }
+              match carried {
+                Ok(Some(@sdk.ScalarText(text))) => {
+                  row.write_string("\"")
+                  row.write_string(json_escape(text))
+                  row.write_string("\"")
+                }
+                Ok(Some(@sdk.ScalarNumber(d))) => {
+                  let n = d.to_int64()
+                  if n.to_double() == d {
+                    row.write_string(n.to_string())
+                  } else {
+                    row.write_string(d.to_string())
+                  }
+                }
+                Ok(Some(@sdk.ScalarBool(b))) => row.write_string(b.to_string())
+                Ok(Some(@sdk.ScalarNull)) => row.write_string("null")
+                Ok(None) => {
+                  if state.merge {
+                    return Err(
+                      "value field \{field} is in neither the record nor the stored row for key \{key}",
+                    )
+                  }
+                  return Err(
+                    "value field \{field} is missing from the record for key \{key}",
+                  )
+                }
+                Err(e) => return Err(e)
+              }
+            }
             Err(e) => return Err(e)
           }
         }
         row.write_string("}")
-        updates.push(@operator.StateEntry::{
-          key: @utf8.encode(key),
-          value: @utf8.encode(row.to_string()),
-        })
+        let encoded = @utf8.encode(row.to_string())
+        if !rows.contains(key) {
+          order.push(key)
+        }
+        rows[key] = encoded
         out.push(r)
+      }
+      // one write per key: the batch is a transaction, and the last row for
+      // a key in it is the row that survives
+      let updates : Array[@operator.StateEntry] = []
+      for k in order {
+        let value = match rows.get(k) {
+          Some(value) => value
+          None => continue
+        }
+        updates.push(@operator.StateEntry::{ key: @utf8.encode(k), value, })
       }
       Ok((updates, out))
     },

@@ -562,9 +562,29 @@ pass "36. the sample data's four rows land in a three-row table, with the last w
 
 "$EXE" consume --topic temperature --from 0 --data-dir "$DUS" 2>/dev/null | cut -f3,4 > "$WORK/37.history"
 check "37 write history" "$WORK/37.history" "$EXAMPLES/23-update-state/expected-state-history.txt"
-[ "$(wc -l < "$WORK/37.history" | tr -d ' ')" = "4" ] ||
-  fail "case 37: the write history did not keep all four writes"
-pass "37. the state topic keeps every write (four) and converges to one row per key (three)"
+[ "$(wc -l < "$WORK/37.history" | tr -d ' ')" = "3" ] ||
+  fail "case 37: expected one write per key (three), not one per record"
+pass "37. the batch writes one row per key (three writes for four records), and the table converges to the last row per key"
+
+# merge mode: the reference's row.update() semantics. A record carrying only
+# `temperature` must keep the `sensor` written earlier — including when that
+# earlier row came from an earlier record of the SAME batch (the host's state
+# input is the batch's opening snapshot, so the operator keeps the batch's
+# in-flight rows itself).
+"$EXE" pipeline run --data-dir "$WORK/p29-merge" --spec "$EXAMPLES/23-update-state/spec-merge.json" \
+  > "$WORK/37b.stream" 2> "$WORK/37b.err" || { cat "$WORK/37b.err"; fail "case 37: merge run failed"; }
+check "37 merge stream" "$WORK/37b.stream" "$EXAMPLES/23-update-state/expected-merge-stream.txt"
+"$EXE" consume --topic temperature-merge --from 0 --data-dir "$WORK/p29-merge" 2>/dev/null \
+  | awk -F'	' '{last[$3]=$4} END {for (k in last) print k"\t"last[k]}' | sort > "$WORK/37b.table"
+check "37 merged rows" "$WORK/37b.table" "$EXAMPLES/23-update-state/expected-merge-table.txt"
+grep -q '"sensor":"SF"' "$WORK/37b.table" ||
+  fail "case 37: a partial update dropped the sensor that was already stored"
+"$EXE" pipeline run --data-dir "$WORK/p29-merge-refuse" --spec "$EXAMPLES/23-update-state/spec-merge-refuse.json" \
+  > "$WORK/37c.out" 2> "$WORK/37c.err"
+[ -s "$WORK/37c.out" ] && fail "case 37: a field in neither the record nor the row produced output"
+grep -q "neither the record nor the stored row" "$WORK/37c.err" ||
+  { cat "$WORK/37c.err"; fail "case 37: the merge refusal is not named"; }
+pass "37b. a partial update kept the stored field it did not carry, and a field in neither place is refused by name"
 
 # ---- 38-39. openai-callout: POST, model parsing, per-model counts ------
 # Offline: the example's replay spec reads the shipped cassette, so this leg
@@ -623,4 +643,4 @@ grep -q '"word":"fluvio"' "$WORK/41.notify" || fail "case 41: the fluvio match i
 grep -q '"title":"An unrelated headline"' "$WORK/41.notify" && fail "case 41: an unmatched article produced a notification"
 pass "41. five notifications, one per matched word and subscriber, and none for the unmatched article"
 
-echo "E2E-P29-EXAMPLES: 42 legs green (22 case specs across 22 example applications; cases 09-11 are gated by e2e-p30-connector-examples.sh)"
+echo "E2E-P29-EXAMPLES: 43 legs green (22 case specs across 22 example applications; cases 09-11 are gated by e2e-p30-connector-examples.sh)"

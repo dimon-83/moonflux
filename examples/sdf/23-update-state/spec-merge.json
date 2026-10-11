@@ -1,0 +1,43 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-update-state-merge"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/23-update-state/data-partial.jsonl"
+    },
+    "topic": {
+      "name": "temp-sensor-partial"
+    },
+    "state": {
+      "topic": "temperature-merge"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "id"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-loadtable/operator-loadtable.wasm",
+        "config": {
+          "key_field": "id",
+          "value_fields": [
+            "sensor",
+            "temperature"
+          ],
+          "merge": true
+        }
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}
