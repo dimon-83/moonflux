@@ -12,3 +12,20 @@
 | ⑤ | **镜像/多区域 与 恰好一次/事务 的显式决策** | ✅ 2026-10-11（决策 78）：两条都写明"不做 + 理由 + 触发条件 + 现有替代"，`feature-matrix` 的裸 ⏳ 换成 ❌ 决策行 |
 
 **纪律**（与 P30/P31 相同）：可证伪门禁（纳入 `gates.sh`）、文档同步、ticket、CI 两腿（现在含 Linux 全量）绿、不得假实现或静默降级。
+
+---
+
+## 收口（2026-10-11）
+
+五项全部完成，**CI 三条腿全绿**（run `38153433049`：fast / full(macOS) / full-linux 均为 success）。
+
+| 环境 | 证据 |
+| :--- | :--- |
+| macOS full | `E2E-P34-SC-HA: 12 passed` · `E2E-P35-METRICS: 10 passed` · `E2E-P36-STATE-MIGRATION: all green` · **`54 passed, 0 failed`** |
+| Linux full | `the durability primitive is fsync on Linux, as the platform requires` · `E2E-P7-PARTITIONS: all green` · p34/p35/p36 同上 · **`54 passed, 0 failed`** |
+
+**决策记录**：74（HA + 备份/恢复）· 75（Linux 全量门禁 + `F_FULLFSYNC`）· 76（metrics/健康）· 77（有状态管道跨节点迁移）· 78（镜像与恰好一次：显式不做）。
+
+**过程中被门禁抓到的真缺口/真 bug（都修了，都留了痕）**：租约临时文件同名（两 SC 共享目录时一方 `ENOENT` 退出）· metrics 端点无换行请求**阻塞事件循环** · 我把 `CMD_WELCOME`(=2) 当错误码(=2) 计成失败 · 11 个门禁在 Linux 上**静默死亡**（bash heredoc 在 5.1 是管道）· p7 分歧尾在 Linux 上**从未被创建** · 两进程共写一个数据目录导致**状态永不复制** · `pipeline run` 诊断污染 stdout（那是数据流）· `--resume` 等布尔 flag 吞参数。
+
+**如实边界（写进文档、不藏）**：HA 无 quorum/无 VIP，依赖共享目录；CRC 只检损坏不检篡改；metrics 无认证（绑回环、否则启动警告）；`--resume` 的正确性取决于副本新鲜度；**无跨节点键空间再均衡**；进度标记改善"重启重复折算"但不是分布式事务；镜像/多区域与 EOS **显式不做**并写明触发条件。
