@@ -15,6 +15,11 @@ verifies, for every built operator module:
     `mf_op_scalar_abi_version` / `mf_op_eval` must export BOTH, with
     the right signatures. A v1-only module (neither) stays valid.
 
+It also checks the PUBLISHED C HEADER (apps/operator-sdk/include/
+moonflux_operator.h) against these same expectations and against the
+kernel's ABI version constant, so the author-facing contract cannot drift
+from the implementation it describes (P30/T112).
+
 Ground truth over binary guesswork: the WAT is the compiler's own
 lowering.
 """
@@ -125,17 +130,54 @@ def probe(wat_path: pathlib.Path) -> list:
     return problems
 
 
+HEADER = ROOT / "apps" / "operator-sdk" / "include" / "moonflux_operator.h"
+KERNEL_OPERATOR = ROOT / "core" / "operator" / "operator.mbt"
+
+
+def check_header() -> list[str]:
+    """The published C header must agree with the probe and the kernel.
+
+    Two directions, both cheap and both falsifiable: every function the
+    probe expects must be declared in the header (a guest author reading
+    it must see the whole surface), and nothing else may be declared as
+    an ABI entry point (a stale name must not survive as folklore). The
+    header's ABI version must equal the kernel's.
+    """
+    problems: list[str] = []
+    if not HEADER.exists():
+        return [f"{HEADER.relative_to(ROOT)} is missing (the author-facing ABI contract)"]
+    text = HEADER.read_text()
+    declared = set(re.findall(r"\b(mf_op_[a-z_]+)\s*\(", text))
+    expected = set(EXPECTED) | set(SCALAR_EXPECTED)
+    for name in sorted(expected - declared):
+        problems.append(f"header does not declare {name}")
+    for name in sorted(declared - expected):
+        problems.append(f"header declares {name}, which the ABI does not define")
+    kernel = KERNEL_OPERATOR.read_text() if KERNEL_OPERATOR.exists() else ""
+    match = re.search(r"pub const ABI_VERSION\s*(?::\s*Int\s*)?=\s*(\d+)", kernel)
+    if not match:
+        problems.append("core/operator: ABI_VERSION not found")
+    else:
+        version = match.group(1)
+        if f"#define MOONFLUX_OPERATOR_ABI_VERSION {version}" not in text:
+            problems.append(
+                f"header does not pin the kernel ABI version {version}"
+            )
+    return problems
+
+
 def main() -> int:
     problems = []
     for wat in ROOT.glob("_build/wasm/release/build/apps/operator-*/*.wat"):
         problems += probe(wat)
     for wat in ROOT.glob("_build/wasm/debug/build/apps/operator-*/*.wat"):
         problems += probe(wat)
+    problems += check_header()
     if problems:
         for p in problems:
             print(p, file=sys.stderr)
         return 1
-    print("operator ABI surface OK")
+    print("operator ABI surface OK (modules + published header)")
     return 0
 
 

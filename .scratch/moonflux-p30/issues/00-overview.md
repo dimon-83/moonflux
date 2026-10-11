@@ -9,6 +9,6 @@
 - T109 ✅ 轮询式 HTTP 源（缺口 9 的 `interval_ms`）：轮询器永不说 `Exhausted`（决策 57）
 - T110 ✅ 两个新案例：`12-custom-serialization`（三腿，含恒等往返）与 `13-parse-sentence`
 - T111（未开始）`primitives/regex` 的基础能力（限定的正则子集）
-- T112（未开始）算子作者指南 + 稳定 C ABI 头（缺口 5 的作者面）
+- T112 ✅ 算子作者指南 + 稳定 C ABI 头（缺口 5 的作者面）：头部与实现不漂移由探针把守（决策 58）
 
 **Non-goals**：状态与窗口（P32，须先出 ABI v3 设计稿）、多汇（P33）、callout（须先选确定性边）、SQL/组件模型/Rust 工具链（不做）。

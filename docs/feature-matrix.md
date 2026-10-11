@@ -55,7 +55,7 @@
 | 表达式函数集（版本化资产 + spec 引用 + re-apply 换绑） | ✅ | `function-set` 命令面；`scripts/e2e-p6-functions.sh` |
 | 函数集本地存储路径（`--data-dir`，P30/T107） | ✅ | 本地与远端**共用节点侧同一 handler**（应答逐字节同源）；`--remote` 与 `--data-dir` 互斥按名拒绝；无服务即可 create/list/get/update/apply/run/delete；`scripts/e2e-p6-functions.sh` 第 11 条 |
 | 发布期静态检查（语法/未知名/类型/纯度拒绝 `now`） | ✅ | 同上 |
-| wasm 算子沙箱（ABI v1，guest 无导入，fail-closed） | ✅ | `scripts/crosscheck-operators.sh`（native vs wasm 字节级一致） |
+| wasm 算子沙箱（ABI v1，guest 无导入，fail-closed） | ✅ | `scripts/crosscheck-operators.sh`（native vs wasm 字节级一致）；作者面 = [算子作者指南](operator-authoring-guide.md) + 稳定 C ABI 头 `apps/operator-sdk/include/moonflux_operator.h`（P30/T112：每次构建校验头部导出名与 ABI 版本与实现不漂移） |
 | 双预算（记录数 + fuel；墙钟仅观测） | ✅ | `core/operator` tier + 宿主 fuel；`operator verify/describe` |
 | 算子管理命令面（verify/describe/list） | ✅ | `scripts/e2e-p5-operator.sh` |
 | 不可信标量函数进沙箱（ABI v2 标量调用，P26） | ✅ | 可选成对导出 `mf_op_scalar_abi_version`/`mf_op_eval`（返回指针、长度沿 v1 的 output_len）；节点注册表 `scalar-functions.json` + `{"type":"scalar"}` 变换；参数类型显式声明；燃料每调用、fail-closed；**与 mbel `upper()` 逐字节对拍**；`scripts/e2e-p26-scalar.sh`（6 腿）+ 设计稿 §7 落地实录（决策 50） |
