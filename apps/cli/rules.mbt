@@ -18,6 +18,10 @@ priv enum CompiledNode {
   /// program is compiled at apply time, so an unsupported construct
   /// never reaches a stream.
   Regex(@regex.Regex, Bool)
+  /// A wasm operator that keeps keyed state (ABI v3, P30/T114). It is a
+  /// distinct node because it needs something the others do not: a state
+  /// view, and therefore a pipeline that declared where state lives.
+  Stateful(@operator.OperatorInstance)
 }
 
 ///|
@@ -123,7 +127,15 @@ fn compile_node(
           budget: Internal,
           config,
         }) {
-        Ok(instance) => Ok(Wasm(instance))
+        Ok(instance) =>
+          // a module that exports the v3 pair is stateful, and the fact
+          // comes from the module rather than from the spec: the spec
+          // says *where* state lives, the guest says whether it has any
+          if instance.has_state {
+            Ok(Stateful(instance))
+          } else {
+            Ok(Wasm(instance))
+          }
         Err(e) => Err("wasm operator \"\{module_id}\": \{e}")
       }
     }
@@ -184,6 +196,7 @@ fn compile_node(
 fn apply_nodes(
   nodes : Array[CompiledNode],
   records : Array[@protocol.Record],
+  state : StateContext?,
 ) -> Result[Array[@protocol.Record], String] {
   let mut current = records
   for node in nodes {
@@ -197,6 +210,34 @@ fn apply_nodes(
           }
         }
         current = out
+      }
+      Stateful(instance) => {
+        let ctx = match state {
+          Some(ctx) => ctx
+          None =>
+            return Err(
+              "a stateful operator needs a state topic: add \"state\": {\"topic\": \"...\"} to the spec (a fetch path has nowhere to keep state)",
+            )
+        }
+        let keys = match state_batch_keys(current) {
+          Ok(keys) => keys
+          Err(e) => return Err(e)
+        }
+        // the batch is one transaction: state in, records and state out
+        let payload = @operator.encode_state_payload(
+          ctx.entries_for(keys),
+          current,
+        )
+        match (instance.process_state)(payload) {
+          Ok((updates, out)) => {
+            match ctx.apply(updates) {
+              Ok(_) => ()
+              Err(e) => return Err(e)
+            }
+            current = out
+          }
+          Err(e) => return Err("wasm: \{e}")
+        }
       }
       Regex(re, invert) => {
         // a filter is a shorter batch (the same shape the sandbox

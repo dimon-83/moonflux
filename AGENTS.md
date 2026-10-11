@@ -272,7 +272,7 @@ moonflux/
 - [ ] 涉及 codec/算子：golden vectors 对拍通过；涉及执行路径：预算与超时行为测试通过
 - [ ] 生成物一致性：`tools/gen_*.py --check` 全部 up to date（**改数据文件后必须重跑生成器**；生成器按 `moon fmt` 排版输出，故 fmt 对生成文件是 no-op）
 - [ ] 涉及集成（mbel / 参考系统互操作）：附可复现脚本与对照输出
-- [ ] **CI**：推送即跑 `scripts/gates.sh fast`（Linux）；动数据路径前手动跑全量（`gh workflow run ci`，macOS 46 步）。CI 装的是工具链 `latest`，**本地必须 `moon upgrade` 到同版本**（格式器方向相反，见 README 决策 51）
+- [ ] **CI**：推送即跑 `scripts/gates.sh fast`（Linux）；动数据路径前手动跑全量（`gh workflow run ci`，macOS 47 步）。CI 装的是工具链 `latest`，**本地必须 `moon upgrade` 到同版本**（格式器方向相反，见 README 决策 51）
 - [ ] 文档同步：README / 报告章节 / 本文件金规则表（如决策有变更并注明依据；规范见 §10）
 
 ## 7. 对标参考系统（Fluvio）使用规则
@@ -298,6 +298,7 @@ moonflux/
 - **双预算**：记录数上限 + 指令数（fuel）上限随 tier 收紧；预算超限报 `BudgetExceeded`，**不**报裸 trap。fuel 是确定性计量（无时钟），重放同一批数据得到同一结果——这条与内核红线同源。
 - **墙钟只报告、不设门禁**（决策 33）：耗时由 adapter 测量（`last_call_ms`），超档只告警/打印（`over_time_hint`）；**不得**把墙钟接成 pass/fail 判据——那会让同一批数据因机器负载时而通过时而失败，破坏重放。要收紧就调 fuel（确定性）。
 - **失败一律 fail-closed**：算子拒绝 / trap / 预算超限都必须变成结构化错误，且**已产出的一半批次绝不落 Sink**（`scripts/crosscheck-operators.sh` 的 fail-closed 四条腿是这条纪律的门禁）。
+- **状态是数据进出，不是 API 调用**（P30/T114，决策 60）：ABI v3 的成对导出（`mf_op_state_abi_version`/`mf_op_state_apply`）把"这批记录的当前状态"当**数据**交给 guest、把新状态当数据收回来——guest 仍然**无导入**，这条结构性事实不得为了让算子"能读写状态"而破坏。**宿主侧纪律**：状态主题（`spec.state.topic`）是**唯一持久真相**，视图只是缓存（启动重放、批后写回）；状态键**必须是 UTF-8 文本**（非 UTF-8 按名拒绝，不做事有损解码——两个键被静默合并是比报错更坏的结果）；视图有上限（`MOONFLUX_STATE_KEYS`），**超限在写之前拒绝**并写明"没有写入任何状态"，绝不静默淘汰；**状态主题不得等于数据主题**（环）；**状态是 `pipeline run` 的能力**——取数路径（serve）没有地方安放状态，遇到状态节点必须**按名拒绝**而不是无状态地跑一遍。**每批是一次事务**：批内记录看到的是批开始时同一份状态（批内不可见），失败则 sink 无输出、状态无写入。
 - **语义变更必须对拍**：任何算子语义调整都要有 native-vs-wasm 的字节级证据；测试向量放数据文件（`scripts/testdata/operator-golden.txt`，由 `tools/gen_operator_golden.py` 生成），手改即失败。
 
 ### 8.2 函数集纪律（P6 起）

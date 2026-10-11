@@ -64,7 +64,8 @@
 > **处置方案见 [`sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md)**：九条逐条判定"追平 / 变通 / 不做"、设计要点、门禁形态与依赖顺序。本节只声明缺口本身。
 
 
-1. **服务内持久键控状态**。moonflux 的算子是无状态纯函数（guest 无导入、无时钟、无随机源——结构性事实而非约定），宿主也不持有 per-key 状态。影响：`update-state`、`bank-processing` 的余额、`car-processing` 的按色计数、`word-counter`/`word-probe`/`helsinki-transit`/`ny-transit`/`openai-callout` 全部无法等价移植。**moonflux 的替代是"日志即状态"**：全量重放 + 键控压实（每键最新）+ 消费者自己持有聚合状态。这是不同的架构承诺，不是同一件事的另一种写法。
+1. **服务内持久键控状态**。**部分追平（2026-10-11，T114，决策 60）**：ABI v3 + 状态主题 + 宿主视图已落地（`scripts/e2e-p31-state.sh` 8 腿：跨进程续算、压实后仍正确、确定性、无键拒绝、上限写前拒绝、v1 回归）。**仍缺**：窗口/水位（Slice C）与跨服务状态读，以及用状态重写下面那些 dataflow。原来的叙述保留在下面，读者可以看到它曾经是什么。
+moonflux 的算子是无状态纯函数（guest 无导入、无时钟、无随机源——结构性事实而非约定），宿主也不持有 per-key 状态。影响：`update-state`、`bank-processing` 的余额、`car-processing` 的按色计数、`word-counter`/`word-probe`/`helsinki-transit`/`ny-transit`/`openai-callout` 全部无法等价移植。**moonflux 的替代是"日志即状态"**：全量重放 + 键控压实（每键最新）+ 消费者自己持有聚合状态。这是不同的架构承诺，不是同一件事的另一种写法。
 2. **窗口与水位**。没有 tumbling/hopping window，没有 watermark，没有"水位推进才 flush"的语义；也就没有 SDF `word-counter` README 提到的那个已知缺口（无 idle 触发器）——这里根本不存在该机制。
 **正则（`primitives/regex`）——已追平（2026-10-10，T111，决策 59）**：内核自带 `core/regex`（纯计算、四后端），spec 面 `{"type":"regex","pattern":P}`（可选 `invert`）；子集明确，`\b`/反向引用/环视/懒惰量词/Unicode 类等在 apply 期按名拒绝。SDF 那个示例真正演示的 crates.io 依赖管理**不抄**（AGENTS §1.1）。
 

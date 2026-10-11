@@ -167,6 +167,12 @@ pub(all) struct PipelineSpec {
   transforms : Array[TransformSpec]
   topic : TopicSpec
   sink : SinkSpec
+  /// The topic a stateful operator node keeps its state in: a keyed log
+  /// the host caches and compacts, never a second source of truth
+  /// (docs/operator-abi-v3-state.md). None means the spec declares no
+  /// state, and a stateful module in the chain is then refused at apply
+  /// time rather than silently running without it (P30/T114).
+  state : String?
 } derive(Debug, Eq, Show)
 
 ///|
@@ -275,7 +281,7 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
         reject_unknown_keys(
           "$.spec",
           body,
-          ["source", "transforms", "topic", "sink"],
+          ["source", "transforms", "topic", "sink", "state"],
           errors,
         )
         parse_body(body, errors)
@@ -290,7 +296,7 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
       }
     }
     match (name, parsed_body) {
-      (Some(name), Some((source, transforms, topic, sink))) =>
+      (Some(name), Some((source, transforms, topic, sink, state))) =>
         if errors.is_empty() {
           Ok(PipelineSpec::{
             metadata_name: name,
@@ -298,6 +304,7 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
             transforms,
             topic,
             sink,
+            state,
           })
         } else {
           Err(errors)
@@ -350,10 +357,72 @@ fn parse_http_interval(
 }
 
 ///|
+/// The optional `state` object: `{"topic": "..."}`. The state topic must
+/// be a valid topic name and must differ from the pipeline's data topic —
+/// a state log that is also the data log is a ring, and a ring in a log is
+/// how a pipeline ends up reading its own output (P30/T114).
+fn parse_state(
+  body : Map[String, Json],
+  topic : TopicSpec,
+  errors : Array[SpecError],
+) -> String? {
+  match body.get("state") {
+    None => None
+    Some(Object(st)) => {
+      reject_unknown_keys("$.spec.state", st, ["topic"], errors)
+      match st.get("topic") {
+        Some(String(name)) =>
+          if !valid_topic_name(name) {
+            errors.push(SpecError::{
+              path: "$.spec.state.topic",
+              code: "bad-value",
+              message: "state topic must be a valid topic name",
+            })
+            None
+          } else if name == topic.name {
+            errors.push(SpecError::{
+              path: "$.spec.state.topic",
+              code: "bad-value",
+              message: "state topic must differ from the data topic (\{name})",
+            })
+            None
+          } else {
+            Some(name)
+          }
+        Some(_) => {
+          errors.push(SpecError::{
+            path: "$.spec.state.topic",
+            code: "bad-type",
+            message: "state topic must be a string",
+          })
+          None
+        }
+        None => {
+          errors.push(SpecError::{
+            path: "$.spec.state.topic",
+            code: "missing-field",
+            message: "state requires a topic name",
+          })
+          None
+        }
+      }
+    }
+    Some(_) => {
+      errors.push(SpecError::{
+        path: "$.spec.state",
+        code: "bad-type",
+        message: "state must be an object ({\"topic\": \"...\"})",
+      })
+      None
+    }
+  }
+}
+
+///|
 fn parse_body(
   body : Map[String, Json],
   errors : Array[SpecError],
-) -> (SourceSpec, Array[TransformSpec], TopicSpec, SinkSpec)? {
+) -> (SourceSpec, Array[TransformSpec], TopicSpec, SinkSpec, String?)? {
   // source
   let source : SourceSpec? = match body.get("source") {
     Some(Object(src)) => {
@@ -769,7 +838,7 @@ fn parse_body(
   }
   match (source, topic, sink) {
     (Some(source), Some(topic), Some(sink)) =>
-      Some((source, transforms, topic, sink))
+      Some((source, transforms, topic, sink, parse_state(body, topic, errors)))
     (_, _, _) => None
   }
 }

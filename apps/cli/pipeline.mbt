@@ -307,6 +307,17 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     MqttSink(url) => @connectors.mqtt_sink(url)
     KafkaSink(url) => @connectors.kafka_sink(url)
   }
+  // 4. state (P30/T114): a pipeline that declares a state topic gets a
+  // view of it, rebuilt by replay before the first batch. The topic is the
+  // truth; the view is a cache (docs/operator-abi-v3-state.md).
+  let state = match applied.spec.state {
+    None => None
+    Some(topic) =>
+      match StateContext::open(data_dir, topic) {
+        Ok(ctx) => Some(ctx)
+        Err(e) => fail("state \{topic}: \{e}")
+      }
+  }
   while true {
     let pull = match (source.pull)() {
       Ok(pull) => pull
@@ -340,7 +351,7 @@ fn pipeline_run(argv : Array[String]) -> Unit {
           for entry in entries {
             pulled.push(entry.record)
           }
-          let out_records = match apply_nodes(chain, pulled) {
+          let out_records = match apply_nodes(chain, pulled, state) {
             Ok(out) => out
             Err(e) => fail("transform: \{e}")
           }

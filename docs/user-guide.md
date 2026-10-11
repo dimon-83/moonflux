@@ -12,7 +12,7 @@ moon update                         # 首次克隆必须：取 registry 索引�
 moon build --target native          # 产物：_build/native/debug/build/apps/cli/cli.exe
 moon test --target native           # 274 项
 moon test --target wasm-gc          # 174 项（内核全后端）
-scripts/gates.sh                    # 全量门禁（46 步）；scripts/gates.sh fast 跳过 E2E
+scripts/gates.sh                    # 全量门禁（47 步）；scripts/gates.sh fast 跳过 E2E
 ```
 
 - **`moon update` 是首次克隆的前置步骤**（CI 首跑实测）：唯一的依赖 `dimon-83/mbel@0.3.3` 的**源码已随仓库 vendored** 在 `.mooncakes/`（119 个文件，随 git 追踪），但 moon 解析依赖仍要过 registry 索引——索引不在时每条 moon 命令都报 `Failed to resolve registry dependency dimon-83/mbel: module was not found in the registry`（`--frozen` 也一样失败）。moon 自己会提示 `you may need to run 'moon update'`。
@@ -207,6 +207,20 @@ cli.exe function-set list   --remote 127.0.0.1:19451
 - 名字/参数/函数体以 mbel 的规则为唯一权威；**函数体含 `now` 在部署被拒**（确定性红线：重放必须同输入同输出）。
 - spec 按名引用；**更新集合必须 re-apply 才生效**（解析到的 revision 记入 `topology.json`，运维可见漂移）。
 - 引用缺失集合、使用集合外名字、类型错误，都在 `apply`（发布期）拦截，不进运行期。
+
+**键控状态**（P30/T114，需先读设计稿 [`operator-abi-v3-state.md`](operator-abi-v3-state.md)）：
+
+```json
+"state": { "topic": "wordcount-state" },
+"transforms": [
+  { "type": "wasm", "module": ".../operator-wordkeys.wasm", "config": {} },
+  { "type": "wasm", "module": ".../operator-counter.wasm",   "config": {} }
+]
+```
+
+- **状态就在那条主题里**：宿主启动时重放出视图（缓存），每批把变更按 key 写回（真相）；压实把它收敛成"每键最新"，floor 之下的读仍是结构化拒绝。
+- **哪些节点有状态由模块决定**：导出 v3 成对（`mf_op_state_abi_version`/`mf_op_state_apply`）的模块自动成为状态节点；**键必须由记录携带**（`produce --key`、`--key-separator`，或像 `operator-wordkeys` 那样在算子里给输出设键）。
+- **四条边界**：键须为 UTF-8 文本；视图上限 `MOONFLUX_STATE_KEYS`（默认 100000，**超限在写之前拒绝**）；`state.topic` 不得等于数据主题；**状态只支持 `pipeline run`**——serve 的取数路径遇到状态节点按名拒绝。
 
 **wasm 算子**（沙箱，guest 无 IO/时钟）：
 
@@ -554,11 +568,11 @@ cli.exe consume --topic events --remote 127.0.0.1:19802   --token dash-secret-12
 
 | 想验证什么 | 跑什么 |
 | :--- | :--- |
-| 一切（46 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
+| 一切（47 步） | `scripts/gates.sh`（`fast` 跳过 E2E） |
 | SDF 示例集的 8 个应用案例 | `scripts/e2e-p29-examples.sh`；逐案例说明见 `examples/sdf/*/README.md`，对照与缺口见 `docs/sdf-examples-port.md` |
 | 图形化（Studio）对标探索与提案 | `docs/sdf-studio-exploration.md`（**未实现**：三阶段提案，含门禁形态） |
 | CI：随推送的 fast（Linux，12 步） | GitHub Actions（[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)）；本地等价物 `scripts/gates.sh fast`；日志 `gh run view --log-failed`。**日志可能被截断**（门禁输出混着数百条 moon warning，本仓实测 `--log-failed` 读不到末尾的汇总）：要全量就用原始日志 `gh api --allow-escape-sequences repos/dimon-83/moonflux/actions/jobs/<job-id>/logs`（job-id 由 `gh api repos/dimon-83/moonflux/actions/runs/<run-id>/jobs --jq '.jobs[] \| select(.name=="fast") \| .id'` 取） |
-| CI：手动的 full（macOS，46 步 E2E） | `gh workflow run ci`（或网页 Actions → ci → Run workflow）；本地等价物 `scripts/gates.sh`。**full 有独立并发组**：手动跑全量期间推送不会把它取消（推送只取消同分支的前一次 `fast`） |
+| CI：手动的 full（macOS，47 步 E2E） | `gh workflow run ci`（或网页 Actions → ci → Run workflow）；本地等价物 `scripts/gates.sh`。**full 有独立并发组**：手动跑全量期间推送不会把它取消（推送只取消同分支的前一次 `fast`） |
 | 端到端管道 / 热重载 | `scripts/e2e-p0.sh` · `e2e-p1-rules.sh` |
 | 集群/复制/选主/元数据 | `scripts/e2e-p3-*.sh` |
 | 多分区复制与隔离 | `scripts/e2e-p7-partitions.sh` |

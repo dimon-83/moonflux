@@ -23,6 +23,7 @@ pub(all) struct PipelineSpec {
   transforms : Array[TransformSpec]
   topic : TopicSpec
   sink : SinkSpec
+  state : String?
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) enum SinkSpec {

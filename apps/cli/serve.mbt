@@ -885,7 +885,7 @@ fn frame_window(
   let mut records = 0
   let mut scan_end = from
   for entry in entries {
-    let out_one = match apply_nodes(rules.chain, [entry.record]) {
+    let out_one = match apply_nodes(rules.chain, [entry.record], None) {
       Ok(out_one) => out_one
       Err(e) => return Err((@client.ERR_TRANSFORM, "transform: \{e}"))
     }

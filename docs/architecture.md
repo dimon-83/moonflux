@@ -224,7 +224,7 @@ flowchart TB
 
 ## 10. 验证体系（架构的执行者）
 
-架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**46 步**；CI 跑的是同一条脚本——`fast` 随推送在 Linux，`full` 手动在 macOS）：
+架构纪律不是注释，是会红的脚本（AGENTS.md §6，`scripts/gates.sh` 一次跑完，**47 步**；CI 跑的是同一条脚本——`fast` 随推送在 Linux，`full` 手动在 macOS）：
 
 | 层 | 机制 |
 | :--- | :--- |

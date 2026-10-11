@@ -216,3 +216,56 @@ test "an http source takes an optional poll interval" {
       assert_true(errors.any(fn(e) { e.path == "$.spec.source.interval_ms" }))
   }
 }
+
+///|
+test "a pipeline may declare where its state lives, and only sanely" {
+  let base = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"file\",\"path\":\"in.txt\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}STATE}}"
+  let with_state = ",\"state\":{\"topic\":\"counters\"}"
+  // absent: no state, and a stateless spec stays exactly as it was
+  match parse_spec(base.replace(old="STATE", new="")) {
+    Ok(spec) => assert_true(spec.state is None)
+    Err(errors) => abort("a stateless spec was rejected: \{errors}")
+  }
+  // present: the topic is parsed as written
+  match parse_spec(base.replace(old="STATE", new=with_state)) {
+    Ok(spec) => assert_true(spec.state is Some("counters"))
+    Err(errors) => abort("a state topic was rejected: \{errors}")
+  }
+  // a state topic equal to the data topic is a ring, not a configuration
+  match
+    parse_spec(
+      base.replace(old="STATE", new=",\"state\":{\"topic\":\"events\"}"),
+    ) {
+    Ok(_) => abort("the data topic was accepted as the state topic")
+    Err(errors) =>
+      assert_true(
+        errors.any(fn(e) {
+          e.path == "$.spec.state.topic" && e.code == "bad-value"
+        }),
+      )
+  }
+  // an invalid name, an unknown key and a non-object are each rejected
+  match
+    parse_spec(
+      base.replace(old="STATE", new=",\"state\":{\"topic\":\"Bad Name\"}"),
+    ) {
+    Ok(_) => abort("an invalid state topic name was accepted")
+    Err(errors) =>
+      assert_true(errors.any(fn(e) { e.path == "$.spec.state.topic" }))
+  }
+  match
+    parse_spec(
+      base.replace(
+        old="STATE",
+        new=",\"state\":{\"topic\":\"c\",\"retention\":1}",
+      ),
+    ) {
+    Ok(_) => abort("an unknown state key was accepted")
+    Err(errors) =>
+      assert_true(errors.any(fn(e) { e.path == "$.spec.state.retention" }))
+  }
+  match parse_spec(base.replace(old="STATE", new=",\"state\":\"counters\"")) {
+    Ok(_) => abort("a bare string was accepted as state")
+    Err(errors) => assert_true(errors.any(fn(e) { e.path == "$.spec.state" }))
+  }
+}

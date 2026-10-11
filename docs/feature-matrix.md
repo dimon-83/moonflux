@@ -61,6 +61,7 @@
 | 算子管理命令面（verify/describe/list） | ✅ | `scripts/e2e-p5-operator.sh` |
 | 不可信标量函数进沙箱（ABI v2 标量调用，P26） | ✅ | 可选成对导出 `mf_op_scalar_abi_version`/`mf_op_eval`（返回指针、长度沿 v1 的 output_len）；节点注册表 `scalar-functions.json` + `{"type":"scalar"}` 变换；参数类型显式声明；燃料每调用、fail-closed；**与 mbel `upper()` 逐字节对拍**；`scripts/e2e-p26-scalar.sh`（6 腿）+ 设计稿 §7 落地实录（决策 50） |
 | JSON 载荷的字段级读写（`fromJSON`/`get`/`toJSON`/`fromPairs`，P30/T108） | ✅ | 发布期探针按**表达式自己命名的键**构造字符串/数值两种形状（任一成立即发布），字面量坏 JSON、类型冲突与未知名仍被拒；`scripts/e2e-p29-examples.sh` 腿 9–11（含**逐字节恒等往返**）+ `scripts/e2e-p1-rules.sh` 两条拒绝腿 |
+| 键控状态（ABI v3 + 状态主题 + 宿主视图，P30/T114） | ✅ | `spec.state.topic` 声明状态主题；宿主启动重放视图（`apps/cli/state.mbt`）、每批按键写回；`{"type":"wasm"}` 模块**导出 v3 成对即自动成为状态节点**；键须 UTF-8、视图上限 `MOONFLUX_STATE_KEYS`（**写前拒绝**）、状态主题≠数据主题、serve 取数路径按名拒绝；`scripts/e2e-p31-state.sh` 8 腿 + 真 wasmtime 适配器测试 + `core/spec`/`core/operator`/SDK 单测 |
 | 有状态算子 / 算子间 shuffle | ⏳ | 未立项（报告 §5 范围外）；SDF 示例集里那一族（`update-state`、窗口计数）因此不可等价移植，缺口清单见 [`sdf-examples-port.md`](sdf-examples-port.md) §4 |
 | 沙箱 filter / flat-map 算子（1→0 / 1→N，P29） | ✅ | `apps/operator-filter`（`min_len`/`contains`）与 `apps/operator-flatmap`（`separator`）——过滤与扇出**不能**用 mbel 表达（表达式必须返回字符串），只能落在批算子契约上；配置在 `mf_op_init` 校验（未知键、空分隔符、小数门槛都拒绝）；`scripts/e2e-p29-examples.sh` 腿 2–5 |
 | SDF 示例集的 moonflux 应用案例（8 例，P29） | ✅ | `examples/sdf/*`（冻结 spec + 夹具 + expected + 逐例 README）由 `scripts/e2e-p29-examples.sh`（8 腿，字节级对拍）验真；对照表与缺口见 [`sdf-examples-port.md`](sdf-examples-port.md) |
@@ -111,7 +112,7 @@
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
 | 日志句柄复用（进程级有界缓存，淘汰安全） | ✅ | `apps/cli/logcache.mbt`：`open_partition_log` 命中即复用；变更经同一句柄故无需失效；`MOONFLUX_LOG_CACHE` 控制上限与 LRU 淘汰；每次真实打开在 stderr 记一行；`scripts/e2e-p16-logcache.sh`（6 腿） |
-| 门禁体系（46 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS，46 步） |
+| 门禁体系（47 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS，47 步） |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

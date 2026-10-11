@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-wordkeys: split each record's value and stamp every token
+// as that record's KEY (wasm guest, ABI v1). This is what SDF spells with
+// `partition.assign-key`: a key derived inside the pipeline rather than at
+// ingress. moonflux has no assign-key operator because a batch operator
+// can simply set the key of the records it emits — no second
+// key-extraction surface, no signature sniffing (P30/T114).
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+      ],
+    },
+  },
+)
