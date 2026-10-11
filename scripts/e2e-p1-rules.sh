@@ -84,7 +84,14 @@ printf '123*45*6789\n987*65*4321\n' > "$WORK/ssn.expect"
 diff -u "$WORK/ssn.expect" "$WORK/ssn.out" || fail "field access output"
 pass "the publish-time probe accepts JSON field access the expression names (T108)"
 
-for bad in 'fromJSON("a")' 'get(fromJSON(value), "ssn") + 1' 'fromJSON_missing(value)'; do
+# ... and the numeric shape is a deliberate widening, not a hole: a
+# comparison on a named numeric key publishes (the probe bound it to a
+# number), while anything that fails on *both* shapes stays rejected
+ssn_spec 'get(fromJSON(value), "mph") > 60' "$WORK/spec-numeric.json"
+"$EXE" pipeline apply -f "$WORK/spec-numeric.json" --data-dir "$WORK/numeric-data" \
+  > "$WORK/numeric.out" 2>&1 ||
+  { cat "$WORK/numeric.out"; fail "a numeric field comparison should publish under the numeric probe"; }
+for bad in 'fromJSON("a")' 'value + 1' 'fromJSON_missing(value)'; do
   ssn_spec "$bad" "$WORK/spec-bad-json.json"
   if "$EXE" pipeline apply -f "$WORK/spec-bad-json.json" --data-dir "$WORK/bad-json-data" \
     > "$WORK/bad-json.out" 2>&1; then
