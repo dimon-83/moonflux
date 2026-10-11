@@ -2,15 +2,16 @@
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
   "metadata": {
-    "name": "sdf-update-state"
+    "name": "sdf-update-state-service"
   },
   "spec": {
     "source": {
-      "type": "file",
-      "path": "examples/sdf/23-update-state/data.jsonl"
+      "type": "topic",
+      "name": "temperature-stream",
+      "from": "beginning"
     },
     "topic": {
-      "name": "temp-sensor"
+      "name": "temperature-stream"
     },
     "state": {
       "topic": "temperature"

@@ -1,0 +1,27 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-word-probe-words-extra"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/16-word-probe/words-extra.txt"
+    },
+    "topic": {
+      "name": "words-extra-in"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-wordkeys/operator-wordkeys.wasm",
+        "config": {}
+      }
+    ],
+    "sink": {
+      "type": "topic",
+      "name": "word-stream"
+    }
+  }
+}

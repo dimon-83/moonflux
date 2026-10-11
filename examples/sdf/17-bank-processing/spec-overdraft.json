@@ -6,8 +6,9 @@
   },
   "spec": {
     "source": {
-      "type": "file",
-      "path": "examples/sdf/17-bank-processing/events-overdraft.jsonl"
+      "type": "topic",
+      "name": "business-events-overdraft",
+      "from": "beginning"
     },
     "topic": {
       "name": "business-events-overdraft"

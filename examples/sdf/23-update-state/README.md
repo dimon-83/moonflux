@@ -29,6 +29,20 @@ $EXE consume --topic temperature --from 0 --data-dir "$D"          # 写入历�
 | `show state` 看到的那张表 | 状态主题**压实后的形态**（每键最新）——门禁同时断言**写入历史 4 条**与**表 3 行** |
 | 没有 sink（只在 `show state` 里可见） | 加载器把记录照原样发出，于是"表写好了"这件事在流里可见 |
 
+## 服务从主题取数（决策 72）
+
+参考实现的 `save-temperature` 服务从主题读传感器数据，本案例也这样跑：
+
+```
+spec-relay.json          file(data.jsonl)          → 空变换 → 主题 temperature-stream          （接力）
+spec-update-state.json   主题 temperature-stream    → keyfield + loadtable        → stdout    （保存服务）
+spec-relay-partial.json  file(data-partial.jsonl)  → 空变换 → 主题 temperature-partial-stream （接力）
+spec-merge.json          主题 …partial-stream       → keyfield + loadtable(merge)  → stdout    （合并服务）
+```
+
+两个服务都是**跟随者**（追平即 `Quiet`），门禁用有界等待 + 停止它们。`spec-merge-refuse.json`
+仍是**文件源**：它验的是算子对"两侧都没有的字段"的拒绝，与接力无关（有一条腿专门跑它）。
+
 ## 字段级合并（`"merge": true`）：参考 `row.update()` 的语义
 
 参考的 `row.update()` 只写它**赋过值**的字段；默认的加载器是**整行重写**，所以一条只带 `temperature` 的

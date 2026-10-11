@@ -20,7 +20,7 @@ $EXE pipeline run --data-dir "$DATA" --spec examples/sdf/16-word-probe/spec-prob
 
 三维证据都冻结在目录里：`expected-counts-stream.txt`（计数管道的逐词流，32 行 = 三个句子
 的 32 个词元）、`expected-state.txt`（状态主题的每词最新值，23 个词）、`expected-probe.txt`
-（探测答案）。
+（探测答案）、`expected-probe-all.txt`（追加之后第二次探测的七个答案）。
 
 ## 架构说明：为什么"跨服务读"不需要新机制
 
@@ -32,10 +32,26 @@ SDF 的服务各自持有 `states:`，第二个服务用 `from: count-words.coun
 - `operator-probe` 返回**空的状态更新列表**——读就是读。门禁断言探测前后状态主题的记录数不变
   （23 → 23），否则"读"会悄悄变成"写"，两条管道就能互相踩。
 
-**如实边界（写在这里而不是藏起来）**：探测看到的是**它启动那一刻的快照**（宿主视图只在
-本进程的写入后更新，不 tail 别的进程）。所以「先计数、后探测」是对的用法；常驻探测进程不会
-跟随另一个进程后续的写入。要做实时跟随，需要的是消费者侧 tail + 视图增量应用，那是另一个
-能力（未立项）。
+## 两条管道现在是**真正的主题接力**（决策 72）
+
+参考实现里两个服务都从**主题**取数，所以本案例也这样跑，四个 spec 两两成对：
+
+```
+spec-sentences.json   file(sentences.txt) → 空变换      → 主题 sentence-stream   （接力第一段）
+spec-count.json       主题 sentence-stream → wordkeys + counter → stdout        （计数服务，写状态）
+spec-words.json       file(words.txt)      → wordkeys   → 主题 word-stream       （接力第二段）
+spec-probe.json       主题 word-stream     → wordkeys + probe   → stdout        （探测服务，读状态）
+spec-words-extra.json file(words-extra)    → wordkeys   → 主题 word-stream       （同一个主题追加）
+```
+
+两个服务都是**跟随者**（主题源追平即 `Quiet`，从不 `Exhausted`），所以跑起来是常驻进程；
+门禁用有界等待 + 停止来对待它们，而不是等进程自己退出。
+
+**如实边界（写在这里而不是藏起来）**：探测服务**跟随的是"词主题"**（追加的词它看得见，
+门禁腿 19 就是证据），但它的**状态视图是启动那一刻的快照**——宿主视图只随**本进程**的写入
+更新，不 tail 另一个进程的状态主题。所以「先计数、后探测」是正确用法；一个常驻探测进程
+看到的是它启动时的计数。要让状态视图也实时跟随，需要的是视图增量应用（另一个能力，未立项）。
+这条边界没有被主题接力改掉，反而更清楚了：**数据流会跟随，状态视图不会**。
 
 ## 与参考实现的两处差异（都是有意的）
 
@@ -44,5 +60,5 @@ SDF 的服务各自持有 `states:`，第二个服务用 `from: count-words.coun
    换一份含大写或标点的数据，两边会给出不同的键——差异点在这里，不在结果里。
 2. **缺失词的默认值**：SDF 的 `query_word_count` 查不到时返回 `count: 0`；`operator-probe`
    的 `{"missing": 0}` 是同一个默认值，且**可选**（配置里可以改成别的数，未知键仍被拒绝）。
-   `spec-probe-extra.json` + `expected-probe-extra.txt` 就是这个路径的证据：探测表里加一个
-   句子里没有的 `zebra`，答案里它得 0。
+   `spec-words-extra.json` + `expected-probe-all.txt` 就是这个路径的证据：往**同一个词主题**
+   追加一个句子里没有的 `zebra`，探测服务再跑一次看到全部七个词，`zebra` 得 0。

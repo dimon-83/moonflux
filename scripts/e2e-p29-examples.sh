@@ -32,10 +32,11 @@
 #                  apply-time refusal, by name
 #  16  word-counter keyed state: the running count per
 #                  word, byte for byte
-#  18  word-probe   a second pipeline reads the SAME state
-#                  topic and answers per word
+#  18  word-probe   two services over topics: the sentences
+#                  go on one, the probed words on another, and a
+#                  follower reads the shared state per word
 #  20  bank          per-account balances from the reference
-#                  sample events, byte for byte
+#                  sample events arriving on a TOPIC, byte for byte
 #  21  bank          the state topic converges to one balance
 #                  per account
 #  23  unreal        per-label event counts over the reference's
@@ -114,6 +115,23 @@ trap cleanup EXIT
 
 fail() { echo "E2E-P29-EXAMPLES FAIL: $*" >&2; exit 1; }
 pass() { echo "E2E-P29-EXAMPLES PASS: $*"; }
+
+# Bounded wait for a streaming follower to produce `want` lines, then stop it.
+# A topic source never exits (catching up is Quiet, not Exhausted), so the gate
+# has to bound its own patience instead of waiting for the process.
+run_until_lines() { # $1 = spec, $2 = output file, $3 = min lines, $4 = data dir
+  "$EXE" pipeline run --data-dir "$4" --spec "$1" > "$2" 2> "$2.err" &
+  local pid=$! i=0
+  while [ "$i" -lt 100 ]; do
+    [ "$(wc -l < "$2" | tr -d ' ')" -ge "$3" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  sleep 0.2
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  return 0
+}
 
 wait_listen() { # $1 = port
   for _ in $(seq 1 60); do
@@ -359,30 +377,48 @@ check "17 state topic per word" "$WORK/17.state" "$EXAMPLES/15-word-counter/expe
 check "17 second run continues" "$WORK/17b.out" "$EXAMPLES/15-word-counter/expected-second-run.txt"
 pass "17. the counting half keeps one state entry per word, and its second run continues from the log"
 
-# ---- 18-19. word-probe: the same state, read by another pipeline -------
-# SDF has two services here, the second referencing the first's state. In
-# moonflux they are two pipelines pointing at one state TOPIC — so the gate
-# has to prove two things: the answer is right, and reading is not writing.
+# ---- 18-19. word-probe: a two-service relay over topics ---------------
+# The reference has two services here: one counts words, the other probes the
+# first's state. Both of them read a TOPIC. So does this gate now: the
+# sentences go onto `sentence-stream`, the counting service is a follower of
+# it (writing `count-per-word`), the probed words go onto `word-stream`, and
+# the probing service is a follower of that. A follower never exits, so the
+# gate bounds its own patience and stops it.
 DP="$WORK/p29-wordprobe"
-"$EXE" pipeline run --data-dir "$DP" --spec "$EXAMPLES/16-word-probe/spec-count.json" \
-  > "$WORK/18.counts" 2> "$WORK/18.err" || { cat "$WORK/18.err"; fail "case 18: counting pipeline failed"; }
+"$EXE" pipeline run --data-dir "$DP" --spec "$EXAMPLES/16-word-probe/spec-sentences.json" \
+  > "$WORK/18.relay" 2> "$WORK/18.relay.err" || { cat "$WORK/18.relay.err"; fail "case 18: the sentence relay failed"; }
+[ "$("$EXE" consume --topic sentence-stream --from 0 --data-dir "$DP" 2>/dev/null | wc -l | tr -d ' ')" = "3" ] ||
+  fail "case 18: the sentences did not land on the topic"
+
+run_until_lines "$EXAMPLES/16-word-probe/spec-count.json" "$WORK/18.counts" 23 "$DP"
 check "18 per-word stream" "$WORK/18.counts" "$EXAMPLES/16-word-probe/expected-counts-stream.txt"
 "$EXE" consume --topic count-per-word --from 0 --data-dir "$DP" 2>/dev/null | cut -f3,4 | sort \
   > "$WORK/18.state"
 check "18 per-word state" "$WORK/18.state" "$EXAMPLES/16-word-probe/expected-state.txt"
+
+"$EXE" pipeline run --data-dir "$DP" --spec "$EXAMPLES/16-word-probe/spec-words.json" \
+  > /dev/null 2> "$WORK/18.words.err" || { cat "$WORK/18.words.err"; fail "case 18: the word relay failed"; }
 BEFORE="$("$EXE" consume --topic count-per-word --from 0 --data-dir "$DP" 2>/dev/null | wc -l | tr -d ' ')"
-"$EXE" pipeline run --data-dir "$DP" --spec "$EXAMPLES/16-word-probe/spec-probe.json" \
-  > "$WORK/18.probe" 2> "$WORK/18.probe.err" || { cat "$WORK/18.probe.err"; fail "case 18: probe pipeline failed"; }
+run_until_lines "$EXAMPLES/16-word-probe/spec-probe.json" "$WORK/18.probe" 3 "$DP"
 check "18 probe answers" "$WORK/18.probe" "$EXAMPLES/16-word-probe/expected-probe.txt"
-pass "18. a second pipeline read the same state topic and answered per word, byte for byte"
+pass "18. the counting service followed the sentence topic into the state, and the probing service followed the word topic out of it"
 
 AFTER="$("$EXE" consume --topic count-per-word --from 0 --data-dir "$DP" 2>/dev/null | wc -l | tr -d ' ')"
 [ "$AFTER" = "$BEFORE" ] ||
   fail "the probe wrote to the state topic ($BEFORE -> $AFTER records): reading must not write"
-"$EXE" pipeline run --data-dir "$DP" --spec "$EXAMPLES/16-word-probe/spec-probe-extra.json" \
-  > "$WORK/19.probe" 2> "$WORK/19.probe.err" || { cat "$WORK/19.probe.err"; fail "case 19: probe failed"; }
-check "19 a word the state never saw" "$WORK/19.probe" "$EXAMPLES/16-word-probe/expected-probe-extra.txt"
-pass "19. the probe wrote no state ($BEFORE records before and after) and reported the missing-word default"
+
+# a word the state never saw: appended to the SAME topic, and the follower
+# reads the topic from the beginning, so it answers for all seven words
+"$EXE" pipeline run --data-dir "$DP" --spec "$EXAMPLES/16-word-probe/spec-words-extra.json" \
+  > /dev/null 2> "$WORK/19.words.err" || { cat "$WORK/19.words.err"; fail "case 19: the extra relay failed"; }
+run_until_lines "$EXAMPLES/16-word-probe/spec-probe.json" "$WORK/19.probe" 7 "$DP"
+check "19 probe answers after an append" "$WORK/19.probe" "$EXAMPLES/16-word-probe/expected-probe-all.txt"
+grep -q '"word":"zebra","count":0' "$WORK/19.probe" ||
+  fail "case 19: the missing word did not get the default answer"
+AFTER2="$("$EXE" consume --topic count-per-word --from 0 --data-dir "$DP" 2>/dev/null | wc -l | tr -d ' ')"
+[ "$AFTER2" = "$BEFORE" ] ||
+  fail "the second probe wrote to the state topic ($BEFORE -> $AFTER2 records)"
+pass "19. a word appended to the follower's topic got the missing-word default, and neither probe run wrote state"
 
 # ---- 20-22. bank-processing: balances, and who is in the red -----------
 # The reference's eight sample events, verbatim and in timestamp order. A
@@ -390,8 +426,11 @@ pass "19. the probe wrote no state ($BEFORE records before and after) and report
 # the state layer fetches state per record key, so one record could not
 # compute both balances.
 DBANK="$WORK/p29-bank"
-"$EXE" pipeline run --data-dir "$DBANK" --spec "$EXAMPLES/17-bank-processing/spec-balance.json" \
-  > "$WORK/20.balances" 2> "$WORK/20.err" || { cat "$WORK/20.err"; fail "case 20: balance run failed"; }
+# the business events arrive on a topic (the reference's services read topics)
+"$EXE" pipeline run --data-dir "$DBANK" --spec "$EXAMPLES/17-bank-processing/spec-relay-events.json" \
+  > /dev/null 2> "$WORK/20.relay.err" || { cat "$WORK/20.relay.err"; fail "case 20: the event relay failed"; }
+run_until_lines "$EXAMPLES/17-bank-processing/spec-balance.json" "$WORK/20.balances" \
+  "$(wc -l < "$EXAMPLES/17-bank-processing/expected-balance.txt" | tr -d ' ')" "$DBANK"
 check "20 balance stream" "$WORK/20.balances" "$EXAMPLES/17-bank-processing/expected-balance.txt"
 pass "20. every affected account's balance, byte for byte, from the reference's own sample events"
 
@@ -402,8 +441,10 @@ check "21 final balances" "$WORK/21.final" "$EXAMPLES/17-bank-processing/expecte
 check "21 state history" "$WORK/21.state" "$EXAMPLES/17-bank-processing/expected-state.txt"
 pass "21. the state topic saw every write, and converges to 770/2610 per account"
 
-"$EXE" pipeline run --data-dir "$WORK/p29-bank-over" --spec "$EXAMPLES/17-bank-processing/spec-overdraft.json" \
-  > "$WORK/22.overdraft" 2> "$WORK/22.err" || { cat "$WORK/22.err"; fail "case 22: overdraft run failed"; }
+"$EXE" pipeline run --data-dir "$WORK/p29-bank-over" --spec "$EXAMPLES/17-bank-processing/spec-relay-overdraft.json" \
+  > /dev/null 2> "$WORK/22.relay.err" || { cat "$WORK/22.relay.err"; fail "case 22: the overdraft relay failed"; }
+run_until_lines "$EXAMPLES/17-bank-processing/spec-overdraft.json" "$WORK/22.overdraft" \
+  "$(wc -l < "$EXAMPLES/17-bank-processing/expected-overdraft.txt" | tr -d ' ')" "$WORK/p29-bank-over"
 check "22 overdraft stream" "$WORK/22.overdraft" "$EXAMPLES/17-bank-processing/expected-overdraft.txt"
 grep -q '"overdraft":true' "$WORK/22.overdraft" || fail "case 22: the overdraft line is not flagged"
 grep -q '"balance":-130' "$WORK/22.overdraft" || fail "case 22: the overdrawn balance is wrong"
@@ -550,8 +591,13 @@ pass "35. the cassette holds exactly one exchange per car and nothing that looks
 # primitive needs no new operator here: "store this row under this key,
 # later writes win" is a keyed state topic plus compaction.
 DUS="$WORK/p29-update-state"
-"$EXE" pipeline run --data-dir "$DUS" --spec "$EXAMPLES/23-update-state/spec-update-state.json" \
-  > "$WORK/36.out" 2> "$WORK/36.err" || { cat "$WORK/36.err"; fail "case 36: update-state run failed"; }
+# the sensor rows travel through a topic (the reference's save-temperature
+# service reads one), so the service is a follower of its own data
+"$EXE" pipeline run --data-dir "$DUS" --spec "$EXAMPLES/23-update-state/spec-relay.json" \
+  > /dev/null 2> "$WORK/36.relay.err" || { cat "$WORK/36.relay.err"; fail "case 36: the sensor relay failed"; }
+[ "$("$EXE" consume --topic temperature-stream --from 0 --data-dir "$DUS" 2>/dev/null | wc -l | tr -d ' ')" = "4" ] ||
+  fail "case 36: the sensor rows did not land on the topic"
+run_until_lines "$EXAMPLES/23-update-state/spec-update-state.json" "$WORK/36.out" 4 "$DUS"
 check "36 loaded rows" "$WORK/36.out" "$EXAMPLES/23-update-state/expected-stream.txt"
 "$EXE" consume --topic temperature --from 0 --data-dir "$DUS" 2>/dev/null | awk -F'	' '{last[$3]=$4} END {for (k in last) print k"\t"last[k]}' | sort \
   > "$WORK/36.table"
@@ -571,8 +617,9 @@ pass "37. the batch writes one row per key (three writes for four records), and 
 # earlier row came from an earlier record of the SAME batch (the host's state
 # input is the batch's opening snapshot, so the operator keeps the batch's
 # in-flight rows itself).
-"$EXE" pipeline run --data-dir "$WORK/p29-merge" --spec "$EXAMPLES/23-update-state/spec-merge.json" \
-  > "$WORK/37b.stream" 2> "$WORK/37b.err" || { cat "$WORK/37b.err"; fail "case 37: merge run failed"; }
+"$EXE" pipeline run --data-dir "$WORK/p29-merge" --spec "$EXAMPLES/23-update-state/spec-relay-partial.json" \
+  > /dev/null 2> "$WORK/37b.relay.err" || { cat "$WORK/37b.relay.err"; fail "case 37: the partial relay failed"; }
+run_until_lines "$EXAMPLES/23-update-state/spec-merge.json" "$WORK/37b.stream" 5 "$WORK/p29-merge"
 check "37 merge stream" "$WORK/37b.stream" "$EXAMPLES/23-update-state/expected-merge-stream.txt"
 "$EXE" consume --topic temperature-merge --from 0 --data-dir "$WORK/p29-merge" 2>/dev/null \
   | awk -F'	' '{last[$3]=$4} END {for (k in last) print k"\t"last[k]}' | sort > "$WORK/37b.table"
@@ -624,8 +671,10 @@ pass "39. the POST cassette replays offline and holds no credential"
 # two services, an article title expanded into words, and one notification per
 # (matched word, subscriber) pair.
 DHN="$WORK/p29-hackernews"
-"$EXE" pipeline run --data-dir "$DHN" --spec "$EXAMPLES/25-hackernews-notify/spec-subscribe.json" \
-  > "$WORK/40.requests" 2> "$WORK/40.err" || { cat "$WORK/40.err"; fail "case 40: subscribe run failed"; }
+# both services read topics (as the reference's do): the requests arrive on one
+"$EXE" pipeline run --data-dir "$DHN" --spec "$EXAMPLES/25-hackernews-notify/spec-relay-requests.json" \
+  > /dev/null 2> "$WORK/40.relay.err" || { cat "$WORK/40.relay.err"; fail "case 40: the request relay failed"; }
+run_until_lines "$EXAMPLES/25-hackernews-notify/spec-subscribe.json" "$WORK/40.requests" 4 "$DHN"
 [ "$(wc -l < "$WORK/40.requests" | tr -d ' ')" = "4" ] ||
   fail "case 40: expected the four requests to be emitted"
 "$EXE" consume --topic notify-table --from 0 --data-dir "$DHN" 2>/dev/null | cut -f3,4 > "$WORK/40.table"
@@ -634,8 +683,9 @@ grep -q "^rust	ada@example.com,bob@example.com$" "$WORK/40.table" ||
   { cat "$WORK/40.table"; fail "case 40: the duplicate subscription was not deduplicated"; }
 pass "40. two words in the table, and the repeated email appears exactly once"
 
-"$EXE" pipeline run --data-dir "$DHN" --spec "$EXAMPLES/25-hackernews-notify/spec-notify.json" \
-  > "$WORK/41.notify" 2> "$WORK/41.err" || { cat "$WORK/41.err"; fail "case 41: notify run failed"; }
+"$EXE" pipeline run --data-dir "$DHN" --spec "$EXAMPLES/25-hackernews-notify/spec-relay-articles.json" \
+  > /dev/null 2> "$WORK/41.relay.err" || { cat "$WORK/41.relay.err"; fail "case 41: the article relay failed"; }
+run_until_lines "$EXAMPLES/25-hackernews-notify/spec-notify.json" "$WORK/41.notify" 5 "$DHN"
 check "41 notifications" "$WORK/41.notify" "$EXAMPLES/25-hackernews-notify/expected-notifications.txt"
 [ "$(wc -l < "$WORK/41.notify" | tr -d ' ')" = "5" ] ||
   fail "case 41: expected five notifications (2 for article 1, 3 for article 2, none for article 3)"

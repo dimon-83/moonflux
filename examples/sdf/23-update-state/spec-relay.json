@@ -1,0 +1,21 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-update-state-relay"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/23-update-state/data.jsonl"
+    },
+    "topic": {
+      "name": "temp-sensor-in"
+    },
+    "transforms": [],
+    "sink": {
+      "type": "topic",
+      "name": "temperature-stream"
+    }
+  }
+}

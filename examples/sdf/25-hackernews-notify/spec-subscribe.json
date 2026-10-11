@@ -6,11 +6,12 @@
   },
   "spec": {
     "source": {
-      "type": "file",
-      "path": "examples/sdf/25-hackernews-notify/user-requests.jsonl"
+      "type": "topic",
+      "name": "user-request-stream",
+      "from": "beginning"
     },
     "topic": {
-      "name": "user-request"
+      "name": "user-request-stream"
     },
     "state": {
       "topic": "notify-table"

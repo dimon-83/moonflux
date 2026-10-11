@@ -1,0 +1,21 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-bank-relay-events"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/17-bank-processing/events.jsonl"
+    },
+    "topic": {
+      "name": "business-events-raw"
+    },
+    "transforms": [],
+    "sink": {
+      "type": "topic",
+      "name": "business-events"
+    }
+  }
+}

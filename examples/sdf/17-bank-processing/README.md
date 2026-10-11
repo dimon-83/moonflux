@@ -28,6 +28,20 @@ $EXE consume --topic account-balance --from 0 --data-dir "$D" | awk -F'\t' '{las
 → 每个受影响账户一条带键记录"是这套状态模型的要求，也正好是参考实现里 debit/credit 拆分的
 存在理由。
 
+## 服务从主题取数（决策 72）
+
+参考实现的两个服务都从主题读业务事件，本案例也这样跑：
+
+```
+spec-relay-events.json     file(events.jsonl)    → 空变换 → 主题 business-events            （接力）
+spec-balance.json          主题 business-events   → bankevents + balance        → stdout   （余额服务）
+spec-relay-overdraft.json  file(events-overdraft) → 空变换 → 主题 business-events-overdraft （接力）
+spec-overdraft.json        主题 …overdraft        → … + predicate              → stdout   （透支服务）
+```
+
+两个服务都是**跟随者**（主题源追平即 `Quiet`，从不 `Exhausted`），所以门禁用有界等待 + 停止它们，
+而不是等进程自己退出。
+
 ## 透支路径（`events-overdraft.jsonl`）
 
 样本数据本身不会透支（最终 Duncan 770 / Lucy 2610），所以另加一份**只多一笔取款**的夹具

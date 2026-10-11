@@ -10,15 +10,15 @@
 | 参考条目 | 类别 | 状态 | 我们的案例 | 门禁 / 说明 |
 | :--- | :--- | :--- | :--- | :--- |
 | `dataflows/word-counter` | dataflow | ported | examples/sdf/15-word-counter | p29 腿 16–17（**20 秒窗口 + 关闭时 flush top-3** = 参考的真实形状；另附计数半的续跑） |
-| `dataflows/word-probe` | dataflow | ported | examples/sdf/16-word-probe | p29 腿 18–19（两条管道共享状态主题；探测零写入） |
-| `dataflows/bank-processing` | dataflow | ported | examples/sdf/17-bank-processing | p29 腿 20–22（参考样本原样；debit/credit 拆分；透支选流） |
+| `dataflows/word-probe` | dataflow | ported | examples/sdf/16-word-probe | p29 腿 18–19（**主题接力**：句子主题 → 计数跟随者（写状态）→ 词主题 → 探测跟随者（读状态，零写入）） |
+| `dataflows/bank-processing` | dataflow | ported | examples/sdf/17-bank-processing | p29 腿 20–22（**主题接力**：业务事件主题 → 余额跟随者；透支主题 → 透支跟随者；参考样本原样） |
 | `dataflows/unreal-engine-analytics` | dataflow | ported | examples/sdf/18-unreal-engine-analytics | p29 腿 23–25（183 事件原样；标签映射；10 秒窗口） |
 | `dataflows/car-processing` | dataflow | ported | examples/sdf/19-car-processing | p29 腿 26–29（超速/地点/颜色窗口/套牌；合成夹具） |
 | `dataflows/helsinki-transit` | dataflow | ported | examples/sdf/20-helsinki-transit | p29 腿 30–31（清理 + 每车 5 秒平均速度） |
 | `dataflows/ny-transit` | dataflow | ported | examples/sdf/21-ny-transit | p29 腿 32–33（每区 30 秒平均小费；合成夹具） |
 | `dataflows/http-callout` | dataflow | ported | examples/sdf/22-http-callout | p29 腿 34–35 + p32 9 腿（宿主侧 callout，mode 必填） |
 | `dataflows/openai-callout` | dataflow | ported | examples/sdf/24-openai-callout | p29 腿 38–39（POST + 模型解析 + 每模型计数；凭据不入磁带） |
-| `dataflows/hackernews-notify` | dataflow | ported | examples/sdf/25-hackernews-notify | p29 腿 40–41（订阅表去重 + 逐订阅者通知） |
+| `dataflows/hackernews-notify` | dataflow | ported | examples/sdf/25-hackernews-notify | p29 腿 40–41（**主题接力**：请求主题 → 订阅跟随者；文章主题 → 通知跟随者；订阅表去重 + 逐订阅者通知） |
 | `dataflows/mask-user-pii` | dataflow | ported | examples/sdf/01-map-mask-ssn | p29 腿 1（mbel 规则遮蔽 PII 字段） |
 | `dataflows/split-sentence` | dataflow | ported | examples/sdf/04-flat-map-words | p29 腿 4（1→N 拆句） |
 | `primitives/map` | primitive | ported | examples/sdf/01-map-mask-ssn | p29 腿 1 |
@@ -30,7 +30,7 @@
 | `primitives/key-value` | primitive | ported | examples/sdf/07-key-value-keys | p29 腿 7 |
 | `primitives/regex` | primitive | ported | examples/sdf/14-regex-genz | p29 腿 13–15（内核自带引擎；子集按名拒绝） |
 | `primitives/custom-serialization` | primitive | ported | examples/sdf/12-custom-serialization | p29 腿 9–12（变通：`fromJSON`/`toJSON` + 恒等往返） |
-| `primitives/update-state` | primitive | ported | examples/sdf/23-update-state | p29 腿 36–37/37b（键控行：最后写入胜出 = 压实后的表；**字段级合并** = 参考 `row.update()` 语义，未携带的字段存活） |
+| `primitives/update-state` | primitive | ported | examples/sdf/23-update-state | p29 腿 36–37/37b（**主题接力**：传感器主题 → 保存跟随者；键控行最后写入胜出 = 压实后的表；**字段级合并** = 参考 `row.update()` 语义） |
 | `primitives/sql` | primitive | non-goal | — | 理由：SQL 引擎不是本项目的目标（AGENTS §9）；替代：mbel 表达式 + 状态算子（`counter`/`average`/`balance`）+ 消费者侧查询，见缺口语录 §缺口 3 |
 | `packages/mask-ssn` | package | ported | examples/sdf/01-map-mask-ssn | p29 腿 1 |
 | `packages/parse-sentence` | package | ported | examples/sdf/13-parse-sentence | p29 腿 8（`flatmap` 分词 + `string(len(value))` 取长度） |

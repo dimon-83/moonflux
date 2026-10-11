@@ -1,0 +1,21 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-hackernews-relay-requests"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/25-hackernews-notify/user-requests.jsonl"
+    },
+    "topic": {
+      "name": "user-request-raw"
+    },
+    "transforms": [],
+    "sink": {
+      "type": "topic",
+      "name": "user-request-stream"
+    }
+  }
+}

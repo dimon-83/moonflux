@@ -31,6 +31,19 @@ $EXE pipeline run --data-dir "$D" --spec $O/spec-notify.json       # 3 篇文章
 `rust` 有 2 位，第三篇文章 0 条。**如果去重漏了**（rust 列表里有三个 ada），通知就会多出两条，
 门禁会红——所以"去重"这条不是靠读代码相信，是被输出钉住的。
 
+## 两个服务从主题取数（决策 72）
+
+参考实现里两个服务都从主题读，本案例也这样跑：
+
+```
+spec-relay-requests.json  file(user-requests) → 空变换 → 主题 user-request-stream （接力）
+spec-subscribe.json       主题 user-request-stream → keyfield + subscribe → stdout（订阅服务，写共享状态）
+spec-relay-articles.json  file(articles)      → 空变换 → 主题 hackernews-stream   （接力）
+spec-notify.json          主题 hackernews-stream  → wordkeys + notify     → stdout（通知服务，读共享状态）
+```
+
+两个服务都是**跟随者**（追平即 `Quiet`，从不 `Exhausted`），门禁用有界等待 + 停止它们。
+
 ## 写这个案例时抓到的两件事
 
 1. **`wordkeys` 拆错了对象**：它拆的是**整条值**，而文章的值是 JSON——第一次跑出来的"词"是

@@ -1,11 +1,18 @@
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
-  "metadata": { "name": "sdf-word-probe-lookup" },
+  "metadata": {
+    "name": "sdf-word-probe-probe"
+  },
   "spec": {
-    "source": { "type": "file", "path": "examples/sdf/16-word-probe/words.txt" },
-    "topic": { "name": "words" },
-    "state": { "topic": "count-per-word" },
+    "source": {
+      "type": "topic",
+      "name": "word-stream",
+      "from": "beginning"
+    },
+    "topic": {
+      "name": "word-stream"
+    },
     "transforms": [
       {
         "type": "wasm",
@@ -18,6 +25,11 @@
         "config": {}
       }
     ],
-    "sink": { "type": "stdout" }
+    "sink": {
+      "type": "stdout"
+    },
+    "state": {
+      "topic": "count-per-word"
+    }
   }
 }

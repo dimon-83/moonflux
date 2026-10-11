@@ -2,15 +2,16 @@
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
   "metadata": {
-    "name": "sdf-update-state-merge"
+    "name": "sdf-update-state-merge-service"
   },
   "spec": {
     "source": {
-      "type": "file",
-      "path": "examples/sdf/23-update-state/data-partial.jsonl"
+      "type": "topic",
+      "name": "temperature-partial-stream",
+      "from": "beginning"
     },
     "topic": {
-      "name": "temp-sensor-partial"
+      "name": "temperature-partial-stream"
     },
     "state": {
       "topic": "temperature-merge"

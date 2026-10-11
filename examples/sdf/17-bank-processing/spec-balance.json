@@ -1,11 +1,21 @@
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
-  "metadata": { "name": "sdf-bank-balance" },
+  "metadata": {
+    "name": "sdf-bank-balance"
+  },
   "spec": {
-    "source": { "type": "file", "path": "examples/sdf/17-bank-processing/events.jsonl" },
-    "topic": { "name": "business-events" },
-    "state": { "topic": "account-balance" },
+    "source": {
+      "type": "topic",
+      "name": "business-events",
+      "from": "beginning"
+    },
+    "topic": {
+      "name": "business-events"
+    },
+    "state": {
+      "topic": "account-balance"
+    },
     "transforms": [
       {
         "type": "wasm",
@@ -18,6 +28,8 @@
         "config": {}
       }
     ],
-    "sink": { "type": "stdout" }
+    "sink": {
+      "type": "stdout"
+    }
   }
 }
