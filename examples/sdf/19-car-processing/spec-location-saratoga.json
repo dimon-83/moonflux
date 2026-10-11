@@ -1,0 +1,39 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "location-saratoga"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/19-car-processing/cars.jsonl"
+    },
+    "topic": {
+      "name": "cars"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-predicate/operator-predicate.wasm",
+        "config": {
+          "field": "mph",
+          "op": "gt",
+          "value": 60
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-predicate/operator-predicate.wasm",
+        "config": {
+          "field": "location",
+          "op": "eq",
+          "value": "Saratoga"
+        }
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "color-windows"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/19-car-processing/cars.jsonl"
+    },
+    "topic": {
+      "name": "cars"
+    },
+    "state": {
+      "topic": "count-by-color"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "color"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-tumble/operator-tumble.wasm",
+        "config": {
+          "window_ms": 30000,
+          "time_field": "timestamp",
+          "time_format": "iso8601"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-counter/operator-counter.wasm",
+        "config": {}
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

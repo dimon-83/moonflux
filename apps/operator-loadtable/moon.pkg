@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-loadtable: load a keyed reference table into state (wasm
+// guest, ABI v1 + v3). SDF's `save-license-plates` service reads the
+// `licenses` topic into a keyed-state table that other services reference;
+// in moonflux that is a state TOPIC, and this operator is the loader.
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_state_abi_version",
+        "mf_op_state_apply",
+      ],
+    },
+  },
+)

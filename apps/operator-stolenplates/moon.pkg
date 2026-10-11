@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-stolenplates: compare a car against the registered-plate
+// table and emit the mismatches (wasm guest, ABI v1 + v3). SDF's
+// `check-license-plates` service: a plate that is registered to a DIFFERENT
+// maker/model is a stolen plate on the car carrying it.
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_state_abi_version",
+        "mf_op_state_apply",
+      ],
+    },
+  },
+)

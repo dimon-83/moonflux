@@ -9,7 +9,7 @@ cd "$ROOT"
 
 echo "[1/3] building operator modules (wasm target)"
 moon build --target wasm --output-wat
-for op in operator-identity operator-upper operator-fixture operator-scalar operator-filter operator-flatmap operator-counter operator-wordkeys operator-tumble operator-probe operator-bankevents operator-balance operator-predicate operator-keyfield; do
+for op in operator-identity operator-upper operator-fixture operator-scalar operator-filter operator-flatmap operator-counter operator-wordkeys operator-tumble operator-probe operator-bankevents operator-balance operator-predicate operator-keyfield operator-loadtable operator-stolenplates; do
   WASM="_build/wasm/release/build/apps/$op/$op.wasm"
   [ -f "$WASM" ] || WASM="_build/wasm/debug/build/apps/$op/$op.wasm"
   [ -f "$WASM" ] || { echo "missing $WASM" >&2; exit 1; }
@@ -34,6 +34,11 @@ for op in operator-identity operator-upper operator-fixture operator-scalar oper
     # nobody compiled from this tree
     echo "  $op: stale artifact — rebuilding this package"
     moon build --target wasm "apps/$op"
+    # record that the artifact came from this tree. moonc is content-addressed,
+    # so "no work to do" means the artifact already matches the sources — but
+    # it leaves the mtime alone, and the check below would then report the same
+    # package stale forever (measured immediately after adding this check).
+    touch "$WASM"
     STALE="$(find core apps -newer "$WASM" \( -name '*.mbt' -o -name 'moon.pkg' \) -print -quit)"
     if [ -n "$STALE" ]; then
       echo "  $op: STALE artifact ($WASM is older than $STALE) after a rebuild" >&2

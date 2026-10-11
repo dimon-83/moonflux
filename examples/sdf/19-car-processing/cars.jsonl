@@ -1,0 +1,10 @@
+{"maker":"Fiat","model":"124 Spider","category":"Convertible","color":"beige","license":"7WPK493","fuel":"gasoline","location":"Sunnyvale","mph":43,"timestamp":"2024-03-14T16:12:10.493Z"}
+{"maker":"Toyota","model":"Camry","category":"Sedan","color":"white","license":"0VTI452","fuel":"gasoline","location":"Sunnyvale","mph":72,"timestamp":"2024-03-14T16:12:20.000Z"}
+{"maker":"Ford","model":"Fusion","category":"Sedan","color":"black","license":"7YHM485","fuel":"gasoline","location":"Sunnyvale","mph":58,"timestamp":"2024-03-14T16:12:35.000Z"}
+{"maker":"Fiat","model":"500","category":"Hatchback","color":"red","license":"3KDL829","fuel":"gasoline","location":"Saratoga","mph":66,"timestamp":"2024-03-14T16:12:45.000Z"}
+{"maker":"Fiat","model":"500","category":"Hatchback","color":"blue","license":"0VTI452","fuel":"gasoline","location":"Saratoga","mph":81,"timestamp":"2024-03-14T16:13:05.000Z"}
+{"maker":"Honda","model":"Civic","category":"Sedan","color":"white","license":"5RTM118","fuel":"gasoline","location":"Sunnyvale","mph":39,"timestamp":"2024-03-14T16:13:20.000Z"}
+{"maker":"Tesla","model":"Model 3","category":"Sedan","color":"white","license":"9QLP604","fuel":"electric","location":"Saratoga","mph":64,"timestamp":"2024-03-14T16:13:35.000Z"}
+{"maker":"Ford","model":"Fusion","category":"Sedan","color":"silver","license":"7YHM485","fuel":"hybrid","location":"Sunnyvale","mph":77,"timestamp":"2024-03-14T16:13:50.000Z"}
+{"maker":"Toyota","model":"Camry","category":"Sedan","color":"black","license":"0VTI452","fuel":"gasoline","location":"Sunnyvale","mph":55,"timestamp":"2024-03-14T16:14:05.000Z"}
+{"maker":"Fiat","model":"124 Spider","category":"Convertible","color":"red","license":"7WPK493","fuel":"gasoline","location":"Saratoga","mph":69,"timestamp":"2024-03-14T16:14:20.000Z"}

@@ -1,0 +1,42 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "licenses"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/19-car-processing/licenses.jsonl"
+    },
+    "topic": {
+      "name": "licenses"
+    },
+    "state": {
+      "topic": "license-plates"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "license"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-loadtable/operator-loadtable.wasm",
+        "config": {
+          "key_field": "license",
+          "value_fields": [
+            "maker",
+            "model"
+          ]
+        }
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

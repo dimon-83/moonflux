@@ -1,0 +1,2 @@
+{"maker":"Toyota","model":"Camry","category":"Sedan","color":"white","license":"0VTI452","fuel":"gasoline","location":"Sunnyvale","mph":72,"timestamp":"2024-03-14T16:12:20.000Z"}
+{"maker":"Ford","model":"Fusion","category":"Sedan","color":"silver","license":"7YHM485","fuel":"hybrid","location":"Sunnyvale","mph":77,"timestamp":"2024-03-14T16:13:50.000Z"}

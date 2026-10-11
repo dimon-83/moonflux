@@ -42,6 +42,14 @@
 #                  own 183-event sample, byte for byte
 #  24  unreal        the label table's catch-all: beginPlay and
 #                  endPlay both land in `other`
+#  26  car           speeding selection (mph > 60) through the
+#                  structural predicate
+#  27  car           split by location: two pipelines, disjoint
+#                  selections that add up to the speeding set
+#  28  car           30-second colour windows: ISO-8601 event
+#                  time, one state entry per colour@window
+#  29  car           a registered plate on a different car is a
+#                  stolen plate, and the check writes nothing
 #  25  unreal        10-second tumbling counts: the same label
 #                  in two windows is two state entries
 #  22  bank          an overdrawing withdrawal is flagged and
@@ -393,4 +401,51 @@ check "25 window state entries" "$WORK/25.state" "$EXAMPLES/18-unreal-engine-ana
 grep -q "@1700000000000" "$WORK/25.state" || fail "case 25: the window start is not visible in the state key"
 pass "25. 10-second tumbling windows: the same label in two windows is two independent state entries"
 
-echo "E2E-P29-EXAMPLES: 25 legs green (18 case specs across 18 example applications)"
+# ---- 26-29. car-processing: speed, locations, colour windows, plates --
+# The fixture is SYNTHETIC (the reference reads a live generator); it follows
+# the schema its README documents, spread over three 30-second windows, and
+# contains exactly one plate that is registered to a different car.
+DCAR="$WORK/p29-car"
+"$EXE" pipeline run --data-dir "$DCAR" --spec "$EXAMPLES/19-car-processing/spec-speed.json" \
+  > "$WORK/26.speed" 2> "$WORK/26.err" || { cat "$WORK/26.err"; fail "case 26: speed run failed"; }
+check "26 speeding selection" "$WORK/26.speed" "$EXAMPLES/19-car-processing/expected-speed.txt"
+[ "$(wc -l < "$WORK/26.speed" | tr -d ' ')" = "6" ] || fail "case 26: expected 6 speeding cars"
+pass "26. mph > 60 selects exactly the six speeding cars, byte for byte"
+
+for loc in sunnyvale saratoga; do
+  "$EXE" pipeline run --data-dir "$DCAR" --spec "$EXAMPLES/19-car-processing/spec-location-$loc.json" \
+    > "$WORK/27.$loc" 2> "$WORK/27.$loc.err" || { cat "$WORK/27.$loc.err"; fail "case 27: $loc run failed"; }
+  check "27 $loc selection" "$WORK/27.$loc" "$EXAMPLES/19-car-processing/expected-location-$loc.txt"
+done
+cat "$WORK/27.sunnyvale" "$WORK/27.saratoga" | sort > "$WORK/27.both"
+sort "$WORK/26.speed" > "$WORK/26.sorted"
+diff -u "$WORK/26.sorted" "$WORK/27.both" ||
+  fail "case 27: the two locations do not add up to the speeding set (disjoint and complete)"
+pass "27. the two location pipelines are disjoint and together cover the speeding set"
+
+"$EXE" pipeline run --data-dir "$DCAR" --spec "$EXAMPLES/19-car-processing/spec-color-windows.json" \
+  > "$WORK/28.windows" 2> "$WORK/28.err" || { cat "$WORK/28.err"; fail "case 28: colour windows failed"; }
+check "28 colour window stream" "$WORK/28.windows" "$EXAMPLES/19-car-processing/expected-color-windows.txt"
+"$EXE" consume --topic count-by-color --from 0 --data-dir "$DCAR" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/28.state"
+check "28 colour window state" "$WORK/28.state" "$EXAMPLES/19-car-processing/expected-color-state.txt"
+grep -q "@1710432" "$WORK/28.state" || fail "case 28: the window start is not in the state key"
+pass "28. ISO-8601 event time puts each car in its 30-second window, one state entry per colour@window"
+
+DCARS="$WORK/p29-car-plates"
+"$EXE" pipeline run --data-dir "$DCARS" --spec "$EXAMPLES/19-car-processing/spec-licenses.json" \
+  > "$WORK/29.load" 2> "$WORK/29.err" || { cat "$WORK/29.err"; fail "case 29: license load failed"; }
+check "29 registered plates" "$WORK/29.load" "$EXAMPLES/19-car-processing/expected-licenses.txt"
+"$EXE" consume --topic license-plates --from 0 --data-dir "$DCARS" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/29.table"
+check "29 license table rows" "$WORK/29.table" "$EXAMPLES/19-car-processing/expected-license-state.txt"
+"$EXE" pipeline run --data-dir "$DCARS" --spec "$EXAMPLES/19-car-processing/spec-stolen.json" \
+  > "$WORK/29.stolen" 2> "$WORK/29.stolen.err" || { cat "$WORK/29.stolen.err"; fail "case 29: stolen check failed"; }
+check "29 stolen plate" "$WORK/29.stolen" "$EXAMPLES/19-car-processing/expected-stolen.txt"
+"$EXE" consume --topic license-plates --from 0 --data-dir "$DCARS" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/29.after"
+diff -u "$WORK/29.table" "$WORK/29.after" ||
+  fail "case 29: the stolen-plate check wrote to the table it was checking"
+pass "29. one plate registered to a different car is reported, and the read-only check left the table untouched"
+
+echo "E2E-P29-EXAMPLES: 29 legs green (19 case specs across 19 example applications)"
