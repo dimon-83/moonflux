@@ -29,15 +29,17 @@
 | 6 | [`06-merge-two-sources`](../examples/sdf/06-merge-two-sources/) | `primitives/merge` | **两条入口 spec 写同一个主题**；主题即合并后的流（偏移 0..3 连续） | 6 |
 | 7 | [`07-key-value-keys`](../examples/sdf/07-key-value-keys/) | `primitives/key-value/{input,output,chained}` | key 是**日志的一列**：`produce --key-separator` 打戳、`consume` 第 3 列可见、跨存储存活 | 7 |
 | 24 | [`24-openai-callout`](../examples/sdf/24-openai-callout/) | `dataflows/openai-callout` | `operator-modelreq`（模型清单是配置）+ POST callout + 逐模型计数（取自响应）；**凭据在 apply 期统一展开（replay 也要）**、磁带无 token | 38 / 39 |
-| 23 | [`23-update-state`](../examples/sdf/23-update-state/) | `primitives/update-state` | primitive 本体：键控行**最后写入胜出** = 状态主题压实后的表；夹具是参考 `sample-data/data.txt` 原样 | 36 / 37 |
+| 25 | [`25-hackernews-notify`](../examples/sdf/25-hackernews-notify/) | `dataflows/hackernews-notify` | **主题接力**（请求主题 → 订阅跟随者；文章主题 → 通知跟随者，决策 73）+ 键控订阅表（去重）+ 标题按词展开 + 逐订阅者通知 | 40 / 41 |
+| 26 | [`26-dedupe`](../examples/sdf/26-dedupe/) | **无对应 dataflow**（参考示例集未使用 dedupe） | 能力补齐（决策 71）：每个键的第一条通过；**去重期限 = 键的形状**（`keyfield → tumble → dedupe` 即每窗去重；无窗口即永久，上界写明） | 42 / 43 |
+| 23 | [`23-update-state`](../examples/sdf/23-update-state/) | `primitives/update-state` | primitive 本体：键控行**最后写入胜出** = 状态主题压实后的表 + **字段级合并**（决策 70）+ **主题接力**（传感器主题 → 保存跟随者，决策 73）；夹具是参考 `sample-data/data.txt` 原样 | 36 / 37 / 37b |
 | 22 | [`22-http-callout`](../examples/sdf/22-http-callout/) | `dataflows/http-callout` | **宿主侧 callout**：按 `maker` 填 URL 调 HTTP，`mode` 必填（live/record/replay）；夹具与独立 mock 对端（`scripts/http_mock.py`）产出的磁带 | 34 / 35（专有门禁 `e2e-p32-callout.sh` 9 腿） |
 | 21 | [`21-ny-transit`](../examples/sdf/21-ny-transit/) | `dataflows/ny-transit` | **合成夹具**（TLC 公开数据集不在仓库）按参考 schema：按 `PULocationID` × 30 秒窗口的**平均小费**（`sum,count` 状态）；`vendors`/`locations` 表只服务可视化的 SQL join（SQL 明示非目标） | 32 / 33 |
 | 20 | [`20-helsinki-transit`](../examples/sdf/20-helsinki-transit/) | `dataflows/helsinki-transit` | 夹具首条是参考包 **`sample/sdf.json` 的真实事件**；三个谓词复刻 `clean-events`（10 进 7 出）+ 每车每 5 秒窗口平均速度；参考走 MQTT，本案例用文件回放（传输在案例 10/11 门禁里） | 30 / 31 |
 | 19 | [`19-car-processing`](../examples/sdf/19-car-processing/) | `dataflows/car-processing` | **合成夹具**（参考从实时生成器拉取）按 README schema：超速（结构化谓词）+ 按地点两条管道 + 颜色 × 30 秒窗口（ISO-8601 事件时间）+ 参考表加载与**套牌比对**（只读） | 26 / 27 / 28 / 29 |
 | 18 | [`18-unreal-engine-analytics`](../examples/sdf/18-unreal-engine-analytics/) | `dataflows/unreal-engine-analytics` | 参考样本 183 事件原样；`keyfield`（标签映射表 + `_ => other`）+ `counter`；窗口管道 = 同一批事件加事件时间 `ts` + `tumble(10s)`（参考实现此处**读时钟**，我们不读——如实边界） | 23 / 24 / 25 |
-| 17 | [`17-bank-processing`](../examples/sdf/17-bank-processing/) | `dataflows/bank-processing` | 参考样本 8 事件原样入夹具；`bankevents`（1→2 拆 debit/credit + 设键）+ `balance`（ABI v3 按 iban 累加）；透支标志 + `filter` 选流 | 20 / 21 / 22 |
-| 16 | [`16-word-probe`](../examples/sdf/16-word-probe/) | `dataflows/word-probe` | 两条管道共享同一条状态主题（计数写、探测只读）；冻结流/状态/探测答案/缺失词 | 18 / 19 |
-| 15 | [`15-word-counter`](../examples/sdf/15-word-counter/) | `dataflows/word-counter` | `wordkeys`（设键）+ `counter`（ABI v3 状态）；字节级冻结首跑/续跑/状态主题三份 | 16 / 17 |
+| 17 | [`17-bank-processing`](../examples/sdf/17-bank-processing/) | `dataflows/bank-processing` | **主题接力**（事件主题 → 余额跟随者；透支主题 → 透支跟随者，决策 73）+ 参考样本 8 事件原样入夹具；`bankevents`（1→2 拆 debit/credit + 设键）+ `balance`（键控状态） | 20 / 21 / 22 |
+| 16 | [`16-word-probe`](../examples/sdf/16-word-probe/) | `dataflows/word-probe` | **主题接力**（句子主题 → 计数跟随者写状态；词主题 → 探测跟随者读状态，决策 73）；冻结流/状态/探测答案/追加后七答案 | 18 / 19 |
+| 15 | [`15-word-counter`](../examples/sdf/15-word-counter/) | `dataflows/word-counter` | **参考的真实形状**：20 秒 tumbling 窗口 + **窗口关闭时 flush top-3**（`topwords`，决策 69；水位 = 已见最大事件时间，不读时钟）+ 计数半（`wordkeys`+`counter`，首跑/续跑/状态三份冻结） | 16 / 17 |
 | 8 | [`08-state-is-the-log`](../examples/sdf/08-state-is-the-log/) | `primitives/update-state`、`dataflows/word-counter` | ① 同一主题两个视角（`consume --remote` 走已应用拓扑=服务视图；`consume --data-dir`=原始日志视图）；② 键控压实作为"每键最新"的物化，偏移不变 | 8a / 8b |
 | 9 | [`09-http-source`](../examples/sdf/09-http-source/) | `dataflows/car-processing`、`dataflows/ny-transit`（入湖段） | **spec 内的 HTTP 源**：一次性 GET（`spec.json`）与**轮询**（`spec-poll.json`，`interval_ms`）两种形态 → 沙箱过滤 → 主题；日志保留原始抓取 | 1, 7 |
 | 10 | [`10-mqtt-transit`](../examples/sdf/10-mqtt-transit/) | `dataflows/helsinki-transit`（入湖段） | **spec 内的 MQTT 订阅源**（流式，不停机）→ 主题；线上形状由仓库自带的 MQTT 测试 broker 断言 | 2–3 |
@@ -57,7 +59,7 @@
 | SDF 概念 | moonflux 对应物 | 是否等价 |
 | :--- | :--- | :--- |
 | `topics:` + 主题内数据 | topic 分区日志（`core/log`） | ✅ 同一层概念 |
-| `services:` 的 `sources: topic` → `sinks: topic` | **已应用拓扑**（`pipeline apply` 写 `topology.json`，服务端在取数路径上应用）+ 入口式 pipeline（外部源 → 主题 → 汇） | ⚠️ 形状不同：SDF 服务是"主题→主题"的常驻程序；moonflux 的 spec 是**入口式**（外部源→主题→汇），消费侧变换由节点上唯一的一份已应用拓扑提供 |
+| `services:` 的 `sources: topic` → `sinks: topic` | **已应用拓扑**（`pipeline apply` 写 `topology.json`，服务端在取数路径上应用）**+ 主题源/主题汇的 pipeline**（`{"type":"topic"}`，决策 72） | ✅ **形状现在一致**：主题源 + 主题汇就是"主题→主题"的常驻程序（追平即 `Quiet`，从不 `Exhausted`）。两条如实边界：**起点按 `from` 声明、没有提交进度**（那是消费组的地盘）；变换链仍是"一份 spec 一条链" |
 | `transforms:` 挂在 service / source / sink / partition 四处 | 变换链挂在 spec 上（每个 spec 一条链，整份 spec 与一个主题绑定） | ⚠️ moonflux 是**每节点一份拓扑**，不是每服务/每汇一份；`split` 的"一服务多汇"没有直接对应物 |
 | `operator: map/filter/filter-map/flat-map`（Rust SmartModule） | `{"type":"wasm"}`（ABI v1 批算子，1→N/1→0 都可）、`{"type":"scalar"}`（ABI v2 标量，逐条）、`{"type":"expr"}`（mbel 规则，**必须返回字符串**） | ⚠️ 能力覆盖 1→1/1→0/1→N；但**规则不能丢弃记录**，所以 filter 类必须走沙箱 |
 | `packages/*`（`sdf build` + Hub 分发 + `uses:`） | **函数集资产**（`function-set create`，JSON 文档 + 单调 revision + apply 时按名绑定）与算子模块（wasm 制品） | ⚠️ 形态相近，分发不同：moonflux 是逐节点/控制面持有，SDF 走 Hub 包市 |
