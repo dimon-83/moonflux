@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-bankevents: normalize bank events into keyed delta records
+// (wasm guest, ABI v1). This is SDF's debit/credit split: a transfer touches
+// TWO accounts, and the host hands a stateful operator the state for the
+// keys in its batch — so one record per affected account is not a
+// convenience, it is what makes the per-account state correct.
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+      ],
+    },
+  },
+)

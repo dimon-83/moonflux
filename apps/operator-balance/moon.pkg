@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-balance: per-account balance as keyed state (wasm guest,
+// ABI v1 + v3). SDF keeps this in an `account-balance` state object and
+// calls it `update-state`; here the state is the account key's entry in a
+// state topic, and this operator is the arithmetic (P30/T114).
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_state_abi_version",
+        "mf_op_state_apply",
+      ],
+    },
+  },
+)

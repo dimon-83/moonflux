@@ -1,0 +1,4 @@
+{"word":"eyes","count":3}
+{"word":"stars","count":1}
+{"word":"the","count":4}
+{"word":"zebra","count":0}

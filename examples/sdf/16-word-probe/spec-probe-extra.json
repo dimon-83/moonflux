@@ -1,0 +1,23 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-word-probe-lookup" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/16-word-probe/words-extra.txt" },
+    "topic": { "name": "words" },
+    "state": { "topic": "count-per-word" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-wordkeys/operator-wordkeys.wasm",
+        "config": {}
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-probe/operator-probe.wasm",
+        "config": {}
+      }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

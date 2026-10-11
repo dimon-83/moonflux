@@ -1,0 +1,10 @@
+{"iban":"GB56DVTE70858022060682","balance":1000,"delta":1000,"operation":"CreditAccount","txid":"","overdraft":false}
+{"iban":"GB36MWIE43141216656969","balance":2500,"delta":2500,"operation":"CreditAccount","txid":"","overdraft":false}
+{"iban":"GB56DVTE70858022060682","balance":1500,"delta":500,"operation":"CreditAccount","txid":"T00000001","overdraft":false}
+{"iban":"GB36MWIE43141216656969","balance":2700,"delta":200,"operation":"CreditAccount","txid":"T00000002","overdraft":false}
+{"iban":"GB56DVTE70858022060682","balance":720,"delta":-780,"operation":"DebitAccount","txid":"T00000003","overdraft":false}
+{"iban":"GB36MWIE43141216656969","balance":2660,"delta":-40,"operation":"DebitAccount","txid":"T00000004","overdraft":false}
+{"iban":"GB36MWIE43141216656969","balance":2560,"delta":-100,"operation":"DebitAccount","txid":"T00000010","overdraft":false}
+{"iban":"GB56DVTE70858022060682","balance":820,"delta":100,"operation":"CreditAccount","txid":"T00000010","overdraft":false}
+{"iban":"GB56DVTE70858022060682","balance":770,"delta":-50,"operation":"DebitAccount","txid":"T00000011","overdraft":false}
+{"iban":"GB36MWIE43141216656969","balance":2610,"delta":50,"operation":"CreditAccount","txid":"T00000011","overdraft":false}

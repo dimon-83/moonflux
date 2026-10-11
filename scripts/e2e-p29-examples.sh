@@ -32,6 +32,17 @@
 #                  apply-time refusal, by name
 #  16  word-counter keyed state: the running count per
 #                  word, byte for byte
+#  18  word-probe   a second pipeline reads the SAME state
+#                  topic and answers per word
+#  20  bank          per-account balances from the reference
+#                  sample events, byte for byte
+#  21  bank          the state topic converges to one balance
+#                  per account
+#  22  bank          an overdrawing withdrawal is flagged and
+#                  selected into its own stream
+#  19  word-probe   the probe writes nothing (state record
+#                  count unchanged) and reports `missing`
+#                  for a word the state never saw
 #  17  word-counter the state topic holds one entry per
 #      (state/state) word, and a second run continues
 #                  from it (the log is the truth)
@@ -295,4 +306,54 @@ check "17 state topic per word" "$WORK/17.state" "$EXAMPLES/15-word-counter/expe
 check "17 second run continues" "$WORK/17.out" "$EXAMPLES/15-word-counter/expected-second-run.txt"
 pass "17. the state topic holds one entry per word, and the second run continues from it"
 
-echo "E2E-P29-EXAMPLES: 17 legs green (15 case specs across 15 example applications)"
+# ---- 18-19. word-probe: the same state, read by another pipeline -------
+# SDF has two services here, the second referencing the first's state. In
+# moonflux they are two pipelines pointing at one state TOPIC — so the gate
+# has to prove two things: the answer is right, and reading is not writing.
+DP="$WORK/p29-wordprobe"
+"$EXE" pipeline run --data-dir "$DP" --spec "$EXAMPLES/16-word-probe/spec-count.json" \
+  > "$WORK/18.counts" 2> "$WORK/18.err" || { cat "$WORK/18.err"; fail "case 18: counting pipeline failed"; }
+check "18 per-word stream" "$WORK/18.counts" "$EXAMPLES/16-word-probe/expected-counts-stream.txt"
+"$EXE" consume --topic count-per-word --from 0 --data-dir "$DP" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/18.state"
+check "18 per-word state" "$WORK/18.state" "$EXAMPLES/16-word-probe/expected-state.txt"
+BEFORE="$("$EXE" consume --topic count-per-word --from 0 --data-dir "$DP" 2>/dev/null | wc -l | tr -d ' ')"
+"$EXE" pipeline run --data-dir "$DP" --spec "$EXAMPLES/16-word-probe/spec-probe.json" \
+  > "$WORK/18.probe" 2> "$WORK/18.probe.err" || { cat "$WORK/18.probe.err"; fail "case 18: probe pipeline failed"; }
+check "18 probe answers" "$WORK/18.probe" "$EXAMPLES/16-word-probe/expected-probe.txt"
+pass "18. a second pipeline read the same state topic and answered per word, byte for byte"
+
+AFTER="$("$EXE" consume --topic count-per-word --from 0 --data-dir "$DP" 2>/dev/null | wc -l | tr -d ' ')"
+[ "$AFTER" = "$BEFORE" ] ||
+  fail "the probe wrote to the state topic ($BEFORE -> $AFTER records): reading must not write"
+"$EXE" pipeline run --data-dir "$DP" --spec "$EXAMPLES/16-word-probe/spec-probe-extra.json" \
+  > "$WORK/19.probe" 2> "$WORK/19.probe.err" || { cat "$WORK/19.probe.err"; fail "case 19: probe failed"; }
+check "19 a word the state never saw" "$WORK/19.probe" "$EXAMPLES/16-word-probe/expected-probe-extra.txt"
+pass "19. the probe wrote no state ($BEFORE records before and after) and reported the missing-word default"
+
+# ---- 20-22. bank-processing: balances, and who is in the red -----------
+# The reference's eight sample events, verbatim and in timestamp order. A
+# transfer touches two accounts, which is why it becomes two keyed records:
+# the state layer fetches state per record key, so one record could not
+# compute both balances.
+DBANK="$WORK/p29-bank"
+"$EXE" pipeline run --data-dir "$DBANK" --spec "$EXAMPLES/17-bank-processing/spec-balance.json" \
+  > "$WORK/20.balances" 2> "$WORK/20.err" || { cat "$WORK/20.err"; fail "case 20: balance run failed"; }
+check "20 balance stream" "$WORK/20.balances" "$EXAMPLES/17-bank-processing/expected-balance.txt"
+pass "20. every affected account's balance, byte for byte, from the reference's own sample events"
+
+"$EXE" consume --topic account-balance --from 0 --data-dir "$DBANK" 2>/dev/null \
+  | awk -F'	' '{last[$3]=$4} END {for (k in last) print k"\t"last[k]}' | sort > "$WORK/21.final"
+check "21 final balances" "$WORK/21.final" "$EXAMPLES/17-bank-processing/expected-final-balances.txt"
+"$EXE" consume --topic account-balance --from 0 --data-dir "$DBANK" 2>/dev/null | cut -f3,4 | sort > "$WORK/21.state"
+check "21 state history" "$WORK/21.state" "$EXAMPLES/17-bank-processing/expected-state.txt"
+pass "21. the state topic saw every write, and converges to 770/2610 per account"
+
+"$EXE" pipeline run --data-dir "$WORK/p29-bank-over" --spec "$EXAMPLES/17-bank-processing/spec-overdraft.json" \
+  > "$WORK/22.overdraft" 2> "$WORK/22.err" || { cat "$WORK/22.err"; fail "case 22: overdraft run failed"; }
+check "22 overdraft stream" "$WORK/22.overdraft" "$EXAMPLES/17-bank-processing/expected-overdraft.txt"
+grep -q '"overdraft":true' "$WORK/22.overdraft" || fail "case 22: the overdraft line is not flagged"
+grep -q '"balance":-130' "$WORK/22.overdraft" || fail "case 22: the overdrawn balance is wrong"
+pass "22. an overdrawing withdrawal is flagged and selected: one line, balance -130"
+
+echo "E2E-P29-EXAMPLES: 22 legs green (17 case specs across 17 example applications)"

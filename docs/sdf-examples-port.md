@@ -28,6 +28,8 @@
 | 5 | [`05-split-two-streams`](../examples/sdf/05-split-two-streams/) | `primitives/split/filter` | **两条入口 spec**（各一个过滤分支、各自主题），断言两个分支不相交 | 5 |
 | 6 | [`06-merge-two-sources`](../examples/sdf/06-merge-two-sources/) | `primitives/merge` | **两条入口 spec 写同一个主题**；主题即合并后的流（偏移 0..3 连续） | 6 |
 | 7 | [`07-key-value-keys`](../examples/sdf/07-key-value-keys/) | `primitives/key-value/{input,output,chained}` | key 是**日志的一列**：`produce --key-separator` 打戳、`consume` 第 3 列可见、跨存储存活 | 7 |
+| 17 | [`17-bank-processing`](../examples/sdf/17-bank-processing/) | `dataflows/bank-processing` | 参考样本 8 事件原样入夹具；`bankevents`（1→2 拆 debit/credit + 设键）+ `balance`（ABI v3 按 iban 累加）；透支标志 + `filter` 选流 | 20 / 21 / 22 |
+| 16 | [`16-word-probe`](../examples/sdf/16-word-probe/) | `dataflows/word-probe` | 两条管道共享同一条状态主题（计数写、探测只读）；冻结流/状态/探测答案/缺失词 | 18 / 19 |
 | 15 | [`15-word-counter`](../examples/sdf/15-word-counter/) | `dataflows/word-counter` | `wordkeys`（设键）+ `counter`（ABI v3 状态）；字节级冻结首跑/续跑/状态主题三份 | 16 / 17 |
 | 8 | [`08-state-is-the-log`](../examples/sdf/08-state-is-the-log/) | `primitives/update-state`、`dataflows/word-counter` | ① 同一主题两个视角（`consume --remote` 走已应用拓扑=服务视图；`consume --data-dir`=原始日志视图）；② 键控压实作为"每键最新"的物化，偏移不变 | 8a / 8b |
 | 9 | [`09-http-source`](../examples/sdf/09-http-source/) | `dataflows/car-processing`、`dataflows/ny-transit`（入湖段） | **spec 内的 HTTP 源**：一次性 GET（`spec.json`）与**轮询**（`spec-poll.json`，`interval_ms`）两种形态 → 沙箱过滤 → 主题；日志保留原始抓取 | 1, 7 |
