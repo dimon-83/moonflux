@@ -587,7 +587,31 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   let control_auth = AuthConfig::load(data_dir)
   let tls_context = tls_listener(flags)
   announce_auth_mode(data_dir, control_auth, tls_context is Some(_))
-  let store = file_metadata_store(data_dir)
+  // control-plane HA (P34): off unless asked for, announced either way
+  let ha = flags.get("ha") is Some(_)
+  let lease_ms = match flags.get("lease-ms") {
+    Some(text) =>
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) => if n >= 200 { n.to_int64() } else { DEFAULT_LEASE_MS }
+        Err(_) => DEFAULT_LEASE_MS
+      }
+    None => DEFAULT_LEASE_MS
+  }
+  let keeper = LeaseKeeper::new(data_dir, addr, lease_ms)
+  if ha {
+    note(
+      "control-plane HA ENABLED: active/standby over the shared data dir \{data_dir}, lease \{lease_ms}ms, no quorum (a shared directory is assumed)",
+    )
+  } else {
+    note(
+      "control-plane HA disabled: this is the only control plane for \{data_dir} (pass --ha for active/standby)",
+    )
+  }
+  let store = if ha {
+    fenced_metadata_store(data_dir, keeper)
+  } else {
+    file_metadata_store(data_dir)
+  }
   let placement = PlacementState::new(data_dir)
   // The control plane is served by the same hub as the data plane (P13).
   // It used to accept one connection at a time and serve it to
@@ -605,6 +629,24 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   }
   let handler = HubHandler::{
     on_frame: fn(frame, identity) {
+      // a standby serves NOTHING — including node traffic. Answering a
+      // REGISTER or a group command from a process that does not own the
+      // cluster would be worse than being unreachable, because it looks
+      // like a working control plane.
+      if ha && !keeper.is_active() {
+        // the reply shape every error uses: CMD_ERR plus encode_error, so a
+        // client decodes it as an error and not as a truncated payload
+        // (measured: a raw string payload reads back as "truncated string
+        // field", which names the parser, not the problem)
+        return @client.Frame::{
+          cmd: @client.CMD_ERR,
+          rid: frame.rid,
+          payload: @client.encode_error(
+            @client.ERR_WRONG_ROLE,
+            standby_message(data_dir),
+          ),
+        }
+      }
       let reply = dispatch_control_frame(
         frame, data_dir, table, placement, store, groups, asset, identity,
       )
@@ -616,8 +658,39 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   note("serving connections concurrently (one thread, poll-driven)")
   let rotator = RotationWatch::for_server(flags, data_dir)
   let mut last_rotation : Int64 = -1L
+  let mut last_role : LeaseRole? = None
   while true {
+    // the lease is stepped BEFORE anything is served: a command must never
+    // run on a lease that this round has already found stale
+    if ha {
+      let role = match keeper.step(now_ms()) {
+        Ok(role) => role
+        Err(e) => fail("control-plane lease: \{e}")
+      }
+      match (role, last_role) {
+        (Active, Some(Active)) => ()
+        (Active, _) =>
+          note("this control plane is ACTIVE (epoch \{keeper.epoch.val})")
+        (Standby(holder), Some(Standby(previous))) =>
+          if previous != holder {
+            note("this control plane is STANDBY; \{holder} holds the lease")
+          }
+        (Standby(holder), _) =>
+          note("this control plane is STANDBY; \{holder} holds the lease")
+        (SteppedDown(holder), _) =>
+          warn(
+            "this control plane STEPPED DOWN: \{holder} took the lease while this one was not renewing it; refusing commands until the lease comes back",
+          )
+      }
+      last_role = Some(role)
+    }
     let _ = hub.poll_once(handler, fn(_kind) { () })
+    if ha && !keeper.is_active() {
+      // a standby does not sweep: it has seen no heartbeats and no group
+      // members, so sweeping would move generations for members it never
+      // met. It waits, and that is all it does.
+      continue
+    }
     let now_rotation = now_ms()
     if last_rotation < 0L || now_rotation - last_rotation >= 1000L {
       last_rotation = now_rotation
@@ -648,7 +721,13 @@ fn cmd_sc(argv : Array[String]) -> Unit {
 /// loop is what keeps a heartbeat inside its liveness window. A healthy
 /// handshake on loopback is sub-millisecond, so this is still ~500x
 /// headroom.
-const CONTROL_HANDSHAKE_DEADLINE_MS : Int = 500
+
+///|
+/// Default control-plane lease (P34). Long enough to survive a busy event
+/// loop (tens of rounds) and short enough that a dead active is replaced in
+/// a couple of seconds; `--lease-ms` moves it, with a floor of 200ms so a
+/// typo cannot make the lease expire faster than a round trip.
+const DEFAULT_LEASE_MS : Int64 = 1500L
 
 ///|
 /// How long a node-to-node control call may take. Comfortably longer
@@ -656,6 +735,15 @@ const CONTROL_HANDSHAKE_DEADLINE_MS : Int = 500
 /// comfortably shorter than the liveness timeout, so a stuck peer
 /// costs one tick instead of the whole cluster.
 const CONTROL_CALL_TIMEOUT_MS : Int = 1000
+
+///|
+/// How long a control connection may spend in its TLS handshake. Tighter
+/// than the hub's 2s default on purpose, for the same reason the hub runs
+/// one handshake per round (P13): the cost is paid by the loop, and the
+/// loop is what keeps a heartbeat inside its liveness window. A healthy
+/// handshake on loopback is sub-millisecond, so this is still ~500x
+/// headroom.
+const CONTROL_HANDSHAKE_DEADLINE_MS : Int = 500
 
 ///|
 /// How long the node's event loop may wait for a connection before

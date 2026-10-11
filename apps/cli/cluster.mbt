@@ -25,9 +25,10 @@ fn cmd_cluster(argv : Array[String]) -> Unit {
     "segments" => cluster_segments(rest)
     "compact" => cluster_compact(rest)
     "spu" => cluster_spu_list(rest)
+    "metadata" => cluster_metadata(rest)
     _ =>
       fail(
-        "cluster: unknown verb '\{verb}' (known: nodes, status, leader, offsets, segments, compact, spu)",
+        "cluster: unknown verb '\{verb}' (known: nodes, status, leader, offsets, segments, compact, spu, metadata)",
       )
   }
 }
@@ -497,5 +498,289 @@ fn cmd_partition(argv : Array[String]) -> Unit {
   match verb {
     "list" => partition_list(rest)
     _ => fail("partition: unknown verb '\{verb}' (known: list)")
+  }
+}
+
+///|
+/// `moonflux cluster metadata <verb>` — the control plane's OWN document,
+/// from the command line. `backup`/`restore` are the answer to the largest
+/// risk in docs/production-readiness.md §3: the control plane keeps its
+/// declarations in one file, and a corrupt or lost file means lost topics.
+///
+/// The snapshot is a plain JSON document, so it is portable off the host —
+/// that is the point. It carries a CRC-32C over the metadata text so a
+/// truncated copy is refused by name instead of restoring silently half a
+/// cluster. CRC detects corruption, NOT tampering: an attacker who can
+/// rewrite the snapshot can rewrite the checksum, and this is stated rather
+/// than implied (the threat model of a backup file is the filesystem's).
+fn cluster_metadata(argv : Array[String]) -> Unit {
+  if argv.length() == 0 {
+    fail("cluster metadata: missing verb (show|backup|restore)")
+  }
+  let verb = argv[0]
+  let rest = if argv.length() > 1 {
+    argv[1:argv.length()].to_owned()
+  } else {
+    []
+  }
+  match verb {
+    "show" => cluster_metadata_show(rest)
+    "backup" => cluster_metadata_backup(rest)
+    "restore" => cluster_metadata_restore(rest)
+    _ =>
+      fail(
+        "cluster metadata: unknown verb '\{verb}' (known: show, backup, restore)",
+      )
+  }
+}
+
+///|
+/// How a snapshot document declares itself. A restore that does not check
+/// this would happily read someone else's JSON (a spec, a cassette, a
+/// metrics dump) and write it as cluster state.
+const METADATA_SNAPSHOT_KIND : String = "moonflux.metadata-snapshot"
+
+///|
+/// The snapshot format's own version, separate from the metadata revision:
+/// the format can change without the cluster's revision meaning anything
+/// different.
+const METADATA_SNAPSHOT_VERSION : Int = 1
+
+///|
+fn cluster_metadata_show(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
+  let store = file_metadata_store(data_dir)
+  let metadata = match (store.load)() {
+    Ok(metadata) => metadata
+    Err(e) => fail("cluster metadata show: \{json_error_text(e)}")
+  }
+  if flags.get("json") is Some(_) {
+    println(encode_metadata_doc(metadata).stringify(indent=2))
+    return
+  }
+  println("data dir    \{data_dir}")
+  println("revision    \{metadata.version}")
+  println("topics      \{metadata.topics.length()}")
+  for topic in metadata.topics {
+    println(
+      "  \{topic.name}\tpartitions=\{topic.partitions}\trf=\{topic.replication_factor}",
+    )
+  }
+  println("function sets \{metadata.function_sets.length()}")
+  for set in metadata.function_sets {
+    println("  \{set.name}\trevision=\{set.revision}")
+  }
+}
+
+///|
+/// The metadata document as JSON — one encoder for both the store's file and
+/// a snapshot's payload, so a backup cannot be a slightly different shape
+/// from the thing it backs up.
+pub fn encode_metadata_doc(metadata : ClusterMetadata) -> Json {
+  let items : Array[Json] = []
+  for topic in metadata.topics {
+    let doc : Map[String, Json] = {}
+    doc["name"] = Json::string(topic.name)
+    doc["partitions"] = Json::number(topic.partitions.to_double())
+    doc["replication_factor"] = Json::number(
+      topic.replication_factor.to_double(),
+    )
+    items.push(Json::object(doc))
+  }
+  let set_items : Array[Json] = []
+  for set in metadata.function_sets {
+    set_items.push(encode_function_set_doc(set))
+  }
+  let root : Map[String, Json] = {}
+  root["version"] = Json::number(metadata.version.to_double())
+  root["topics"] = Json::array(items)
+  root["function_sets"] = Json::array(set_items)
+  Json::object(root)
+}
+
+///|
+fn cluster_metadata_backup(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
+  let out = flags.require("out")
+  let store = file_metadata_store(data_dir)
+  let metadata = match (store.load)() {
+    Ok(metadata) => metadata
+    Err(e) =>
+      fail(
+        "cluster metadata backup: refusing to snapshot a store that does not load: \{json_error_text(e)}",
+      )
+  }
+  let payload = encode_metadata_doc(metadata).stringify(indent=2)
+  let checksum = @codec.crc32c(@utf8.encode(payload))
+  let root : Map[String, Json] = {}
+  root["kind"] = Json::string(METADATA_SNAPSHOT_KIND)
+  root["snapshot_version"] = Json::number(METADATA_SNAPSHOT_VERSION.to_double())
+  root["taken_from"] = Json::string(data_dir)
+  root["revision"] = Json::number(metadata.version.to_double())
+  root["checksum"] = Json::string(checksum.to_string())
+  root["metadata"] = @json.parse(payload[0:payload.length()]) catch {
+    e => fail("cluster metadata backup: cannot re-read its own encoding: \{e}")
+  }
+  let text = Json::object(root).stringify(indent=2)
+  match @fs.write_file(out, @utf8.encode(text[0:text.length()])) {
+    Ok(_) => ()
+    Err(e) => fail("cluster metadata backup: write \{out}: \{e}")
+  }
+  note(
+    "wrote \{out}: revision \{metadata.version}, \{metadata.topics.length()} topic declaration(s), \{metadata.function_sets.length()} function set(s), crc32c \{checksum}",
+  )
+}
+
+///|
+fn cluster_metadata_restore(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
+  let input = flags.require("in")
+  let force = flags.get("force") is Some(_)
+  let bytes = match @fs.read_file(input) {
+    Ok(bytes) => bytes
+    Err(e) => fail("cluster metadata restore: read \{input}: \{e}")
+  }
+  let text = @utf8.decode_lossy(bytes[0:bytes.length()])
+  let json = @json.parse(text[0:text.length()]) catch {
+    e => fail("cluster metadata restore: \{input} is not valid JSON: \{e}")
+  }
+  let root = match json {
+    Object(obj) => obj
+    _ => fail("cluster metadata restore: \{input} must be a JSON object")
+  }
+  match root.get("kind") {
+    Some(String(kind)) =>
+      if kind != METADATA_SNAPSHOT_KIND {
+        fail(
+          "cluster metadata restore: \{input} is a '\{kind}', not a '\{METADATA_SNAPSHOT_KIND}'",
+        )
+      }
+    _ =>
+      fail(
+        "cluster metadata restore: \{input} has no kind; expected '\{METADATA_SNAPSHOT_KIND}'",
+      )
+  }
+  match root.get("snapshot_version") {
+    Some(Number(n)) =>
+      if n.to_int() != METADATA_SNAPSHOT_VERSION {
+        fail(
+          "cluster metadata restore: snapshot format version \{n.to_int()} is not \{METADATA_SNAPSHOT_VERSION}",
+        )
+      }
+    _ =>
+      fail(
+        "cluster metadata restore: \{input} has no snapshot_version; expected \{METADATA_SNAPSHOT_VERSION}",
+      )
+  }
+  let payload_json = match root.get("metadata") {
+    Some(metadata) => metadata
+    None => fail("cluster metadata restore: \{input} has no metadata payload")
+  }
+  let payload = payload_json.stringify(indent=2)
+  let claimed = match root.get("checksum") {
+    Some(String(text)) => text
+    _ => fail("cluster metadata restore: \{input} has no checksum")
+  }
+  let actual = @codec.crc32c(@utf8.encode(payload)).to_string()
+  if claimed != actual {
+    fail(
+      "cluster metadata restore: checksum mismatch (snapshot says \{claimed}, the payload is \{actual}); the file is corrupt",
+    )
+  }
+  // the payload is written through the store's own decoder: a snapshot is
+  // not a second format, it is the same document with an envelope
+  let store = file_metadata_store(data_dir)
+  let local = match (store.load)() {
+    Ok(local) => local
+    Err(e) =>
+      fail(
+        "cluster metadata restore: local store does not load: \{json_error_text(e)}",
+      )
+  }
+  let restored = match decode_metadata_doc(payload_json) {
+    Ok(metadata) => metadata
+    Err(e) => fail("cluster metadata restore: \{json_error_text(e)}")
+  }
+  if restored.version < local.version && !force {
+    fail(
+      "cluster metadata restore: the snapshot is at revision \{restored.version}, this node is at \{local.version}; restoring would go backwards (pass --force to discard the newer local declarations)",
+    )
+  }
+  // the restore is itself a write, so the result is a NEW revision: a
+  // running control plane that saw revision N must not see it go back to N-1
+  let base_version = if restored.version > local.version {
+    restored.version
+  } else {
+    local.version
+  }
+  let next_version = base_version + 1L
+  let applied = ClusterMetadata::{
+    topics: restored.topics,
+    function_sets: restored.function_sets,
+    version: next_version,
+  }
+  match (store.save)(applied) {
+    Ok(_) => ()
+    Err(e) => fail("cluster metadata restore: save: \{json_error_text(e)}")
+  }
+  note(
+    "restored \{applied.topics.length()} topic declaration(s) and \{applied.function_sets.length()} function set(s) into \{data_dir}: revision \{local.version} -> \{applied.version}",
+  )
+}
+
+///|
+/// The metadata document decoder, shared with the store's file reader so a
+/// snapshot cannot be accepted with a shape the store would reject.
+pub fn decode_metadata_doc(
+  json : Json,
+) -> Result[ClusterMetadata, MetadataError] {
+  let obj = match json {
+    Object(obj) => obj
+    _ => return Err(Corrupt("metadata must be a JSON object"))
+  }
+  let version = match obj.get("version") {
+    Some(Number(n)) => n.to_int64()
+    _ => 0L
+  }
+  let topics : Array[ClusterMetadataTopic] = []
+  match obj.get("topics") {
+    Some(Array(items)) =>
+      for item in items {
+        match decode_topic_doc(item) {
+          Ok(topic) => topics.push(topic)
+          Err(e) => return Err(e)
+        }
+      }
+    Some(_) => return Err(Corrupt("topics must be an array"))
+    None => ()
+  }
+  let function_sets : Array[ClusterMetadataFunctionSet] = []
+  match obj.get("function_sets") {
+    Some(Array(items)) =>
+      for item in items {
+        match decode_function_set_doc(item) {
+          Ok(set) => function_sets.push(set)
+          Err(e) => return Err(e)
+        }
+      }
+    Some(_) => return Err(Corrupt("function_sets must be an array"))
+    None => ()
+  }
+  Ok(ClusterMetadata::{ topics, function_sets, version, })
+}
+
+///|
+/// The one place a MetadataError becomes text a person reads. The store's
+/// own variants already say what is wrong; this only keeps the CLI's
+/// messages uniform.
+pub fn json_error_text(e : MetadataError) -> String {
+  match e {
+    Corrupt(msg) => "corrupt: \{msg}"
+    Conflict(msg) => "conflict: \{msg}"
+    Storage(msg) => "storage: \{msg}"
+    Rejected(msg) => "rejected: \{msg}"
   }
 }

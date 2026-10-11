@@ -29,6 +29,13 @@ pub extern "C" fn fs_filesize(fd : Int) -> Int = "mf_fs_filesize"
 pub extern "C" fn fs_flush(fd : Int) -> Int = "mf_fs_flush"
 
 ///|
+/// Which flush primitive this build calls (P34): 1 = F_FULLFSYNC, 0 = fsync.
+/// An int rather than a C string because the value is a fact with two
+/// states, and marshalling a pointer to say so would be a bug waiting to
+/// happen.
+pub extern "C" fn fs_flush_mode() -> Int = "mf_fs_flush_mode"
+
+///|
 #borrow(path)
 pub extern "C" fn fs_mkdirs(path : Bytes, len : Int) -> Int = "mf_fs_mkdirs"
 

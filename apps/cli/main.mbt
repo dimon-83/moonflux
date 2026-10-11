@@ -77,6 +77,9 @@ fn usage() -> Unit {
   println("  profile  add|list|use|remove ...")
   println("  partition list --topic T --remote host:port")
   println(
+    "  doctor   — the platform facts behind durability and sandbox claims",
+  )
+  println(
     "  benchmark produce|consume|latency --topic T [--data-dir D | --remote host:port] ...",
   )
   println("  cluster  nodes|status|leader|offsets|segments|compact|spu ...")
@@ -188,7 +191,8 @@ fn main {
     text == "operator" ||
     text == "benchmark" ||
     text == "profile" ||
-    text == "partition"
+    text == "partition" ||
+    text == "doctor"
   }
 
   let start = if args.length() > 0 && is_command(args[0]) {
@@ -198,7 +202,12 @@ fn main {
   } else {
     -1
   }
-  if start < 0 || args.length() <= start + 1 {
+  // Every command needs at least one argument — a bare `moonflux produce` is
+  // a typo, and usage is the right answer to a typo. `doctor` is the single
+  // exception: its whole answer fits in no arguments (P34), and demanding a
+  // dummy flag to read a platform fact would be ceremony.
+  let bare_ok = start >= 0 && args[start] == "doctor"
+  if start < 0 || (args.length() <= start + 1 && !bare_ok) {
     usage()
   }
   let cmd = args[start]
@@ -218,6 +227,7 @@ fn main {
     "benchmark" => cmd_benchmark(rest)
     "profile" => cmd_profile(rest)
     "partition" => cmd_partition(rest)
+    "doctor" => cmd_doctor(rest)
     _ => usage()
   }
 }
@@ -254,4 +264,32 @@ fn parse_listen_addr(addr : String) -> (String, Int) {
       }
     None => fail("expected host:port, got \{addr}")
   }
+}
+
+///|
+/// `moonflux doctor` — the platform facts that other claims rest on, read
+/// from the RUNNING binary instead of from a document.
+///
+/// It exists because of one specific footnote: docs/production-readiness.md
+/// used to say that macOS `fsync` only reaches the drive cache, which made
+/// "ack means durable" true on Linux and approximately true on macOS. That is
+/// now a syscall choice (F_FULLFSYNC), and a syscall choice nobody can query
+/// is a choice nobody can check — so the storage gate asks this command what
+/// the binary does, on whichever platform it is running.
+fn cmd_doctor(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let flush = @fs.flush_mode()
+  let wasmtime = match @env.get_env_var("MOONFLUX_WASMTIME_LIB") {
+    Some(path) => path
+    None => "(unset: the operator host uses its default search path)"
+  }
+  if flags.get("json") is Some(_) {
+    let root : Map[String, Json] = {}
+    root["flush"] = Json::string(flush)
+    root["wasmtime_lib"] = Json::string(wasmtime)
+    println(Json::object(root).stringify(indent=2))
+    return
+  }
+  println("flush        \{flush}")
+  println("wasmtime-lib \{wasmtime}")
 }

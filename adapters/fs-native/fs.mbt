@@ -325,3 +325,16 @@ pub fn list_dir(path : String) -> Result[Array[String], FsError] {
   out.sort()
   Ok(out)
 }
+
+///|
+/// The flush primitive this build actually uses (P34): "F_FULLFSYNC" on
+/// macOS, "fsync" on Linux. Reported rather than assumed, because the
+/// durability claim in docs/production-readiness.md depends on which one it
+/// is — and a claim nobody can read back is a claim nobody can check.
+pub fn flush_mode() -> String {
+  if fs_flush_mode() == 1 {
+    "F_FULLFSYNC"
+  } else {
+    "fsync"
+  }
+}

@@ -362,4 +362,23 @@ done
 }
 pass "the follower's segment files are byte-identical to the leader's, per segment"
 
+# ---- the flush primitive behind "ack means durable" (P34) ----------------
+# macOS fsync() only reaches the drive cache; F_FULLFSYNC is the call that
+# asks the device to flush its own cache. The claim "a returned produce is
+# durable" therefore depends on which syscall this binary makes — so the gate
+# asks the binary (`moonflux doctor`) instead of trusting a footnote, and it
+# asks on whichever platform it runs: the Linux full job exercises the other
+# branch of the same assertion.
+case "$(uname -s)" in
+Darwin) expected_flush="F_FULLFSYNC" ;;
+*) expected_flush="fsync" ;;
+esac
+"$EXE" doctor > "$WORK/doctor.out" 2>&1 || { cat "$WORK/doctor.out"; fail "doctor did not run"; }
+flush_mode=$(awk '/^flush/{print $2}' "$WORK/doctor.out")
+[ "$flush_mode" = "$expected_flush" ] || {
+  cat "$WORK/doctor.out"
+  fail "flush primitive is '$flush_mode' on $(uname -s); expected '$expected_flush' (a durability claim has to match the platform)"
+}
+pass "the durability primitive is $flush_mode on $(uname -s), as the platform requires"
+
 echo "E2E-P8-STORAGE: all green"

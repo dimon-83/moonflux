@@ -95,6 +95,65 @@ jobs:
       - name: Gates (fast)
         run: bash scripts/gates.sh fast
 
+  full-linux:
+    # the full suite on Linux (P34, item ② of the user's list). The macOS
+    # full job proved the gates; "proven on macOS" is not the same claim as
+    # "proven where the durability semantics come from" — fsync means
+    # something different on each platform, and the storage gate now asserts
+    # the platform's own primitive. Manual trigger, like `full`: the suite
+    # takes tens of minutes and every push already runs `fast`.
+    if: github.event_name == 'workflow_dispatch'
+    concurrency:
+      group: ci-full-linux-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      MOONFLUX_WASMTIME_LIB: /usr/local/lib/libwasmtime.so
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Cache the MoonBit registry index
+        uses: actions/cache@v4
+        with:
+          path: ~/.moon/registry
+          key: moon-registry-${{ runner.os }}
+      - name: Fetch the MoonBit registry index
+        run: moon update
+      - name: Install wasmtime 48.0.2 C API
+        run: |
+          W=wasmtime-v48.0.2-x86_64-linux-c-api
+          curl -sSfL -o wasmtime.tar.xz \
+            "https://github.com/bytecodealliance/wasmtime/releases/download/v48.0.2/$W.tar.xz"
+          tar -xJf wasmtime.tar.xz
+          sudo mkdir -p /usr/local/include /usr/local/lib
+          sudo cp -R "$W/include/." /usr/local/include/
+          sudo cp -R "$W/lib/." /usr/local/lib/
+          sudo ldconfig
+          test -f /usr/local/include/wasmtime.h
+          test -f "$MOONFLUX_WASMTIME_LIB"
+      - name: Runner prerequisites
+        run: |
+          # the E2E gates use lsof (kill by port) and python3 (independent
+          # peers); openssl is present on the image but the security gates
+          # need the CLI, so fail early with a legible message
+          python3 --version
+          if ! command -v lsof >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y lsof
+          fi
+          openssl version
+      - name: Show toolchain
+        run: |
+          moon version --all
+          python3 --version
+          openssl version || true
+          uname -a
+      - name: Gates (full, Linux)
+        run: bash scripts/gates.sh
+
   full:
     # everything, including the E2E gates (real processes, fault
     # injection, independent Python peers). macOS because the gate

@@ -56,7 +56,39 @@ int mf_fs_filesize(int fd) {
   return (int)st.st_size;
 }
 
+/*
+ * Making a write durable (P34).
+ *
+ * On Linux, fsync() is the barrier: it returns once the data is with the
+ * device. On macOS it is NOT — fsync() only pushes the data to the drive's
+ * own cache, and a power loss can still lose it. F_FULLFSYNC is the call
+ * that asks the device to flush that cache, and it is what "ack means
+ * durable" has always assumed. The difference was a footnote in
+ * docs/production-readiness.md §3; it is a syscall here.
+ *
+ * Some filesystems answer F_FULLFSYNC with ENOTSUP/EINVAL (network mounts,
+ * for instance). Falling back to fsync() is the honest degradation — the
+ * write is at least as durable as it was before this function existed — but
+ * it is NOT silent about the platform it is running on: `mf_fs_flush_mode`
+ * reports which path this build takes, and the storage gate asserts it.
+ */
+#ifdef __APPLE__
+int mf_fs_flush(int fd) {
+  if (fcntl(fd, F_FULLFSYNC) == 0) {
+    return 0;
+  }
+  if (errno == ENOTSUP || errno == EINVAL) {
+    return fsync(fd);
+  }
+  return -1;
+}
+
+int mf_fs_flush_mode(void) { return 1; }   /* 1 = F_FULLFSYNC */
+#else
 int mf_fs_flush(int fd) { return fsync(fd); }
+
+int mf_fs_flush_mode(void) { return 0; }   /* 0 = fsync */
+#endif
 
 /* mkdir -p semantics: create every path prefix, ignoring EEXIST. */
 int mf_fs_mkdirs(const uint8_t *buf, int len) {
