@@ -37,7 +37,7 @@
 | **元数据备份/恢复**（P34，决策 74） | ✅ | `cluster metadata show/backup/restore`：可移植 JSON 快照（kind/版本/修订/**CRC-32C**），恢复与存储共用解码器；篡改、回退（除 `--force`）、非快照三类按名拒绝；**CRC 只能发现损坏、不能发现篡改**（写明） |
 | **耐久性原语可查**（P34，决策 75） | ✅ | macOS `F_FULLFSYNC`（回落 fsync）、Linux `fsync`；`moonflux doctor` 报告、`e2e-p8-storage.sh` 按平台断言 |
 | **全量门禁在 Linux**（P34，决策 75） | ✅ | CI `full-linux` job（ubuntu 跑完整 `scripts/gates.sh`），与 macOS `full` 并列 |
-| 集群间镜像 / 多区域 | ⏳ | 未立项 |
+| 集群间镜像 / 多区域 | ❌ **不做**（决策 78） | 缺三样：跨集群偏移映射、目标侧幂等去重、镜像链路认证。**替代**：用 `kafka://`/`mqtt://` 汇把流导出到另一个集群。**触发条件**：真实需求出现时，第一步是"跨集群 produce 幂等性"设计稿 |
 
 ## 3. 消费语义
 
@@ -49,7 +49,7 @@
 | 世代围栏（过期提交拒绝，无特权路径） | ✅ | 同上 |
 | 托管偏移持久化（跨控制面重启存活） | ✅ | `groups.json` 原子写；同上 |
 | 至少一次投递（无缺口；允许重复） | ✅ | 同上（12 生产 vs 18 投递腿） |
-| 恰好一次 / 事务 | ⏳ | 未立项；当前语义明示为至少一次 |
+| 恰好一次 / 事务 | ❌ **不做**（决策 78） | 当前语义**明示为至少一次**（决策 32，投递无缺口）。EOS 需要事务性 produce + 读已提交 + 幂等序号三件套。**触发条件**：出现"重复不可接受"的消费者时，第一步是把 `producer_id`/epoch 加进协议（显式帧版本决策） |
 | 消费组再平衡的增量协商 | ⏳ | 全量 range 再分配（成员集合变化换代） |
 
 ## 4. 可编程层
@@ -75,7 +75,8 @@
 | **主题源 / 主题汇**（P31，决策 72–73） | ✅ | `{"type":"topic","name":"T","from":"beginning\|end\|<offset>"}` 作为源（**不复制**：`spec.topic` 必须就是它）、`{"type":"topic","name":"T"}` 作为汇；主题源是**常驻**的（追平 = `Quiet`，从不 `Exhausted`）；**跟随者旁路日志缓存**（另一进程是写入者）；环校验四条 apply 期按名拒绝。`scripts/e2e-p33-topic-relay.sh` 11 腿 |
 | **`dedupe` primitive**（P31，决策 71） | ✅ | `apps/operator-dedupe`：每个键的第一条通过（1→0）；**期限 = 键的形状**（`keyfield → tumble → dedupe` ⇒ 每窗去重一次，无窗口 ⇒ 永久，且状态上界如实写明）；无键的链在**宿主**处按名拒绝 |
 | 窗口（hopping / 定时器触发 flush） | ⏳ | 未立项：与"算子不读时钟"的红线正面冲突，要做先定义事件时间水位的来源 | 未立项：需要"水位推进才产出"的语义，与"算子不读时钟"的红线冲突，要做就得先定义事件时间水位的来源 |
-| 有状态算子 / 算子间 shuffle（跨节点） | ⏳ | 单机状态已具备（上行）；跨节点状态迁移/再均衡未立项，缺口清单见 [`sdf-examples-port.md`](sdf-examples-port.md) §4 |
+| **有状态管道的跨节点迁移与续算**（P36，决策 77） | ✅ | 状态 = 键控主题（随复制走）+ **进度标记**（状态主题保留键 = 已折算到的输入偏移）+ **写入走集群**（`--state-remote`，一个分区一个写入者）；`--resume` 从标记续算，**不重不漏**；一次批 = 一次 append。**边界**：副本新鲜度决定正确性、无跨节点键空间再均衡、不是分布式事务——见 [`state-migration.md`](state-migration.md) §3。门禁 `e2e-p36-state-migration.sh` 8 腿 |
+| 算子间 shuffle（跨节点键空间再均衡） | ⏳ | 未立项：把键空间在多个运行实例之间切分没有做（管道是进程，跟随所在节点的副本） |
 | 沙箱 filter / flat-map 算子（1→0 / 1→N，P29） | ✅ | `apps/operator-filter`（`min_len`/`contains`）与 `apps/operator-flatmap`（`separator`）——过滤与扇出**不能**用 mbel 表达（表达式必须返回字符串），只能落在批算子契约上；配置在 `mf_op_init` 校验（未知键、空分隔符、小数门槛都拒绝）；`scripts/e2e-p29-examples.sh` 腿 2–5 |
 | SDF 示例集的 moonflux 应用案例（8 例，P29） | ✅ | `examples/sdf/*`（冻结 spec + 夹具 + expected + 逐例 README）由 `scripts/e2e-p29-examples.sh`（8 腿，字节级对拍）验真；对照表与缺口见 [`sdf-examples-port.md`](sdf-examples-port.md) |
 | SDF Studio 式图形化（拓扑视图 / 活指标 / 状态视图） | ⏳ | **未实现，已提案**：三阶段与门禁形态见 [`sdf-studio-exploration.md`](sdf-studio-exploration.md) §4；现有编辑器是 spec 渲染器（`web/editor/` + `apps/editor-kernel`），不画编译后拓扑 |
@@ -125,7 +126,7 @@
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
 | 日志句柄复用（进程级有界缓存，淘汰安全） | ✅ | `apps/cli/logcache.mbt`：`open_partition_log` 命中即复用；变更经同一句柄故无需失效；`MOONFLUX_LOG_CACHE` 控制上限与 LRU 淘汰；每次真实打开在 stderr 记一行；`scripts/e2e-p16-logcache.sh`（6 腿） |
-| 门禁体系（53 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS/Linux，53 步） |
+| 门禁体系（54 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS/Linux，54 步） |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

@@ -122,7 +122,14 @@ fn flag_is_boolean(name : String) -> Bool {
   name == "follow" ||
   name == "verify" ||
   name == "ws" ||
-  name == "tls-require-client"
+  name == "tls-require-client" ||
+  // P36: a boolean flag that is NOT in this set swallows the next argument —
+  // `--resume --state-remote X` would have read "resume=--state-remote" and
+  // dropped the address (the P18 lesson, which this list exists to keep)
+  name == "resume" ||
+  name == "ha" ||
+  name == "force" ||
+  name == "json"
 }
 
 ///|

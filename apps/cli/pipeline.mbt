@@ -294,6 +294,7 @@ fn topic_source_loop(
   state : StateContext?,
   data_dir : String,
   from : String,
+  resume : Bool,
 ) -> Unit {
   let name = applied.spec.topic.name
   let mut log = match open_topic_log_shared(data_dir, name) {
@@ -310,6 +311,34 @@ fn topic_source_loop(
         Ok(n) => n.to_int64()
         Err(_) => fail("topic source: from=\"\{from}\" is not a position")
       }
+    }
+  }
+  if resume {
+    // The state topic is the truth about the state, and the marker is part of
+    // it: "this state already reflects input up to offset N". A state replica
+    // that LAGS its leader would carry an older marker and re-apply records
+    // the state already absorbed — the boundary is written down in
+    // docs/state-migration.md rather than hidden here.
+    match state {
+      Some(ctx) =>
+        match ctx.progress() {
+          Some(next) => {
+            // stderr, not stdout: `pipeline run`'s stdout IS the sink's data
+            // stream, so a diagnostic there is indistinguishable from a record
+            // (measured: this line showed up in the middle of the output the
+            // gate compares, and the gate could not find it where the rules
+            // say diagnostics live)
+            warn(
+              "resuming at the offset the state recorded: \{next} (the spec says from=\{from})\n",
+            )
+            cursor = next
+          }
+          None =>
+            warn(
+              "the state topic holds no progress marker yet; starting at the declared from=\{from}\n",
+            )
+        }
+      None => fail("--resume without a state context")
     }
   }
   while true {
@@ -338,7 +367,9 @@ fn topic_source_loop(
     for entry in entries {
       pulled.push(entry.record)
     }
-    let out_records = match apply_nodes(chain, pulled, state) {
+    let next_cursor = entries[entries.length() - 1].offset + 1
+    let out_records = match
+      apply_nodes(chain, pulled, state, Some(next_cursor)) {
       Ok(out) => out
       Err(e) => fail("transform: \{e}")
     }
@@ -346,7 +377,7 @@ fn topic_source_loop(
       Ok(_) => ()
       Err(e) => fail("sink \{sink.name}: \{e}")
     }
-    cursor = entries[entries.length() - 1].offset + 1
+    cursor = next_cursor
   }
 }
 
@@ -390,6 +421,25 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   //    says `Quiet` while it waits, and this loop keeps serving it —
   //    which is what makes `pipeline run` a connector process rather
   //    than a one-shot pass, without changing what one-shot sources do.
+  let resume = flags.get("resume") is Some(_)
+  if resume {
+    // --resume means "continue where the state says it stopped", and only a
+    // topic has offsets for the state to have recorded
+    match applied.spec.source {
+      TopicSource(_, _) => ()
+      _ =>
+        fail(
+          "--resume needs a topic source: a file/http/stdin source has no offsets, so a restart cannot tell what the state already absorbed (declare \"type\": \"topic\")",
+        )
+    }
+    match applied.spec.state {
+      Some(_) => ()
+      None =>
+        fail(
+          "--resume needs a state topic: the progress marker lives in the state, and this pipeline declares none",
+        )
+    }
+  }
   let now = @env.now().reinterpret_as_int64()
   // A topic source is not a connector: the records already live in this
   // node's log, so there is nothing to pull from the outside world and
@@ -443,16 +493,35 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   // 4. state (P30/T114): a pipeline that declares a state topic gets a
   // view of it, rebuilt by replay before the first batch. The topic is the
   // truth; the view is a cache (docs/operator-abi-v3-state.md).
+  // --state-remote <sc>: state writes go to the cluster (the leader of the
+  // state topic), so this node's data dir keeps its one-writer-per-partition
+  // rule and the state topic replicates like any other topic (P36)
+  let state_writer : ((Array[@protocol.Record]) -> Result[Unit, String])? = match
+    flags.get("state-remote") {
+    None => None
+    Some(sc) => {
+      let link = peer_link(flags)
+      Some(fn(records) {
+        let ref = @client.PartitionRef::{ topic: "", partition: 0, }
+        let _ = ref
+        match write_state_to_cluster(sc, topic_of(applied), records, link) {
+          Ok(_) => Ok(())
+          Err(e) => Err(e)
+        }
+      })
+    }
+  }
   let state = match applied.spec.state {
     None => None
     Some(topic) =>
-      match StateContext::open(data_dir, topic) {
+      match StateContext::open(data_dir, topic, state_writer) {
         Ok(ctx) => Some(ctx)
         Err(e) => fail("state \{topic}: \{e}")
       }
   }
   match topic_source {
-    Some(from) => topic_source_loop(applied, sink, chain, state, data_dir, from)
+    Some(from) =>
+      topic_source_loop(applied, sink, chain, state, data_dir, from, resume)
     None => ()
   }
   let source = match source {
@@ -492,7 +561,7 @@ fn pipeline_run(argv : Array[String]) -> Unit {
           for entry in entries {
             pulled.push(entry.record)
           }
-          let out_records = match apply_nodes(chain, pulled, state) {
+          let out_records = match apply_nodes(chain, pulled, state, None) {
             Ok(out) => out
             Err(e) => fail("transform: \{e}")
           }
@@ -504,4 +573,67 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     }
   }
   cli_exit(0)
+}
+
+///|
+/// The state topic's name, or "" when the spec declares none. Split out so the
+/// remote-state closure does not capture the whole spec.
+fn topic_of(applied : Applied) -> String {
+  match applied.spec.state {
+    Some(topic) => topic
+    None => ""
+  }
+}
+
+///|
+/// Appends a state batch to the CLUSTER: resolve the state topic's leader
+/// through the control plane, then produce the batch there (one frame, one
+/// append — the node owns the log and its cache stays honest).
+///
+/// A leader that moves between the resolve and the send is an ordinary race:
+/// the produce is refused with the new leader's address, the batch is not
+/// written, and the run fails loudly rather than writing to a follower.
+fn write_state_to_cluster(
+  sc : String,
+  topic : String,
+  records : Array[@protocol.Record],
+  link : PeerLink,
+) -> Result[Unit, String] {
+  if topic.length() == 0 {
+    return Err("--state-remote without a state topic")
+  }
+  let payload = match
+    control_call_secure(
+      sc,
+      @client.CMD_LEADER,
+      @client.encode_partition_ref(@client.PartitionRef::{
+        topic,
+        partition: 0,
+      }),
+      link,
+    ) {
+    Ok(payload) => payload
+    Err(e) => return Err("state leader lookup: \{e}")
+  }
+  let view = match @client.decode_partition_view(payload) {
+    Ok(view) => view
+    Err(e) => return Err("state leader lookup: \{e}")
+  }
+  if view.leader.length() == 0 {
+    return Err(
+      "the state topic \{topic}[0] has no leader yet; refusing to write state nowhere",
+    )
+  }
+  let (host, port) = parse_listen_addr(view.leader)
+  let producer = match
+    connect_producer_transport(host, port, link.token, link.tls) {
+    Ok(producer) => producer
+    Err(e) => return Err("state produce connect \{view.leader}: \{e}")
+  }
+  let sent = producer.send(topic, records)
+  producer.close()
+  match sent {
+    Ok(_) => Ok(())
+    Err(e) => Err("state produce: \{e}")
+  }
 }

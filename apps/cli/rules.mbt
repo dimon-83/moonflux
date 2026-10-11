@@ -269,7 +269,13 @@ fn apply_nodes(
   nodes : Array[CompiledNode],
   records : Array[@protocol.Record],
   state : StateContext?,
+  progress : Int64?,
 ) -> Result[Array[@protocol.Record], String] {
+  // every stateful node's writes for this batch, committed in ONE append at
+  // the end (P36): two appends would mean a crash could leave half a batch's
+  // state written, and "one batch is one transaction" (decision 60) would be
+  // a claim the code does not keep
+  let staged : Array[@operator.StateEntry] = []
   let mut current = records
   for node in nodes {
     match node {
@@ -304,9 +310,12 @@ fn apply_nodes(
           )
           match (instance.process_state)(payload) {
             Ok((updates, out)) => {
-              match ctx.apply(updates) {
-                Ok(_) => ()
+              let entries = match ctx.stage(updates) {
+                Ok(entries) => entries
                 Err(e) => return Err(e)
+              }
+              for e in entries {
+                staged.push(e)
               }
               collected = collected + out
             }
@@ -397,6 +406,21 @@ fn apply_nodes(
         current = out
       }
     }
+  }
+  // one append for the whole batch: the state every stateful node staged,
+  // plus (for a topic source) the input offset this batch absorbed
+  match state {
+    Some(ctx) =>
+      match ctx.commit(staged, progress) {
+        Ok(_) => ()
+        Err(e) => return Err(e)
+      }
+    None =>
+      if staged.length() > 0 {
+        return Err(
+          "state was staged without a state topic; this is a host bug, not a spec error",
+        )
+      }
   }
   Ok(current)
 }

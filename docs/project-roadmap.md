@@ -2,7 +2,7 @@
 
 > **定位**：项目的**进度管理**单一真相——分阶段路线图、每阶段的交付物与门禁证据、已达成的里程碑清单与后续排期。**规约依据**：AGENTS.md §2（阶段与门禁，工程纪律口径）；**边界声明**：README 只保留路线图**摘要**并链接到这里（2026-09-17 文档重构，决策 37）；阶段推进的门禁必须可证伪、可复现，"看起来能跑"不计数（AGENTS.md §2）。
 >
-> **日期**：2026-10-10 · 状态：P0–P29 全部达成 · 门禁全套 53 步绿（native 314 / wasm-gc 210 / 算子 7）· CI 已接线（`fast` Linux 随推送首绿，`full` macOS 手动）
+> **日期**：2026-10-10 · 状态：P0–P29 全部达成 · 门禁全套 54 步绿（native 314 / wasm-gc 210 / 算子 7）· CI 已接线（`fast` Linux 随推送首绿，`full` macOS 手动）
 
 ## 1. 阶段路线图（含门禁证据）
 
@@ -85,7 +85,7 @@
 
 ## 3. 待办与排期
 
-**P34（用户裁定，2026-10-11）**：① 控制面 HA 与备份/恢复 ✅（决策 74，门禁 `e2e-p34-sc-ha.sh` 12 腿）；② Linux 全量门禁 + macOS 真落盘 ✅（决策 75，CI `full-linux` + `F_FULLFSYNC` + `moonflux doctor`）；③ metrics + 健康端点 ✅（决策 76，门禁 `e2e-p35-metrics.sh` 10 腿）；④ 跨节点状态迁移/再均衡 ⏳；⑤ 镜像/多区域与恰好一次/事务的显式决策 ⏳。ticket：`.scratch/moonflux-p34/issues/00-overview.md`。
+**P34（用户裁定，2026-10-11）**：① 控制面 HA 与备份/恢复 ✅（决策 74，门禁 `e2e-p34-sc-ha.sh` 12 腿）；② Linux 全量门禁 + macOS 真落盘 ✅（决策 75，CI `full-linux` + `F_FULLFSYNC` + `moonflux doctor`）；③ metrics + 健康端点 ✅（决策 76，门禁 `e2e-p35-metrics.sh` 10 腿）；④ 跨节点状态迁移与续算 ✅（决策 77，`docs/state-migration.md` + 门禁 8 腿；**跨节点键空间再均衡仍未立项**）；⑤ 镜像/多区域与恰好一次/事务的显式决策 ⏳。ticket：`.scratch/moonflux-p34/issues/00-overview.md`。
 
 
 - [x] ~~compaction~~ **已达成**（2026-09-18，P14：键语义启用 + 键控压实落地）

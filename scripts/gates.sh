@@ -167,6 +167,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p33-topic-relay.sh" scripts/e2e-p33-topic-relay.sh
   step "e2e-p34-sc-ha.sh" scripts/e2e-p34-sc-ha.sh
   step "e2e-p35-metrics.sh" scripts/e2e-p35-metrics.sh
+  step "e2e-p36-state-migration.sh" scripts/e2e-p36-state-migration.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh

@@ -36,6 +36,13 @@ struct StateContext {
   data_dir : String
   topic : String
   view : Map[String, Bytes]
+  /// When set, state writes go to the CLUSTER (the leader of the state topic)
+  /// instead of the local log. That is not a preference: a node's data dir has
+  /// exactly one writer per partition (P16), and a pipeline process writing
+  /// the same log the node replicates would be a second writer — the node's
+  /// cached end would go stale and the topic would never replicate (measured:
+  /// the follower pulled "caught up to 0" while the leader held five entries).
+  remote_write : ((Array[@protocol.Record]) -> Result[Unit, String])?
 }
 
 ///|
@@ -46,8 +53,13 @@ struct StateContext {
 fn StateContext::open(
   data_dir : String,
   topic : String,
+  remote_write : ((Array[@protocol.Record]) -> Result[Unit, String])?,
 ) -> Result[StateContext, String] {
-  let log = match open_topic_log(data_dir, topic) {
+  // the replay opens FRESH (never the process cache): a state topic may be
+  // written by this node's own process or by another one, and a cached handle
+  // sees only the bytes it saw at open (decision 72's lesson, applied to the
+  // reader a stateful pipeline starts with)
+  let log = match open_topic_log_shared(data_dir, topic) {
     Ok(log) => log
     Err(e) => return Err(e)
   }
@@ -88,7 +100,7 @@ fn StateContext::open(
     // twice (P18/T76)
     next = entries[entries.length() - 1].offset + 1L
   }
-  Ok(StateContext::{ data_dir, topic, view, })
+  Ok(StateContext::{ data_dir, topic, view, remote_write, })
 }
 
 ///|
@@ -110,25 +122,61 @@ fn StateContext::entries_for(
 }
 
 ///|
-/// Writes the guest's state back: append first (the log is the truth),
-/// then update the cache. A batch whose append fails leaves the cache
-/// untouched, so the next batch asks again rather than believing a value
-/// that never landed.
-fn StateContext::apply(
+/// The key a RUNNER reserves to record how far its input has been folded into
+/// this state (P36). The state topic is the durable truth about the state; a
+/// restart that wants to continue rather than replay needs one more durable
+/// fact — "which input offset does this state already reflect" — and putting
+/// it in the same topic, in the same append as the state it describes, is what
+/// makes the pair atomic.
+///
+/// The name is reserved, not magic: an operator that returns a state entry for
+/// this key is refused by name (see `stage`), because a state key that means
+/// two things means nothing.
+const STATE_PROGRESS_KEY : String = "__moonflux_progress__"
+
+///|
+/// The input offset this state has already absorbed, or None on a state topic
+/// that has never recorded one (the first run).
+fn StateContext::progress(self : StateContext) -> Int64? {
+  match self.view.get(STATE_PROGRESS_KEY) {
+    Some(value) => {
+      let text = @utf8.decode_lossy(value)
+      match (try? @string.parse_int(text[0:text.length()])) {
+        Ok(n) => Some(n.to_int64())
+        Err(_) => None
+      }
+    }
+    None => None
+  }
+}
+
+///|
+/// Stages the guest's state in the VIEW (so a later node in the same batch
+/// sees it) and returns the entries to append. Nothing is durable until
+/// `commit`.
+///
+/// Staging exists because of what this used to do: each stateful node
+/// appended on its own, so a chain with two of them had two appends per
+/// batch and a crash between them left half a batch's state written — which
+/// contradicts the documented "one batch is one transaction" (decision 60).
+/// One append per batch is that promise kept.
+fn StateContext::stage(
   self : StateContext,
   updates : Array[@operator.StateEntry],
-) -> Result[Unit, String] {
-  if updates.length() == 0 {
-    return Ok(())
-  }
-  // the cap is checked BEFORE anything is written: a run that would grow
-  // the view past its limit must leave no half-applied state behind
+) -> Result[Array[@operator.StateEntry], String] {
+  // the cap is checked BEFORE anything is staged or written: a run that would
+  // grow the view past its limit must leave no half-applied state behind
   let cap = state_view_cap()
   let mut live = self.view.length()
   for u in updates {
     let key = match (try? @utf8.decode(u.key[0:u.key.length()])) {
       Ok(text) => text
       Err(_) => return Err("the operator returned a non-UTF-8 state key")
+    }
+    if key == STATE_PROGRESS_KEY {
+      return Err(
+        "the operator returned a state entry for \{STATE_PROGRESS_KEY}, which this runner reserves for its own progress",
+      )
     }
     // a tombstone for a key we never held does not add a live key
     if !self.view.contains(key) && u.value.length() > 0 {
@@ -140,44 +188,76 @@ fn StateContext::apply(
       "state view is full (\{live} keys would exceed \{cap}; raise MOONFLUX_STATE_KEYS or rethink the key space) — no state was written",
     )
   }
-  let log = match open_topic_log(self.data_dir, self.topic) {
-    Ok(log) => log
-    Err(e) => return Err(e)
+  for u in updates {
+    let key = @utf8.decode_lossy(u.key[0:u.key.length()])
+    if u.value.length() == 0 {
+      let _ = self.view.remove(key)
+    } else {
+      self.view[key] = u.value
+    }
+  }
+  Ok(updates)
+}
+
+///|
+/// Makes a batch's state durable in ONE append: the entries every stateful
+/// node in the chain staged, plus the runner's progress marker when there is
+/// one (a topic source has offsets; a file has none).
+///
+/// The marker is written last, in the same frame as the state it describes. A
+/// crash before the append loses the whole batch (and `--resume` re-reads it);
+/// a crash after it loses nothing. That is the exactly-once-ish boundary this
+/// feature can honestly claim: not a transaction log, but one frame whose
+/// contents agree with each other.
+fn StateContext::commit(
+  self : StateContext,
+  entries : Array[@operator.StateEntry],
+  progress : Int64?,
+) -> Result[Unit, String] {
+  let to_write : Array[@operator.StateEntry] = []
+  for e in entries {
+    to_write.push(e)
+  }
+  match progress {
+    Some(next_offset) =>
+      to_write.push(@operator.StateEntry::{
+        key: @utf8.encode(STATE_PROGRESS_KEY),
+        value: @utf8.encode(next_offset.to_string()),
+      })
+    None => ()
+  }
+  if to_write.length() == 0 {
+    return Ok(())
   }
   let now = @env.now().reinterpret_as_int64()
   let records : Array[@protocol.Record] = []
-  let texts : Array[String] = []
-  for u in updates {
-    let key = match (try? @utf8.decode(u.key[0:u.key.length()])) {
-      Ok(text) => text
-      Err(_) => return Err("the operator returned a non-UTF-8 state key")
-    }
+  for u in to_write {
     records.push(@protocol.Record::{
       timestamp: now,
       key: u.key,
       value: u.value,
       headers: [],
     })
-    texts.push(key)
   }
-  match log.append(records) {
-    Ok(_) => ()
-    Err(e) => return Err("state append: \{e}")
-  }
-  for i, u in updates {
-    if u.value.length() == 0 {
-      let _ = self.view.remove(texts[i])
-    } else {
-      self.view[texts[i]] = u.value
+  match self.remote_write {
+    Some(write) =>
+      // one call, one batch: the node appends it as one frame, so the batch's
+      // state and its progress marker stay atomic exactly as they are locally
+      write(records)
+    None => {
+      let log = match open_topic_log(self.data_dir, self.topic) {
+        Ok(log) => log
+        Err(e) => return Err(e)
+      }
+      match log.append(records) {
+        Ok(_) => Ok(())
+        Err(e) => Err("state append: \{e}")
+      }
     }
   }
-  Ok(())
 }
 
 ///|
-/// The distinct keys a batch touches, in first-seen order, with the
-/// empty-key refusal the design calls for: a stateful node with nothing
-/// to key by is a mistake, not a default.
 fn state_batch_keys(
   records : Array[@protocol.Record],
 ) -> Result[Array[String], String] {

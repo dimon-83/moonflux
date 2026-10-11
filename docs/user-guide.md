@@ -12,7 +12,7 @@ moon update                         # 首次克隆必须：取 registry 索引�
 moon build --target native          # 产物：_build/native/debug/build/apps/cli/cli.exe
 moon test --target native           # 274 项
 moon test --target wasm-gc          # 174 项（内核全后端）
-scripts/gates.sh                    # 全量门禁（53 步）；scripts/gates.sh fast 跳过 E2E
+scripts/gates.sh                    # 全量门禁（54 步）；scripts/gates.sh fast 跳过 E2E
 ```
 
 - **`moon update` 是首次克隆的前置步骤**（CI 首跑实测）：唯一的依赖 `dimon-83/mbel@0.3.3` 的**源码已随仓库 vendored** 在 `.mooncakes/`（119 个文件，随 git 追踪），但 moon 解析依赖仍要过 registry 索引——索引不在时每条 moon 命令都报 `Failed to resolve registry dependency dimon-83/mbel: module was not found in the registry`（`--frozen` 也一样失败）。moon 自己会提示 `you may need to run 'moon update'`。
