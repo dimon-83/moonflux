@@ -49,7 +49,7 @@ wait_listen() {
 status() { "$EXE" cluster status --remote "127.0.0.1:$SC_PORT" 2>&1; }
 
 mkdir -p "$WORK/sc" "$WORK/spu-a"
-"$EXE" pipeline apply -f /dev/stdin --data-dir "$WORK/spu-a" <<EOF > /dev/null
+cat > "$WORK/e2e-p3-metadata-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -62,6 +62,7 @@ mkdir -p "$WORK/sc" "$WORK/spu-a"
   }
 }
 EOF
+"$EXE" pipeline apply -f "$WORK/e2e-p3-metadata-spec-1.json" --data-dir "$WORK/spu-a"  > /dev/null || fail "pipeline apply failed (e2e-p3-metadata spec 1)"
 
 "$EXE" sc --listen "127.0.0.1:$SC_PORT" --data-dir "$WORK/sc" > "$WORK/sc.log" 2>&1 &
 SC_PID=$!

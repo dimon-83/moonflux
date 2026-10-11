@@ -93,7 +93,7 @@ wait_listen "$B_PORT" || fail "spu-b did not start"
 # both nodes need the same pipeline applied: the topic each hosts comes
 # from its own applied spec (topic creation as a cluster verb is T24)
 for node in spu-a spu-b; do
-  "$EXE" pipeline apply -f /dev/stdin --data-dir "$WORK/$node" <<EOF > /dev/null
+  cat > "$WORK/e2e-p3-replication-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -106,6 +106,7 @@ for node in spu-a spu-b; do
   }
 }
 EOF
+  "$EXE" pipeline apply -f "$WORK/e2e-p3-replication-spec-1.json" --data-dir "$WORK/$node"  > /dev/null || fail "pipeline apply failed (e2e-p3-replication spec 1)"
   # the node reads its topic at startup: restart it so it picks the
   # applied pipeline up (a running node re-reads on the next tick, but
   # the log line ordering is easier to follow from a clean start)

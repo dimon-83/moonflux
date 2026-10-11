@@ -31,6 +31,21 @@ step() { # $1 = label, rest = command
 # 1. static: formatting, generated artifacts, four-backend matrix
 step "moon fmt --check" moon fmt --check
 
+# A gate must not feed a spec through /dev/stdin (P34, decision 75).
+#
+# Why this is a static check rather than a comment: bash implements
+# here-documents differently per platform — macOS's bash 3.2 materialises them
+# as temp files, bash 5.1+ (Linux CI) uses a pipe — and `read_file` sizes the
+# file before reading it, so on Linux the spec arrives as "0 bytes" and the
+# apply fails. Eleven gates died silently that way on the Linux full run (the
+# failure was invisible because stdout was redirected and `set -e` exited).
+# A platform-dependent death that says nothing is worth a five-line guard.
+step "no gate feeds a spec through /dev/stdin" bash -c '
+  if grep -ln "f /dev/stdin" scripts/e2e-*.sh; then
+    echo "these gates feed a spec through /dev/stdin; write it to a file instead (see scripts/gates.sh):" >&2
+    exit 1
+  fi'
+
 step "generated artifacts are current" bash -c '
   python3 tools/gen_spec_corpus.py --check &&
   python3 tools/gen_protocol_vectors.py --check &&

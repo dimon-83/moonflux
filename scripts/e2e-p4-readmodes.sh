@@ -52,7 +52,7 @@ offsets() { "$EXE" cluster offsets --topic "$TOPIC" --remote "$1" 2>/dev/null ||
 mkdir -p "$WORK/sc" "$WORK/spu-a" "$WORK/spu-b"
 printf 'a1\na2\n' > "$WORK/in.txt"
 for node in spu-a spu-b; do
-  "$EXE" pipeline apply -f /dev/stdin --data-dir "$WORK/$node" <<EOF > /dev/null
+  cat > "$WORK/e2e-p4-readmodes-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -65,6 +65,7 @@ for node in spu-a spu-b; do
   }
 }
 EOF
+  "$EXE" pipeline apply -f "$WORK/e2e-p4-readmodes-spec-1.json" --data-dir "$WORK/$node"  > /dev/null || fail "pipeline apply failed (e2e-p4-readmodes spec 1)"
 done
 
 "$EXE" sc --listen "127.0.0.1:$SC_PORT" --data-dir "$WORK/sc" > "$WORK/sc.log" 2>&1 &

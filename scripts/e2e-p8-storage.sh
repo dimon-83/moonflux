@@ -80,7 +80,7 @@ start_broker() { # $1 = data dir, $2 = port, $3 = log file, extra env pre-set
 }
 
 apply_topic() { # $1 = data dir, $2 = topic
-  "$EXE" pipeline apply -f /dev/stdin --data-dir "$1" <<EOF > /dev/null
+  cat > "$WORK/e2e-p8-storage-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -93,6 +93,7 @@ apply_topic() { # $1 = data dir, $2 = topic
   }
 }
 EOF
+  "$EXE" pipeline apply -f "$WORK/e2e-p8-storage-spec-1.json" --data-dir "$1"  > /dev/null || fail "pipeline apply failed (e2e-p8-storage spec 1)"
 }
 
 segments_of() { # $1 = port -> "base records bytes" lines

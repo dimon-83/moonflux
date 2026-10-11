@@ -63,7 +63,7 @@ wait_listen "$BROKER_PORT" || fail "the data node did not start"
 
 # the node learns its topic from an applied pipeline (as before); the
 # control plane places all three partitions of the declared topic
-"$EXE" pipeline apply -f /dev/stdin --data-dir "$WORK/broker" <<EOF > /dev/null
+cat > "$WORK/e2e-p5-partitions-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -76,6 +76,7 @@ wait_listen "$BROKER_PORT" || fail "the data node did not start"
   }
 }
 EOF
+"$EXE" pipeline apply -f "$WORK/e2e-p5-partitions-spec-1.json" --data-dir "$WORK/broker"  > /dev/null || fail "pipeline apply failed (e2e-p5-partitions spec 1)"
 kill "$BROKER_PID" 2>/dev/null || true
 wait "$BROKER_PID" 2>/dev/null || true
 "$EXE" spu --id spu-a --listen "127.0.0.1:$BROKER_PORT" --data-dir "$WORK/broker" \

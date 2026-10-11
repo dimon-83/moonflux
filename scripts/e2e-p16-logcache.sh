@@ -182,7 +182,7 @@ mkdir -p "$WORK/retention"
 gen_lines "$WORK/retain.txt" 400 60 "k"
 # retention in `serve` runs for the *applied* topic (the broker owns the
 # whole log, so its floor is its own end)
-"$EXE" pipeline apply -f /dev/stdin --data-dir "$WORK/retention" <<EOF > /dev/null
+cat > "$WORK/e2e-p16-logcache-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -195,6 +195,7 @@ gen_lines "$WORK/retain.txt" 400 60 "k"
   }
 }
 EOF
+"$EXE" pipeline apply -f "$WORK/e2e-p16-logcache-spec-1.json" --data-dir "$WORK/retention"  > /dev/null || fail "pipeline apply failed (e2e-p16-logcache spec 1)"
 BROKER="$(start_broker "$RETENTION_PORT" "$WORK/retention" \
   MOONFLUX_ROLL_BYTES=4096 MOONFLUX_RETAIN_BYTES=8192 MOONFLUX_RETAIN_MS=0)"
 PIDS+=("$BROKER")
@@ -238,7 +239,7 @@ PIDS+=("$SC_PID")
 wait_listen "$SC_PORT" || { cat "$WORK/sc.log"; fail "sc did not start"; }
 
 for node in spu-a spu-b; do
-  "$EXE" pipeline apply -f /dev/stdin --data-dir "$WORK/$node" <<EOF > /dev/null
+  cat > "$WORK/e2e-p16-logcache-spec-2.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -251,6 +252,7 @@ for node in spu-a spu-b; do
   }
 }
 EOF
+  "$EXE" pipeline apply -f "$WORK/e2e-p16-logcache-spec-2.json" --data-dir "$WORK/$node"  > /dev/null || fail "pipeline apply failed (e2e-p16-logcache spec 2)"
 done
 
 "$EXE" spu --id spu-a --listen "127.0.0.1:$A_PORT" --data-dir "$WORK/spu-a" \

@@ -42,7 +42,7 @@ printf 'ws1\nws2\n' > "$WORK/in.txt"
 # the project's own generator so the bytes follow the protocol's rules
 python3 "$ROOT/tools/gen_ws_batch.py" "$WORK/batch.bin" > /dev/null \
   || { echo "generator failed" >&2; exit 1; }
-"$EXE" pipeline apply -f /dev/stdin --data-dir "$WORK/data" <<EOF > /dev/null
+cat > "$WORK/e2e-p4-ws-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -55,6 +55,7 @@ python3 "$ROOT/tools/gen_ws_batch.py" "$WORK/batch.bin" > /dev/null \
   }
 }
 EOF
+"$EXE" pipeline apply -f "$WORK/e2e-p4-ws-spec-1.json" --data-dir "$WORK/data"  > /dev/null || fail "pipeline apply failed (e2e-p4-ws spec 1)"
 
 "$EXE" serve --data-dir "$WORK/data" --listen "127.0.0.1:$PORT" --ws > "$WORK/serve.log" 2>&1 &
 SERVER_PID=$!

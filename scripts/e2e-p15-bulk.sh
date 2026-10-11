@@ -233,7 +233,7 @@ SC_PID=$!
 wait_listen "$SC_PORT" || { cat "$WORK/sc.log"; fail "sc did not start"; }
 
 for node in spu-a spu-b; do
-  "$EXE" pipeline apply -f /dev/stdin --data-dir "$WORK/$node" <<EOF > /dev/null
+  cat > "$WORK/e2e-p15-bulk-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -246,6 +246,7 @@ for node in spu-a spu-b; do
   }
 }
 EOF
+  "$EXE" pipeline apply -f "$WORK/e2e-p15-bulk-spec-1.json" --data-dir "$WORK/$node"  > /dev/null || fail "pipeline apply failed (e2e-p15-bulk spec 1)"
 done
 
 A_PID="$("$EXE" spu --id spu-a --listen "127.0.0.1:$A_PORT" --data-dir "$WORK/spu-a" \

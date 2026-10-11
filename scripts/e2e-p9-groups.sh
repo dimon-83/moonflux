@@ -66,7 +66,7 @@ start_sc() {
 }
 
 apply_topic() { # $1 = data dir
-  "$EXE" pipeline apply -f /dev/stdin --data-dir "$1" <<EOF > /dev/null
+  cat > "$WORK/e2e-p9-groups-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -79,6 +79,7 @@ apply_topic() { # $1 = data dir
   }
 }
 EOF
+  "$EXE" pipeline apply -f "$WORK/e2e-p9-groups-spec-1.json" --data-dir "$1"  > /dev/null || fail "pipeline apply failed (e2e-p9-groups spec 1)"
 }
 
 leader_of() { # $1 = partition

@@ -104,7 +104,7 @@ wait_listen "$SC_PORT" || { cat "$WORK/sc.log"; fail "sc did not start"; }
 # the pipeline names the topic every node serves; placement (which
 # partitions, on whom) still comes from the control plane
 for node in spu-a spu-b spu-c; do
-  "$EXE" pipeline apply -f /dev/stdin --data-dir "$WORK/$node" <<EOF > /dev/null
+  cat > "$WORK/e2e-p7-partitions-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -117,6 +117,7 @@ for node in spu-a spu-b spu-c; do
   }
 }
 EOF
+  "$EXE" pipeline apply -f "$WORK/e2e-p7-partitions-spec-1.json" --data-dir "$WORK/$node"  > /dev/null || fail "pipeline apply failed (e2e-p7-partitions spec 1)"
 done
 
 # the nodes register first: a topic declared before its nodes exist is

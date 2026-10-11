@@ -57,7 +57,7 @@ start_spu() { # id, port, dir
 }
 
 apply_pipeline() { # dir
-  "$EXE" pipeline apply -f /dev/stdin --data-dir "$1" <<EOF > /dev/null
+  cat > "$WORK/e2e-p3-failover-spec-1.json" <<EOF
 {
   "apiVersion": "moonflux.io/v1alpha1",
   "kind": "Pipeline",
@@ -70,6 +70,7 @@ apply_pipeline() { # dir
   }
 }
 EOF
+  "$EXE" pipeline apply -f "$WORK/e2e-p3-failover-spec-1.json" --data-dir "$1"  > /dev/null || fail "pipeline apply failed (e2e-p3-failover spec 1)"
 }
 
 # ---- cluster up ----------------------------------------------------------
