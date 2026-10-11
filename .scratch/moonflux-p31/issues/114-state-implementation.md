@@ -16,3 +16,14 @@
 - [x] 探针：`STATE_EXPECTED` 成对检查（只出一个 = 红）+ 头部校验纳入 v3 名字；实测 `operator ABI surface OK (modules + published header)`
 - [x] C 头声明 v3 两个导出与 v3 载荷布局（前缀 + v1 帧）
 - [x] v1/v2 回归：既有模块与探针全绿
+
+
+## T115（宿主侧 callout）· ✅ 2026-10-11（决策 66）
+
+- [x] `core/spec`：`CalloutTransform` + `CalloutSpec` 与全部校验（method GET/POST、url 必须 `http://`、**mode 必填**、record/replay 必须给 cassette、headers 对象、timeout_ms 正数、未知键拒绝）
+- [x] `apps/cli/callout.mbt`：磁带（record 追加 / replay 装载与精确匹配 / 未命中按名拒绝）、`${VAR}` 环境展开（缺失即拒）、占位符 `{ident}`（其余花括号是字面量）、带**读超时与响应上限**的交换、`live/record/replay` 三态
+- [x] `CompiledNode::Callout` + `apply_nodes` 臂；`pipeline plan` 标为 `host-io`
+- [x] 门禁 `scripts/e2e-p32-callout.sh` **9 腿**（`gates.sh` 47 → 48 步）+ 独立对端 `scripts/http_mock.py`（记录每个请求，门禁断言"服务端看到了什么"）
+- [x] 示例 `examples/sdf/22-http-callout`（4 行冻结期望 + 4 次真实交换的磁带）+ p29 腿 34/35
+- [x] 顺带修掉既有缺陷：**spec 拒绝信息此前打在 stdout**（`pipeline run` 的 stdout 是 sink 数据流）→ 改到 stderr
+- [ ] 余下：`openai-callout`（同一算子的 POST + `count-per-model` 状态组合）；`hackernews-notify`

@@ -66,6 +66,36 @@ pub(all) enum TransformSpec {
   /// apply time, so an unsupported construct is a publish-time rejection
   /// instead of a per-record surprise.
   RegexTransform(String, Bool)
+  /// A host-side HTTP callout (P30/T115). It is a HOST transform, not a
+  /// guest one: guests have no imports, so they cannot reach the network,
+  /// and putting the callout here keeps that structural fact intact.
+  ///
+  /// `mode` is REQUIRED and has no default: live / record / replay. A spec
+  /// that calls the network without saying so is a spec whose determinism
+  /// nobody chose, and "it happened to work when I ran it" is not a
+  /// property a pipeline can be gated on.
+  CalloutTransform(CalloutSpec)
+} derive(Debug, Eq, Show)
+
+///|
+/// One host-side HTTP callout (P30/T115).
+pub(all) struct CalloutSpec {
+  /// "GET" or "POST".
+  method : String
+  /// A URL template: `{field}` is a JSON scalar field of the record's value,
+  /// `{value}` is the whole value text.
+  url : String
+  /// A POST body template (same placeholders). Empty for GET.
+  body : String
+  /// Request headers. A value of the form `${VAR}` is expanded from the
+  /// node's environment at apply time — and never written to a cassette.
+  headers : Array[(String, String)]
+  /// "live" | "record" | "replay" (required).
+  mode : String
+  /// The cassette path (required for record and replay).
+  cassette : String
+  /// The outbound deadline, in milliseconds.
+  timeout_ms : Int
 } derive(Debug, Eq, Show)
 
 ///|
@@ -545,7 +575,7 @@ fn parse_body(
             t,
             [
               "type", "expr", "functions", "module", "config", "function", "pattern",
-              "invert",
+              "invert", "method", "url", "body", "headers", "mode", "cassette", "timeout_ms",
             ],
             errors,
           )
@@ -679,11 +709,206 @@ fn parse_body(
                     message: "regex transforms require a string pattern",
                   })
               }
+            Some(String("callout")) => {
+              let method = match t.get("method") {
+                Some(String(m)) =>
+                  if m == "GET" || m == "POST" {
+                    Some(m)
+                  } else {
+                    errors.push(SpecError::{
+                      path: "\{path}.method",
+                      code: "bad-value",
+                      message: "callout method must be GET or POST",
+                    })
+                    None
+                  }
+                _ => {
+                  errors.push(SpecError::{
+                    path: "\{path}.method",
+                    code: "missing-field",
+                    message: "callouts require a method (GET or POST)",
+                  })
+                  None
+                }
+              }
+              let url = match t.get("url") {
+                Some(String(u)) =>
+                  if u.has_prefix("http://") && u.length() > 7 {
+                    Some(u)
+                  } else {
+                    errors.push(SpecError::{
+                      path: "\{path}.url",
+                      code: "bad-value",
+                      message: "callout urls must start with http:// (the host client speaks plain HTTP/1.1)",
+                    })
+                    None
+                  }
+                _ => {
+                  errors.push(SpecError::{
+                    path: "\{path}.url",
+                    code: "missing-field",
+                    message: "callouts require a url",
+                  })
+                  None
+                }
+              }
+              // mode is required: determinism is a choice, and it has to be
+              // the spec author's
+              let mode = match t.get("mode") {
+                Some(String(m)) =>
+                  if m == "live" || m == "record" || m == "replay" {
+                    Some(m)
+                  } else {
+                    errors.push(SpecError::{
+                      path: "\{path}.mode",
+                      code: "bad-value",
+                      message: "callout mode must be live, record or replay",
+                    })
+                    None
+                  }
+                _ => {
+                  errors.push(SpecError::{
+                    path: "\{path}.mode",
+                    code: "missing-field",
+                    message: "callouts require a mode (live, record or replay): determinism is not defaulted",
+                  })
+                  None
+                }
+              }
+              let cassette = match t.get("cassette") {
+                Some(String(c)) => Some(c)
+                Some(_) => {
+                  errors.push(SpecError::{
+                    path: "\{path}.cassette",
+                    code: "bad-type",
+                    message: "cassette must be a path string",
+                  })
+                  None
+                }
+                None => None
+              }
+              match mode {
+                Some(m) =>
+                  if m != "live" && cassette is None {
+                    errors.push(SpecError::{
+                      path: "\{path}.cassette",
+                      code: "missing-field",
+                      message: "record and replay modes require a cassette path",
+                    })
+                  }
+                None => ()
+              }
+              let body = match t.get("body") {
+                Some(String(b)) => Some(b)
+                Some(_) => {
+                  errors.push(SpecError::{
+                    path: "\{path}.body",
+                    code: "bad-type",
+                    message: "callout body must be a string",
+                  })
+                  None
+                }
+                None => Some("")
+              }
+              let headers = match t.get("headers") {
+                Some(Object(h)) => {
+                  let out : Array[(String, String)] = []
+                  for pair in h {
+                    match pair.1 {
+                      String(v) =>
+                        if pair.0.length() == 0 {
+                          errors.push(SpecError::{
+                            path: "\{path}.headers",
+                            code: "bad-value",
+                            message: "header names must not be empty",
+                          })
+                        } else {
+                          out.push((pair.0, v))
+                        }
+                      _ =>
+                        errors.push(SpecError::{
+                          path: "\{path}.headers.\{pair.0}",
+                          code: "bad-type",
+                          message: "header values must be strings",
+                        })
+                    }
+                  }
+                  Some(out)
+                }
+                Some(_) => {
+                  errors.push(SpecError::{
+                    path: "\{path}.headers",
+                    code: "bad-type",
+                    message: "headers must be an object",
+                  })
+                  None
+                }
+                None => Some([])
+              }
+              let timeout_ms = match t.get("timeout_ms") {
+                Some(Number(n)) => {
+                  let v = n.to_int()
+                  if v <= 0 {
+                    errors.push(SpecError::{
+                      path: "\{path}.timeout_ms",
+                      code: "bad-value",
+                      message: "timeout_ms must be positive",
+                    })
+                    None
+                  } else {
+                    Some(v)
+                  }
+                }
+                Some(_) => {
+                  errors.push(SpecError::{
+                    path: "\{path}.timeout_ms",
+                    code: "bad-type",
+                    message: "timeout_ms must be a number",
+                  })
+                  None
+                }
+                None => Some(2000)
+              }
+              reject_unknown_keys(
+                path,
+                t,
+                [
+                  "type", "method", "url", "body", "headers", "mode", "cassette",
+                  "timeout_ms",
+                ],
+                errors,
+              )
+              match (method, url, mode, body, headers, timeout_ms) {
+                (
+                  Some(method),
+                  Some(url),
+                  Some(mode),
+                  Some(body),
+                  Some(headers),
+                  Some(timeout_ms),
+                ) =>
+                  out.push(
+                    CalloutTransform(CalloutSpec::{
+                      method,
+                      url,
+                      body,
+                      headers,
+                      mode,
+                      cassette: match cassette {
+                        Some(c) => c
+                        None => ""
+                      },
+                      timeout_ms,
+                    }),
+                  )
+                (_, _, _, _, _, _) => ()
+              }
+            }
             Some(String(other)) =>
               errors.push(SpecError::{
                 path: "\{path}.type",
                 code: "bad-value",
-                message: "unknown transform type \"\{other}\" (supported: expr, wasm, scalar, regex)",
+                message: "unknown transform type \"\{other}\" (supported: expr, wasm, scalar, regex, callout)",
               })
             _ =>
               errors.push(SpecError::{

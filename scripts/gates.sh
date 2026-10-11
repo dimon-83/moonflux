@@ -139,6 +139,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p29-examples.sh" scripts/e2e-p29-examples.sh
   step "e2e-p30-connector-examples.sh" scripts/e2e-p30-connector-examples.sh
   step "e2e-p31-state.sh" scripts/e2e-p31-state.sh
+  step "e2e-p32-callout.sh" scripts/e2e-p32-callout.sh
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 

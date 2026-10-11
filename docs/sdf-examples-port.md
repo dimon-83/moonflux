@@ -28,6 +28,7 @@
 | 5 | [`05-split-two-streams`](../examples/sdf/05-split-two-streams/) | `primitives/split/filter` | **两条入口 spec**（各一个过滤分支、各自主题），断言两个分支不相交 | 5 |
 | 6 | [`06-merge-two-sources`](../examples/sdf/06-merge-two-sources/) | `primitives/merge` | **两条入口 spec 写同一个主题**；主题即合并后的流（偏移 0..3 连续） | 6 |
 | 7 | [`07-key-value-keys`](../examples/sdf/07-key-value-keys/) | `primitives/key-value/{input,output,chained}` | key 是**日志的一列**：`produce --key-separator` 打戳、`consume` 第 3 列可见、跨存储存活 | 7 |
+| 22 | [`22-http-callout`](../examples/sdf/22-http-callout/) | `dataflows/http-callout` | **宿主侧 callout**：按 `maker` 填 URL 调 HTTP，`mode` 必填（live/record/replay）；夹具与独立 mock 对端（`scripts/http_mock.py`）产出的磁带 | 34 / 35（专有门禁 `e2e-p32-callout.sh` 9 腿） |
 | 21 | [`21-ny-transit`](../examples/sdf/21-ny-transit/) | `dataflows/ny-transit` | **合成夹具**（TLC 公开数据集不在仓库）按参考 schema：按 `PULocationID` × 30 秒窗口的**平均小费**（`sum,count` 状态）；`vendors`/`locations` 表只服务可视化的 SQL join（SQL 明示非目标） | 32 / 33 |
 | 20 | [`20-helsinki-transit`](../examples/sdf/20-helsinki-transit/) | `dataflows/helsinki-transit` | 夹具首条是参考包 **`sample/sdf.json` 的真实事件**；三个谓词复刻 `clean-events`（10 进 7 出）+ 每车每 5 秒窗口平均速度；参考走 MQTT，本案例用文件回放（传输在案例 10/11 门禁里） | 30 / 31 |
 | 19 | [`19-car-processing`](../examples/sdf/19-car-processing/) | `dataflows/car-processing` | **合成夹具**（参考从实时生成器拉取）按 README schema：超速（结构化谓词）+ 按地点两条管道 + 颜色 × 30 秒窗口（ISO-8601 事件时间）+ 参考表加载与**套牌比对**（只读） | 26 / 27 / 28 / 29 |

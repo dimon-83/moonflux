@@ -272,7 +272,7 @@ moonflux/
 - [ ] 涉及 codec/算子：golden vectors 对拍通过；涉及执行路径：预算与超时行为测试通过
 - [ ] 生成物一致性：`tools/gen_*.py --check` 全部 up to date（**改数据文件后必须重跑生成器**；生成器按 `moon fmt` 排版输出，故 fmt 对生成文件是 no-op）
 - [ ] 涉及集成（mbel / 参考系统互操作）：附可复现脚本与对照输出
-- [ ] **CI**：推送即跑 `scripts/gates.sh fast`（Linux）；动数据路径前手动跑全量（`gh workflow run ci`，macOS 47 步）。CI 装的是工具链 `latest`，**本地必须 `moon upgrade` 到同版本**（格式器方向相反，见 README 决策 51）
+- [ ] **CI**：推送即跑 `scripts/gates.sh fast`（Linux）；动数据路径前手动跑全量（`gh workflow run ci`，macOS 48 步）。CI 装的是工具链 `latest`，**本地必须 `moon upgrade` 到同版本**（格式器方向相反，见 README 决策 51）
 - [ ] 文档同步：README / 报告章节 / 本文件金规则表（如决策有变更并注明依据；规范见 §10）
 
 ## 7. 对标参考系统（Fluvio）使用规则
@@ -299,6 +299,7 @@ moonflux/
 - **墙钟只报告、不设门禁**（决策 33）：耗时由 adapter 测量（`last_call_ms`），超档只告警/打印（`over_time_hint`）；**不得**把墙钟接成 pass/fail 判据——那会让同一批数据因机器负载时而通过时而失败，破坏重放。要收紧就调 fuel（确定性）。
 - **失败一律 fail-closed**：算子拒绝 / trap / 预算超限都必须变成结构化错误，且**已产出的一半批次绝不落 Sink**（`scripts/crosscheck-operators.sh` 的 fail-closed 四条腿是这条纪律的门禁）。
 - **状态是数据进出，不是 API 调用**（P30/T114，决策 60）：ABI v3 的成对导出（`mf_op_state_abi_version`/`mf_op_state_apply`）把"这批记录的当前状态"当**数据**交给 guest、把新状态当数据收回来——guest 仍然**无导入**，这条结构性事实不得为了让算子"能读写状态"而破坏。**宿主侧纪律**：状态主题（`spec.state.topic`）是**唯一持久真相**，视图只是缓存（启动重放、批后写回）；状态键**必须是 UTF-8 文本**（非 UTF-8 按名拒绝，不做事有损解码——两个键被静默合并是比报错更坏的结果）；视图有上限（`MOONFLUX_STATE_KEYS`），**超限在写之前拒绝**并写明"没有写入任何状态"，绝不静默淘汰；**状态主题不得等于数据主题**（环）；**状态是 `pipeline run` 的能力**——取数路径（serve）没有地方安放状态，遇到状态节点必须**按名拒绝**而不是无状态地跑一遍。**每批是一次事务**：批内记录看到的是批开始时同一份状态（批内不可见），失败则 sink 无输出、状态无写入。**窗口不是第二个概念，是键的形状**（决策 61）：`apps/operator-tumble` 把 key 改写成 `key@窗口起点`，于是窗口复用键控状态——**不要**为窗口引入新 ABI、宿主特性或定时器；**没有 idle 触发器、窗口不自动过期**（留到压实/retention），而"水位推进才产出"（hopping/watermark）与"算子不读时钟"的红线正面冲突，要做先立项定义事件时间水位的来源。
+- **出站调用是宿主的，且确定性是显式选择**（P30/T115，决策 66）：HTTP callout 是 `{"type":"callout",…}`，住在**宿主**（`apps/cli/callout.mbt`）——guest 的无导入是结构性事实，不得为联网而破坏；`pipeline plan` 把它标成 `host-io` 能力，"哪些节点会离开进程"因此可审计。**`mode` 必填且无默认**（`live`/`record`/`replay`）：参考实现把 `sdf_http::get` 放进算子，于是同一 dataflow 每次运行都可能不同；本仓库"能进 pass/fail 的计量必须确定性"的红线不允许这种默认。**磁带是产物**（由一次真实 `record` 生成），**未命中按名拒绝且零输出**（绝不返回空 200）；**凭据永不进磁带**（`${VAR}` 在 apply 时从节点环境展开，磁带只记 method/URL/请求体/响应体——门禁同时断言对端看到了 header 且磁带里没有 token）；**出站必须有期限**（`timeout_ms` 装在 socket 读超时上，宁可按名失败也不挂住）；**占位符只认 `{标识符}`**，其余花括号是字面量（JSON 体的 `{` 曾被当成占位符，实测过的坑）。
 - **语义变更必须对拍**：任何算子语义调整都要有 native-vs-wasm 的字节级证据；测试向量放数据文件（`scripts/testdata/operator-golden.txt`，由 `tools/gen_operator_golden.py` 生成），手改即失败。
 
 ### 8.2 函数集纪律（P6 起）

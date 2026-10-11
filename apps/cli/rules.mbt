@@ -22,6 +22,10 @@ priv enum CompiledNode {
   /// distinct node because it needs something the others do not: a state
   /// view, and therefore a pipeline that declared where state lives.
   Stateful(@operator.OperatorInstance)
+  /// A host-side HTTP callout (P30/T115): the one transform that leaves the
+  /// process on purpose. Its determinism is a spec-level choice (live,
+  /// record or replay), never an accident.
+  Callout(Callout)
 }
 
 ///|
@@ -57,6 +61,8 @@ fn resolved_function_sets(
       @spec.ScalarTransform(_function) => ""
       // a regex transform carries its pattern, not a function set
       @spec.RegexTransform(_pattern, _invert) => ""
+      // a callout is host-side IO: it references no function set
+      @spec.CalloutTransform(_callout) => ""
     }
     if name != "" {
       let mut seen = false
@@ -113,6 +119,14 @@ fn compile_node(
         Err(e) => Err("transform \"\{expr}': \{e}")
       }
     }
+    CalloutTransform(c) =>
+      // the callout is compiled here (validation happened in the spec
+      // parser; the environment expansion happens now, because a spec that
+      // names ${VAR} is asking this node for a value only the node has)
+      match compile_callout(c) {
+        Ok(callout) => Ok(Callout(callout))
+        Err(e) => Err(e)
+      }
     WasmTransform(module_id, config) => {
       let engine = @wasmtime.operator_engine(fn(path) {
         match @fs.read_file(path) {
@@ -301,6 +315,14 @@ fn apply_nodes(
         }
         current = collected
       }
+      Callout(callout) =>
+        // the one arm that leaves the process: its determinism is the
+        // spec's explicit choice (live / record / replay), and a replay
+        // miss is a named refusal rather than an empty answer
+        match callout.apply(current) {
+          Ok(out) => current = out
+          Err(e) => return Err("callout: \{e}")
+        }
       Regex(re, invert) => {
         // a filter is a shorter batch (the same shape the sandbox
         // operators use): the record passes when its value matches

@@ -52,6 +52,10 @@
 #                  average per vehicle per 5-second window
 #  32  ny-transit    average tip per pickup zone per 30-second
 #                  window, over TLC-shaped trip records
+#  34  callout       the shipped cassette replays the shipped
+#                  answer byte for byte, with no network
+#  35  callout       the cassette holds one exchange per car and
+#                  no credentials
 #  33  ny-transit    the average's state is sum,count, so the
 #                  running mean can be checked by hand
 #  31  helsinki      the state is sum,count (not a self-referential
@@ -495,4 +499,23 @@ grep -q "^ZoneA@1710432750000	8,2$" "$WORK/33.state" ||
   fail "case 33: the state is not sum,count for the two-trip zone window (expected 8,2)"
 pass "33. the state keeps sum and count (8,2), which is why the running 3 then 4 can be checked by hand"
 
-echo "E2E-P29-EXAMPLES: 33 legs green (21 case specs across 21 example applications)"
+# ---- 34-35. http-callout: replay from the shipped cassette ------------
+# No network here on purpose: the example's replay spec reads the cassette
+# that spec-record.json produced from the local mock, so this leg is
+# deterministic and runs with nothing listening.
+DCO="$WORK/p29-callout"
+"$EXE" pipeline run --data-dir "$DCO" --spec "$EXAMPLES/22-http-callout/spec-replay.json" \
+  > "$WORK/34.out" 2> "$WORK/34.err" || { cat "$WORK/34.err"; fail "case 34: replay run failed"; }
+check "34 replayed callout answers" "$WORK/34.out" "$EXAMPLES/22-http-callout/expected.txt"
+pass "34. the shipped cassette replays the shipped answer byte for byte, with no network at all"
+
+[ "$(wc -l < "$EXAMPLES/22-http-callout/cassette.jsonl" | tr -d ' ')" = "4" ] ||
+  fail "case 35: the cassette does not hold one exchange per car"
+grep -q '"method":"GET"' "$EXAMPLES/22-http-callout/cassette.jsonl" ||
+  fail "case 35: the cassette has no method recorded"
+if grep -qi "authorization\|bearer\|token" "$EXAMPLES/22-http-callout/cassette.jsonl"; then
+  fail "case 35: the cassette contains something that looks like a credential"
+fi
+pass "35. the cassette holds exactly one exchange per car and nothing that looks like a credential"
+
+echo "E2E-P29-EXAMPLES: 35 legs green (22 case specs across 22 example applications)"

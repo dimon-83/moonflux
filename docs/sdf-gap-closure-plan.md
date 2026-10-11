@@ -18,7 +18,7 @@
 | 8 | 函数集没有本地创建路径 | **纯产品缺口，直接补** | **小（一票）** | 复用本地元数据存储 |
 | 10 | **结构化 JSON 谓词算子**（移植 `bank-processing`/`car-processing` 时新发现） | **✅ 已追平（2026-10-11，T114，决策 63）** | 小 | `apps/operator-predicate`：`{"field":"overdraft","op":"eq","value":true}`（`lt/le/gt/ge/eq/ne`，数值/文本/布尔，`missing: drop|keep`）。`17-bank-processing` 的透支选流**已从字节级 `contains` 换成结构化谓词**，冻结期望不变（腿 22 仍绿）；`car-processing` 的"超速"选流将直接用它 |
 | — | 正则（`primitives/regex`，原缺口清单未单列） | **已追平（2026-10-10，限定子集，边界按名拒绝）** | 中（已完成） | `core/regex`：Thompson NFA 模拟（线性、无回溯爆炸）；不支持者 apply 期按名拒绝；案例 14 + `e2e-p29-examples.sh` 腿 13–15 |
-| 9 | 连接器与外部数据案例 | **大部分今天可做**（案例已落地）；callout 需一次确定性抉择 | 小（案例 ✅）+ 中（宿主侧 callout） | 轮询 HTTP 源是小票；callout 与确定性冲突须选边 |
+| 9 | 连接器与外部数据案例 | **✅ 已追平（2026-10-11，T115/决策 66）**：三类连接器案例 + 轮询 HTTP 源 + **宿主侧 callout（`mode` 必填：live/record/replay）** | 小（案例 ✅）+ 中（callout ✅） | callout 与确定性的冲突用"必填 mode + 磁带"选边：`replay` 完全不碰网络 |
 
 ## 2. 逐条方案
 
@@ -168,7 +168,9 @@
 
 **进展（2026-10-10）**：三类案例已落地并进门禁——`examples/sdf/{09-http-source,10-mqtt-transit,11-kafka-bridge}`，由 `scripts/e2e-p30-connector-examples.sh`（6 腿）验真，对端是仓库自带的 `python3 -m http.server`、`scripts/mqtt_test_broker.py`、`scripts/kafka_test_broker.py`（无需外网）。案例同时把落差写进 README：SDF 的连接器在数据流之外，moonflux 的连接器就在 spec 里。**方案 A（轮询 HTTP 源）仍是小票**，**方案 B（callout）仍未立项**。
 
-**方案 B（中票，须先选边）· 宿主侧 `http` 变换（callout）**：`{"type":"http","url":"...","method":"GET|POST","cache_ms":N}`——IO 留在 adapters（net-native 已有 HTTP 客户端），**沙箱保持纯净**。必须同时定义：
+**方案 B 已落地（2026-10-11，T115，决策 66）**：`{"type":"callout",…}`，`mode` **必填**（live/record/replay）、磁带是产物、未命中按名拒绝、凭据不进磁带、出站带期限；门禁 `scripts/e2e-p32-callout.sh` 9 腿。以下原设计保留。
+
+**原方案 B（中票，须先选边）· 宿主侧 `http` 变换（callout）**：`{"type":"http","url":"...","method":"GET|POST","cache_ms":N}`——IO 留在 adapters（net-native 已有 HTTP 客户端），**沙箱保持纯净**。必须同时定义：
 
 - 期限与体量上界（P12/§15 纪律：出站必须有期限）；
 - **凭据只做参数、永不入日志/审计**（P12 纪律；SDF 用 `std::env::var("OPENAI_API_KEY")` 从沙箱读环境，我们**不抄**）；

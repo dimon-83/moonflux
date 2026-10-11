@@ -1,0 +1,4 @@
+{"method":"GET","url":"http://127.0.0.1:18089/api/maker/Fiat","body":"","status":200,"response":"{\"maker\": \"Fiat\", \"country\": \"Italy\", \"continent\": \"Europe\"}"}
+{"method":"GET","url":"http://127.0.0.1:18089/api/maker/Toyota","body":"","status":200,"response":"{\"maker\": \"Toyota\", \"country\": \"Japan\", \"continent\": \"Asia\"}"}
+{"method":"GET","url":"http://127.0.0.1:18089/api/maker/Ford","body":"","status":200,"response":"{\"maker\": \"Ford\", \"country\": \"United States\", \"continent\": \"North America\"}"}
+{"method":"GET","url":"http://127.0.0.1:18089/api/maker/Tesla","body":"","status":200,"response":"{\"maker\": \"Tesla\", \"country\": \"United States\", \"continent\": \"North America\"}"}

@@ -17,6 +17,16 @@ pub fn valid_topic_name(String) -> Bool
 // Errors
 
 // Types and methods
+pub(all) struct CalloutSpec {
+  method : String
+  url : String
+  body : String
+  headers : Array[(String, String)]
+  mode : String
+  cassette : String
+  timeout_ms : Int
+} derive(Eq, Show, @debug.Debug)
+
 pub(all) struct PipelineSpec {
   metadata_name : String
   source : SourceSpec
@@ -56,6 +66,7 @@ pub(all) enum TransformSpec {
   WasmTransform(String, String)
   ScalarTransform(String)
   RegexTransform(String, Bool)
+  CalloutTransform(CalloutSpec)
 } derive(Eq, Show, @debug.Debug)
 
 // Type aliases

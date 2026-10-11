@@ -143,9 +143,13 @@ fn load_spec_doc(path : String) -> (@spec.PipelineSpec, Json) {
   match @spec.parse_spec(text) {
     Ok(spec) => (spec, json)
     Err(errors) => {
-      println("error: \{path}: \{errors.length()} spec error(s):")
+      // spec rejections are diagnostics, and stdout carries the sink's data:
+      // a pipeline whose spec was refused must not mix error text into the
+      // stream a consumer is parsing by column (measured while gating the
+      // callout's required `mode`: the refusal arrived on stdout)
+      warn("error: \{path}: \{errors.length()} spec error(s):")
       for e in errors {
-        println("  \{e.path}: [\{e.code}] \{e.message}")
+        warn("  \{e.path}: [\{e.code}] \{e.message}")
       }
       cli_exit(1)
       abort("unreachable")

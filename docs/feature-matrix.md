@@ -64,6 +64,7 @@
 | 键控状态（ABI v3 + 状态主题 + 宿主视图，P30/T114） | ✅ | `spec.state.topic` 声明状态主题；宿主启动重放视图（`apps/cli/state.mbt`）、每批按键写回；`{"type":"wasm"}` 模块**导出 v3 成对即自动成为状态节点**；键须 UTF-8、视图上限 `MOONFLUX_STATE_KEYS`（**写前拒绝**）、状态主题≠数据主题、serve 取数路径按名拒绝；`scripts/e2e-p31-state.sh` 8 腿 + 真 wasmtime 适配器测试 + `core/spec`/`core/operator`/SDK 单测 |
 | **键控状态**（ABI v3 + 状态主题 + 宿主视图，P30/T114） | ✅ | `spec.state.topic` 声明状态主题；宿主启动重放视图、每批按键写回（`apps/cli/state.mbt`）；`{"type":"wasm"}` 模块**导出 v3 成对即自动成为状态节点**；键须 UTF-8、视图上限 `MOONFLUX_STATE_KEYS`（**写前拒绝**）、状态主题≠数据主题、serve 取数路径按名拒绝；`scripts/e2e-p31-state.sh` 腿 1–8 + 真 wasmtime 适配器测试 |
 | **窗口**（tumbling，P30/T114 §5） | ✅ | **窗口即键的形状**：`apps/operator-tumble` 把 key 改写为 `key@窗口起点`（`window_ms` + `time_field`/`key_field`，事件时间可来自记录的 event-time 列、JSON 数字或 **ISO-8601 文本**（`time_format`，必须带 `Z`，亚毫秒按名拒绝）），窗口因此复用键控状态，不需要新 ABI 或宿主支持；**无 idle 触发器、无自动过期、不读时钟**（如实边界）；`e2e-p31-state.sh` 腿 9–10；示例 `examples/sdf/15-word-counter` |
+| **宿主侧 HTTP callout**（P30/T115） | ✅ | `{"type":"callout","method":"GET|POST","url":"…{field}…","body":"…","headers":{"Authorization":"Bearer ${VAR}"},"mode":"live|record|replay","cassette":"…","timeout_ms":N}`：`mode` **必填**（确定性是显式选择）；磁带是真实记录的产物，未命中按名拒绝；凭据不进磁带；出站带期限；占位符只认 `{标识符}`；guest 仍无导入。门禁 `scripts/e2e-p32-callout.sh` 9 腿（live 由独立 Python 对端见证、record 产磁带、replay 在**对端已停**时逐字节一致、未命中拒绝、header 出得去且 token 不进磁带、挂住的端点按期限失败、plan 标 `host-io`、无 callout 的管道不回归） |
 | 状态示例（word-counter / word-probe / bank-processing / unreal-engine-analytics / car-processing / helsinki-transit / ny-transit） | ✅ | `examples/sdf/15-word-counter`（每词运行计数 + 续跑）、`16-word-probe`（**两条管道共享同一条状态主题**：计数写、`operator-probe` 只读且**零写入**）、`17-bank-processing`（参考样本 8 事件原样：`operator-bankevents` 1→2 拆 debit/credit + `operator-balance` 按 iban 累加 → Duncan 770 / Lucy 2610；透支标志 + 选流）；门禁 `e2e-p29-examples.sh` 腿 16–22 |
 | 窗口（hopping / watermark 触发 flush） | ⏳ | 未立项：需要"水位推进才产出"的语义，与"算子不读时钟"的红线冲突，要做就得先定义事件时间水位的来源 |
 | 有状态算子 / 算子间 shuffle（跨节点） | ⏳ | 单机状态已具备（上行）；跨节点状态迁移/再均衡未立项，缺口清单见 [`sdf-examples-port.md`](sdf-examples-port.md) §4 |
@@ -116,7 +117,7 @@
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
 | 日志句柄复用（进程级有界缓存，淘汰安全） | ✅ | `apps/cli/logcache.mbt`：`open_partition_log` 命中即复用；变更经同一句柄故无需失效；`MOONFLUX_LOG_CACHE` 控制上限与 LRU 淘汰；每次真实打开在 stderr 记一行；`scripts/e2e-p16-logcache.sh`（6 腿） |
-| 门禁体系（47 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS，47 步） |
+| 门禁体系（48 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS，48 步） |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

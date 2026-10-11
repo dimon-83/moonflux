@@ -1,0 +1,4 @@
+{"maker": "Fiat", "country": "Italy", "continent": "Europe"}
+{"maker": "Toyota", "country": "Japan", "continent": "Asia"}
+{"maker": "Ford", "country": "United States", "continent": "North America"}
+{"maker": "Tesla", "country": "United States", "continent": "North America"}

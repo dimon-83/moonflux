@@ -89,6 +89,8 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
             "regex filter: \{pattern}"
           },
         )
+      CalloutTransform(c) =>
+        ("host-io", "http callout: \{c.mode} \{c.method} \{c.url}")
     }
     processes.push(Process::{
       name: "transform-\{i}",

@@ -1,0 +1,28 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-http-callout-record"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/22-http-callout/cars.jsonl"
+    },
+    "topic": {
+      "name": "cars"
+    },
+    "transforms": [
+      {
+        "type": "callout",
+        "method": "GET",
+        "url": "http://127.0.0.1:18089/api/maker/{maker}",
+        "mode": "record",
+        "cassette": "examples/sdf/22-http-callout/cassette.jsonl"
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

@@ -302,6 +302,8 @@ fn adopt_cluster_pipeline(
       @spec.ScalarTransform(_function) => ""
       // a regex transform carries its pattern, not a function set
       @spec.RegexTransform(_pattern, _invert) => ""
+      // a callout is host-side IO: it references no function set
+      @spec.CalloutTransform(_callout) => ""
     }
     if set_name == "" {
       continue

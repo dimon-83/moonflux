@@ -12,7 +12,7 @@ moon update                         # 首次克隆必须：取 registry 索引�
 moon build --target native          # 产物：_build/native/debug/build/apps/cli/cli.exe
 moon test --target native           # 274 项
 moon test --target wasm-gc          # 174 项（内核全后端）
-scripts/gates.sh                    # 全量门禁（47 步）；scripts/gates.sh fast 跳过 E2E
+scripts/gates.sh                    # 全量门禁（48 步）；scripts/gates.sh fast 跳过 E2E
 ```
 
 - **`moon update` 是首次克隆的前置步骤**（CI 首跑实测）：唯一的依赖 `dimon-83/mbel@0.3.3` 的**源码已随仓库 vendored** 在 `.mooncakes/`（119 个文件，随 git 追踪），但 moon 解析依赖仍要过 registry 索引——索引不在时每条 moon 命令都报 `Failed to resolve registry dependency dimon-83/mbel: module was not found in the registry`（`--frozen` 也一样失败）。moon 自己会提示 `you may need to run 'moon update'`。
@@ -220,6 +220,19 @@ cli.exe function-set list   --remote 127.0.0.1:19451
 
 - **状态就在那条主题里**：宿主启动时重放出视图（缓存），每批把变更按 key 写回（真相）；压实把它收敛成"每键最新"，floor 之下的读仍是结构化拒绝。
 - **哪些节点有状态由模块决定**：导出 v3 成对（`mf_op_state_abi_version`/`mf_op_state_apply`）的模块自动成为状态节点；**键必须由记录携带**（`produce --key`、`--key-separator`，或像 `operator-wordkeys` 那样在算子里给输出设键）。
+**HTTP callout**（宿主侧出站调用；`mode` 必填）：
+
+```json
+{ "type": "callout", "method": "GET",
+  "url": "http://127.0.0.1:18089/api/maker/{maker}",
+  "mode": "replay", "cassette": "examples/sdf/22-http-callout/cassette.jsonl" }
+```
+
+- `live` 真发请求、`record` 发并把交换写进磁带、`replay` **只读磁带、完全不碰网络**；**没有默认值**——写了 callout 就必须说清是哪一种（apply 期按名拒绝）。
+- `{field}` 是记录值里的 JSON 标量字段，`{value}` 是整段值；**其它花括号是字面量**（JSON 请求体因此可以直接写）。
+- `headers` 里的 `${VAR}` 在 apply 时从节点环境展开；**磁带只记 method/URL/请求体/响应体，凭据永不入磁带**。
+- `timeout_ms`（默认 2000）是出站的硬期限：挂住的端点按名失败，不挂住进程。
+
 **窗口**（窗口就是键的形状，所以它和状态是同一套东西）：
 
 ```json
