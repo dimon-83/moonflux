@@ -535,3 +535,15 @@ fn GroupRegistry::list(
   out.sort_by(fn(a, b) { a.0.compare(b.0) })
   out
 }
+
+///|
+/// How many members the registry currently holds (P35). A gauge read: it
+/// counts what is in memory now, so it cannot disagree with the coordination
+/// the next heartbeat will do.
+pub fn GroupRegistry::member_count(self : GroupRegistry) -> Int {
+  let mut total = 0
+  for group in self.groups {
+    total = total + group.members.length()
+  }
+  total
+}

@@ -106,7 +106,13 @@ pub fn write_lease(
     Ok(_) => ()
     Err(e) => return Err("mkdir \{data_dir}: \{e}")
   }
-  let tmp = "\{path}.tmp"
+  // The temp file is per-WRITER, not per-path: two control planes sharing this
+  // directory both write the lease (that is the whole point of the lease), and
+  // a shared `sc-lease.json.tmp` means one of them renames it away while the
+  // other is still writing — the second then fails with ENOENT and exits
+  // (measured by the HA gate's first run, which started exactly that pair).
+  let mine = sanitize_for_path(lease.holder)
+  let tmp = "\{path}.tmp.\{mine}"
   match @fs.write_file(tmp, @utf8.encode(text[0:text.length()])) {
     Ok(_) => ()
     Err(e) => return Err("write \{tmp}: \{e}")
@@ -301,4 +307,21 @@ pub fn standby_message(data_dir : String) -> String {
       "this control plane is standby and no lease is held; no active control plane is reachable"
     Err(e) => "this control plane is standby and the lease is unreadable: \{e}"
   }
+}
+
+///|
+/// A lease holder's address, made safe to put in a filename. The address is
+/// `host:port`; the colon (and any IPv6 brackets) cannot appear in a path
+/// component on every platform, and a temp file that collides is a temp file
+/// two writers fight over.
+fn sanitize_for_path(text : String) -> String {
+  let out = StringBuilder::new()
+  for ch in text {
+    match ch {
+      ':' | '/' | '[' | ']' | '*' | '?' | '"' | '<' | '>' | '|' =>
+        out.write_char('_')
+      _ => out.write_char(ch)
+    }
+  }
+  out.to_string()
 }

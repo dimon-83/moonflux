@@ -120,6 +120,22 @@ pub(all) struct HubHandler {
 }
 
 ///|
+/// Adds the metrics/health surface (P35). The listener joins the SAME poll
+/// set: this is a second *socket*, not a second thread, and a scrape is
+/// answered inside the round that found it ready.
+pub fn ConnectionHub::with_metrics(
+  self : ConnectionHub,
+  listener : @net.TcpListener,
+  metrics : Metrics,
+  health : () -> Array[(String, Bool)],
+) -> ConnectionHub {
+  self.metrics_listener = Some(listener)
+  self.metrics = Some(metrics)
+  self.health = Some(health)
+  self
+}
+
+///|
 /// The hub: an accept backlog plus every connection currently open.
 pub struct ConnectionHub {
   listener : @net.TcpListener
@@ -134,6 +150,16 @@ pub struct ConnectionHub {
   /// the longest frame header + the largest payload this server accepts
   max_frame : Int
   poll_timeout_ms : Int
+  /// The metrics/health listener (P35), when this server has one. It sits at
+  /// the END of the poll set on purpose: connections are `index - 1` in the
+  /// existing math, and appending a listener keeps every one of those indices
+  /// valid. A read-only HTTP surface is not a command path, so it does not go
+  /// through `handler` and cannot reach the protocol above.
+  mut metrics_listener : @net.TcpListener?
+  /// The counters this process publishes.
+  mut metrics : Metrics?
+  /// The health checks `/healthz` answers with, evaluated per request.
+  mut health : (() -> Array[(String, Bool)])?
   /// how long one accepted connection may spend in its TLS handshake.
   /// A parameter, not a constant, because the cost of a peer that
   /// connects and says nothing is paid by the *loop*: the control plane
@@ -151,6 +177,9 @@ pub fn ConnectionHub::new(
     listener,
     tls: None,
     conns: [],
+    metrics_listener: None,
+    metrics: None,
+    health: None,
     max_frame: @client.MAX_FRAME_PAYLOAD + 13,
     poll_timeout_ms,
     handshake_deadline_ms: HANDSHAKE_DEADLINE_MS,
@@ -167,6 +196,9 @@ pub fn ConnectionHub::with_tls(
     listener: self.listener,
     tls: Some(tls),
     conns: self.conns,
+    metrics_listener: self.metrics_listener,
+    metrics: self.metrics,
+    health: self.health,
     max_frame: self.max_frame,
     poll_timeout_ms: self.poll_timeout_ms,
     handshake_deadline_ms: self.handshake_deadline_ms,
@@ -197,6 +229,9 @@ pub fn ConnectionHub::with_handshake_deadline(
     listener: self.listener,
     tls: self.tls,
     conns: self.conns,
+    metrics_listener: self.metrics_listener,
+    metrics: self.metrics,
+    health: self.health,
     max_frame: self.max_frame,
     poll_timeout_ms: self.poll_timeout_ms,
     handshake_deadline_ms: ms,
@@ -315,6 +350,98 @@ fn step_handshake(conn : HubConnection) -> Unit {
 const HANDSHAKE_DEADLINE_MS : Int = 2000
 
 ///|
+/// Answers the metrics listener's queued scrapes, at most a few per round.
+/// A bounded number on purpose: a scrape is a nicety and must never let a
+/// hundred of them starve the data plane's connections (the P13 question —
+/// "does this make one round longer?" — answered by capping the work).
+///
+/// The request is read with a short deadline and answered without keep-alive.
+/// A client that connects and says nothing therefore costs one round, not the
+/// loop: exactly the lesson the control plane learned in P13.
+fn ConnectionHub::serve_metrics(self : ConnectionHub) -> Unit {
+  let listener = match self.metrics_listener {
+    Some(listener) => listener
+    None => return
+  }
+  let mut served = 0
+  while served < METRICS_PER_ROUND {
+    match listener.accept() {
+      Ok(stream) => {
+        served = served + 1
+        // A peer that sends bytes WITHOUT a newline must not hold the loop:
+        // measured — a client that sent `MFS...` and stopped got no reply at
+        // all, because the second recv blocked inside the event loop. The
+        // read deadline is what turns that into a 400, exactly like the
+        // handshake deadline does for a silent TLS peer (P13).
+        match stream.set_recv_timeout_ms(METRICS_READ_DEADLINE_MS) {
+          Ok(_) => ()
+          Err(_) => ()
+        }
+        let request = read_http_request(stream)
+        let now = @env.now().reinterpret_as_int64()
+        let (status, content_type, body) = match (self.metrics, self.health) {
+          (Some(metrics), Some(health)) =>
+            answer_metrics_request(request, metrics, now, health)
+          (_, _) =>
+            (503, "text/plain", "metrics are not configured on this server\n")
+        }
+        let response = http_response(status, content_type, body)
+        let bytes = @utf8.encode(response)
+        match stream.send_all(bytes) {
+          Ok(_) => ()
+          Err(e) => note("metrics: write: \{e}")
+        }
+        let _ = stream.close()
+      }
+      Err(_) => break
+    }
+  }
+}
+
+///|
+/// How long a metrics client has to finish its request line. Small: this is a
+/// scrape, not a data transfer, and the deadline is the whole reason a
+/// stalled peer cannot cost the loop (P13's rule, applied to a new listener).
+const METRICS_READ_DEADLINE_MS : Int = 250
+
+///|
+/// How many scrapes one round will answer. Small: an operator scraping every
+/// second is one connection, and a fleet of them must not be able to turn the
+/// data plane's loop into a metrics server.
+const METRICS_PER_ROUND : Int = 4
+
+///|
+/// Reads an HTTP request line (enough to route: method and path). Headers and
+/// bodies are not parsed — a scrape sends neither, and parsing what nobody
+/// sends is how a surface grows a second state machine.
+fn read_http_request(stream : @net.TcpStream) -> String {
+  let buf : FixedArray[Byte] = FixedArray::make(1024, b'\x00')
+  let out = StringBuilder::new()
+  let mut chars = 0
+  for _ in 0..<4 {
+    let n = match stream.recv(buf, 1024) {
+      Ok(n) => n
+      Err(_) => 0
+    }
+    if n <= 0 {
+      break
+    }
+    for i in 0..<n {
+      let byte = buf[i]
+      if byte == b'\n' {
+        return out.to_string()
+      }
+      out.write_char(byte.to_char())
+      chars = chars + 1
+    }
+    if chars >= 512 {
+      break
+    }
+  }
+  out.to_string()
+}
+
+///|
 /// Accepts every queued connection, none more. The listener's own
 /// deadline stays installed for any other caller; this drain simply
 /// never calls accept on a listener the OS has not already marked
@@ -378,6 +505,13 @@ pub fn ConnectionHub::poll_once(
   for conn in self.conns {
     fds.push((conn.stream.fd)())
   }
+  let metrics_index = match self.metrics_listener {
+    Some(listener) => {
+      fds.push(listener.raw_fd())
+      fds.length() - 1
+    }
+    None => -1
+  }
   let ready = match @net.poll_fds(fds, self.poll_timeout_ms, false) {
     Ok(ready) => ready
     Err(e) => {
@@ -410,6 +544,12 @@ pub fn ConnectionHub::poll_once(
   // mapping against the poll set still holds.
   for index in ready {
     if index == 0 {
+      continue
+    }
+    if index == metrics_index {
+      // one scrape per readiness notification; the surface is read-only and
+      // its answers are small
+      self.serve_metrics()
       continue
     }
     let conn = self.conns[index - 1]

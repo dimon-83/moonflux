@@ -32,6 +32,7 @@
 | 节点存活推导（3s 静默即离线）+ 离线清扫 | ✅ | `sc` 日志 `is offline`；`e2e-p3-nodes.sh` |
 | 元数据持久化与调和（放置/提名/主题声明） | ✅ | `scripts/e2e-p3-metadata.sh` |
 | 控制面资产下发（管道+函数集；修订不回退；失败保留在跑管道） | ✅ | `scripts/e2e-p11-assets.sh` |
+| **metrics + 健康端点**（P35，决策 76） | ✅ | `--metrics-listen`（serve/sc）：`/metrics` 文本计数（闭集标签）、`/healthz` 真读检查；standby 报 503 `lease:failed`；独立端口、无认证但**非回环+认证即警告**；同 poll 集、每轮 ≤4 刮取、250ms 读期限（不让一圈变长）；`uptime_ms` 只报告不被断言（决策 33）。`e2e-p35-metrics.sh` 10 腿 |
 | **控制面 HA（active/standby）**（P34，决策 74） | ✅ | `sc --ha`：共享目录上的租约（holder/epoch/expires）、每轮先续约再服务、**写入按 epoch 围栏**、standby 拒绝一切命令并**指名 active 地址**且不跑存活清扫；**无 quorum、无虚拟地址**（边界写明）。门禁 `e2e-p34-sc-ha.sh` 12 腿 |
 | **元数据备份/恢复**（P34，决策 74） | ✅ | `cluster metadata show/backup/restore`：可移植 JSON 快照（kind/版本/修订/**CRC-32C**），恢复与存储共用解码器；篡改、回退（除 `--force`）、非快照三类按名拒绝；**CRC 只能发现损坏、不能发现篡改**（写明） |
 | **耐久性原语可查**（P34，决策 75） | ✅ | macOS `F_FULLFSYNC`（回落 fsync）、Linux `fsync`；`moonflux doctor` 报告、`e2e-p8-storage.sh` 按平台断言 |
@@ -124,7 +125,7 @@
 | 一内核多后端（native/wasm/wasm-gc/js 编译矩阵） | ✅ | `supported_targets` fail-fast；`scripts/gates.sh` 四后端步 |
 | 确定性重放（内核零时钟/零随机，注入式） | ✅ | AGENTS.md §5 红线；预算语义 fuel（决策 33） |
 | 日志句柄复用（进程级有界缓存，淘汰安全） | ✅ | `apps/cli/logcache.mbt`：`open_partition_log` 命中即复用；变更经同一句柄故无需失效；`MOONFLUX_LOG_CACHE` 控制上限与 LRU 淘汰；每次真实打开在 stderr 记一行；`scripts/e2e-p16-logcache.sh`（6 腿） |
-| 门禁体系（51 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS/Linux，51 步） |
+| 门禁体系（52 步，含故障注入与对拍） | ✅ | `scripts/gates.sh`；CI 两腿均已绿：`fast` 随推送（Linux，12 步）、`full` 手动（macOS/Linux，52 步） |
 | golden vectors + 协议第二实现 | ✅ | `tools/gen_protocol_vectors.py` + `scripts/mfs_probe.py` |
 | 可观测性（结构化错误、状态迁移日志、凭据不入日志） | ✅ | 各门禁断言；`RecoveryReport`/`over_time_hint` 等报告位 |
 | 元数据存储可插拔（本地文件已实现；CRD 是第二个实现） | ⚠️ | 接口就位（`MetadataStore`），第二个后端随 K8s 立项 |

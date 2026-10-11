@@ -2,7 +2,7 @@
 
 > **定位**：对当前快照（P0–P26）的**生产就绪度评估**——分级结论、支撑证据、会变成事故的缺口、以及不开发新功能即可执行的最小生产化清单。**规约依据**：AGENTS.md §10（证据与状态规范）；**边界声明**：本文是**评估**，不是能力承诺——能力状态的单一真相在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，进度在 [`project-roadmap.md`](project-roadmap.md) 与 [`progress-board.md`](progress-board.md)。结论只对文末「评估方法与局限」列出的证据范围成立；未做的验证（压载 / 长稳 / Linux）不在此承诺。
 >
-> **日期**：2026-10-10 · 评估对象：P0–P29（门禁 51 步绿，native 314 / wasm-gc 210；CI 两腿均已绿）；P21–P29 的交付项按维护规则回填第 2/3/4 节（复核留痕见 §5）
+> **日期**：2026-10-10 · 评估对象：P0–P29（门禁 52 步绿，native 314 / wasm-gc 210；CI 两腿均已绿）；P21–P29 的交付项按维护规则回填第 2/3/4 节（复核留痕见 §5）
 
 ## 1. 分级结论
 
@@ -16,7 +16,7 @@
 | :--- | :--- | :--- |
 | 耐久性 | 每批 append **fsync 后**才回应答（ack 即落盘）；每帧 CRC；撕裂尾/坏帧截断到确认前缀**且报告丢弃量**；索引可疑一律回退全扫、两路径逐字节一致 | `core/log`（`append` → `file.flush`）；`e2e-p8-storage.sh` |
 | 复制正确性 | follower-pull；HW 单调（迟到低报忽略）；分歧截断报告丢弃量；副本逐字节一致（含 TLS 之下） | `e2e-p3/p7/p8`；`e2e-p12-security.sh` 腿 7 |
-| 故障注入 | 杀 leader / 换主 / 控制面重启 / 撕裂尾 / 分区隔离 / 慢客户端——门禁全部可复现，含反例腿 | `scripts/gates.sh` 51 步 |
+| 故障注入 | 杀 leader / 换主 / 控制面重启 / 撕裂尾 / 分区隔离 / 慢客户端——门禁全部可复现，含反例腿 | `scripts/gates.sh` 52 步 |
 | 持续集成 | `fast`（12 步：fmt/生成物/接口/四后端编译/双测试套件/算子构建）随推送在 **Linux** 运行且已首绿（run `36324100660`，1 分 41 秒）；`full`（44 步）手动触发于 macOS，2026-09-27 **首次跑满 43/43**（run `36325414560`，5 分 13 秒） | `.github/workflows/ci.yml` |
 | 连接器与流式源 | HTTP/文件/stdin 一次性源 + **MQTT 订阅源**（P19：手写 3.1.1、QoS 0、会话复用）+ **Kafka 消费源**（P20：手写锁定版本协议与 RecordBatch v2、CRC-32C 外部锚点、连接期版本探针）；汇：stdout / HTTP / MQTT / Kafka；门禁对端是独立 Python 实现（线上字节断言 + 批 CRC 校验） | `e2e-p1-connectors.sh`；`e2e-p19-mqtt.sh`；`e2e-p20-kafka.sh` |
 | 授权与审计 | 四角色闭合表 + **按主题 grants**（P21：收窄不放大；无 grants 凭据行为不变）+ **`audit.log`**（拒绝/认证/生命周期，凭据永不入）；审计 append 即落盘、写失败 stderr 可见 | `core/auth.authorize_topic`；`e2e-p12` 腿 8–10 |
@@ -29,7 +29,7 @@
 
 1. **控制面单点**（最大风险）：~~无 HA、无备份/恢复工具~~ **已收窄（P34，决策 74）**：`cluster metadata backup/restore`（可移植快照 + CRC-32C + 修订不回退）给了"磁盘损坏"一条退路；`sc --ha` 给了"进程死亡"一个替补（租约式 active/standby + epoch 围栏写入，接管在租约窗口内、旧 active 醒来后 STEPPED DOWN 且写不进去），门禁 `e2e-p34-sc-ha.sh` 12 腿。**仍然存在的边界**：无 quorum/共识（租约是带过期的共享文件，依赖共享目录）、**无虚拟地址**（客户端/节点要指向接管方的地址，VIP/LB 是外部的事）、SC 的内存态（节点表、组成员）不迁移——接管对数据面是一次控制面重启。SC 宕机仍等于消费组冻结、无新提名、无法建主题（数据面继续服务，P11 腿证实）。
 2. **平台与工程面**：远端仓库已就位；**CI 已接线**——`fast` 在 Linux 上随推送运行，`full`（macOS）与 **`full-linux`（ubuntu，P34/决策 75）** 手动触发，两条都由 `workflow_dispatch` 跑完整套件；**Linux 因此从"fast 层已验证"扩到"全量套件可验证"**：四后端编译（wasm/wasm-gc/js/**native**）与两套测试在 ubuntu 上通过，但仍**没有在 Linux 上跑过 E2E**（那 31 条腿按 BSD 用户习惯写，只在 macOS runner 上跑——2026-09-27 首次手动跑满 43/43）；唯一产物仍是 debug 构建；无版本/打包/安装/升级面，滚动升级未测。
-3. **可观测性**：无 metrics、无健康端点——监控只能刮日志、用 CLI 轮询（`group describe` / `cluster offsets`）。
+3. **可观测性**：~~无 metrics、无健康端点~~ **已交付（P35，决策 76）**：`serve`/`sc` 的 `--metrics-listen` 提供 `/metrics`（连接数、按命令码/错误码的计数、主题/分区/成员 gauge、`uptime_ms` 只报告）与 `/healthz`（200/503，检查是**真读**：元数据可加载、已应用拓扑、以及 HA 下"我是否持租约"——standby 报 503 + `lease:failed`，负载均衡据此不导流）。**剩下的运维事**：告警规则、抓取周期、长期存储由操作员决定；本仓库只保证**事实可读**。
 4. **合规面**：~~按主题/用户的 ACL 与审计日志~~ **已交付（P21，2026-09-25）**；~~证书轮转~~ **已交付（P24：mtime 热重载，新连接用新材料、在途连接不受影响）**；**SASL 为边界声明而非缺口**（决策 48：token-over-TLS 覆盖同一威胁，明文端口由启动警告明示；Kafka 连接器侧的 SASL/TLS 是互操作候选）。
 5. **容量与成本**：单线程每进程（容量按主题/节点手工切分）；~~无批压缩~~ **Kafka 侧已交付（P25：DEFLATE 进 `core/codec`、gzip 双向、炸弹上界）**，**自有 MFS 帧与段文件仍不压缩**（决策 49 的显式边界而非遗漏——压自有协议要先重定义预算语义）；单机 `serve` 恒 RF=1，**不能当生产数据面**（生产须 `sc` + `spu`，RF≥2）。
 6. **平台细节**：~~macOS 的 `fsync` 只到驱动缓存~~ **已修（P34，决策 75）**：`mf_fs_flush` 在 Apple 平台走 `F_FULLFSYNC`（`ENOTSUP`/`EINVAL` 回落 `fsync`），`moonflux doctor` 报告所用原语、`e2e-p8-storage.sh` 按平台断言——"ack 即落盘"现在在两个平台上都成立，而 Linux 侧的全量门禁由 `full-linux` job 提供（回到第 2 条）。

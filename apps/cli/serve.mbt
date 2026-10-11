@@ -44,10 +44,19 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     None => ConnectionHub::new(listener, HUB_TICK_MS)
     Some(context) => ConnectionHub::new(listener, HUB_TICK_MS).with_tls(context)
   }
+  // metrics + health (P35): a second SOCKET in the same poll set, not a
+  // second thread. Off unless --metrics-listen says otherwise.
+  let metrics = Metrics::new(now_ms())
+  preregister_server_counters(metrics)
   // the credential table, announced at startup so an operator never has
   // to guess which mode this broker is in
   let auth_config = AuthConfig::load(data_dir)
   announce_auth_mode(data_dir, auth_config, tls_context is Some(_))
+  let metrics_listener = match
+    open_metrics_listener(flags, data_dir, auth_config.required()) {
+    Ok(listener) => listener
+    Err(e) => fail(e)
+  }
   // consumer groups (P22): a standalone broker coordinates its own —
   // the same registry the control plane runs, pointed at the same data
   // dir that holds this broker's declarations and logs. Membership is
@@ -55,6 +64,28 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   // liveness clock is the node clock (a "silent member" and a "silent
   // node" mean the same amount of time everywhere)
   let groups = GroupRegistry::new(data_dir, NODE_TIMEOUT_MS.to_int64())
+  // gauges are closures read at scrape time: they cannot drift from the
+  // state they describe (P35)
+  metrics.gauge("moonflux_topics", fn() {
+    declared_topics(data_dir).to_double()
+  })
+  metrics.gauge("moonflux_partitions_declared", fn() {
+    declared_partitions(data_dir).to_double()
+  })
+  metrics.gauge("moonflux_consumer_members", fn() {
+    groups.member_count().to_double()
+  })
+  match metrics_listener {
+    Some(surface) => {
+      let _ = hub.with_metrics(surface, metrics, fn() {
+        server_health(data_dir)
+      })
+    }
+    None =>
+      note(
+        "metrics disabled (pass --metrics-listen host:port to expose /metrics and /healthz)",
+      )
+  }
   // rotation without restart (P24): the watcher rides the same 1s
   // housekeeping beat — stat the material, swap what changed
   let rotator = RotationWatch::for_server(flags, data_dir)
@@ -63,9 +94,20 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   let self_addr = "\{host}:\{actual}"
   let handler = HubHandler::{
     on_frame: fn(frame, identity) {
-      dispatch_session_frame(
+      metrics.inc(command_counter(frame.cmd))
+      let reply = dispatch_session_frame(
         frame, data_dir, rules, ws, groups, self_addr, identity,
       )
+      // The reply shape here is CMD_OK or CMD_ERR-with-the-code-in-the-payload
+      // (see reply_frame). Counting "anything that is not OK" as an error was
+      // my first version and it counted CMD_WELCOME (2) as ERR_UNKNOWN_COMMAND
+      // (also 2): a counter that reports success as failure is worse than no
+      // counter, and /metrics showed it immediately.
+      if reply.cmd == @client.CMD_ERR {
+        let (code, _) = @client.decode_error(reply.payload)
+        metrics.inc(error_counter(code))
+      }
+      reply
     },
     auth: AuthGate::{ config: auth_config, data_dir, },
     on_ready: fn() {
@@ -84,6 +126,7 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   let mut last_compact : Int64 = -1L
   while true {
     let live = hub.poll_once(handler, fn(kind) {
+      metrics.inc("moonflux_connections_total")
       if kind == "websocket" {
         note("browser connected over websocket")
       }

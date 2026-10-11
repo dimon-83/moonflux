@@ -40,9 +40,16 @@ step "moon fmt --check" moon fmt --check
 # apply fails. Eleven gates died silently that way on the Linux full run (the
 # failure was invisible because stdout was redirected and `set -e` exited).
 # A platform-dependent death that says nothing is worth a five-line guard.
-step "no gate routes data through /dev/stdin" bash -c '
-  if grep -ln "/dev/stdin" scripts/e2e-*.sh; then
-    echo "these gates route data through /dev/stdin; write it to a file instead:" >&2
+step "no gate routes data through the stdin device" bash -c '
+  # COMMENT LINES ARE NOT USAGES. The first version of this guard matched the
+  # explanation in e2e-p7-partitions.sh and failed on its own documentation —
+  # a guard that trips over its own reason is a guard people delete reasons to
+  # satisfy. So: match the path anywhere, ignore matches on comment lines.
+  hits=$(grep -n "/dev/stdin" scripts/e2e-*.sh 2>/dev/null |
+    grep -vE "^[^:]+:[0-9]+:[[:space:]]*#")
+  if [ -n "$hits" ]; then
+    echo "$hits"
+    echo "these gates route data through the stdin device; write it to a file:" >&2
     echo "bash materialises heredocs/here-strings as pipes on Linux, and a" >&2
     echo "sized-then-pread reader fails on a pipe (see scripts/gates.sh)." >&2
     exit 1
@@ -159,6 +166,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p32-callout.sh" scripts/e2e-p32-callout.sh
   step "e2e-p33-topic-relay.sh" scripts/e2e-p33-topic-relay.sh
   step "e2e-p34-sc-ha.sh" scripts/e2e-p34-sc-ha.sh
+  step "e2e-p35-metrics.sh" scripts/e2e-p35-metrics.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh

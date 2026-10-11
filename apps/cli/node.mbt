@@ -612,6 +612,14 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   } else {
     file_metadata_store(data_dir)
   }
+  // metrics + health (P35)
+  let metrics = Metrics::new(now_ms())
+  preregister_server_counters(metrics)
+  let metrics_listener = match
+    open_metrics_listener(flags, data_dir, control_auth.required()) {
+    Ok(listener) => listener
+    Err(e) => fail(e)
+  }
   let placement = PlacementState::new(data_dir)
   // The control plane is served by the same hub as the data plane (P13).
   // It used to accept one connection at a time and serve it to
@@ -647,15 +655,51 @@ fn cmd_sc(argv : Array[String]) -> Unit {
           ),
         }
       }
+      metrics.inc(command_counter(frame.cmd))
       let reply = dispatch_control_frame(
         frame, data_dir, table, placement, store, groups, asset, identity,
       )
+      // the control plane puts the CODE in the reply's cmd field (P12's
+      // shape), so anything that is not CMD_OK is an error code here
+      if reply.0 != @client.CMD_OK {
+        metrics.inc(error_counter(reply.0))
+      }
       @client.Frame::{ cmd: reply.0, rid: frame.rid, payload: reply.1, }
     },
     auth: AuthGate::{ config: control_auth, data_dir, },
     on_ready: fn() { () },
   }
   note("serving connections concurrently (one thread, poll-driven)")
+  // gauges read state at scrape time; the lease check makes a STANDBY
+  // report 503, which is exactly what a load balancer in front of two
+  // control planes needs to see (P35)
+  metrics.gauge("moonflux_nodes_online", fn() {
+    table.online_count().to_double()
+  })
+  metrics.gauge("moonflux_topics", fn() {
+    declared_topics(data_dir).to_double()
+  })
+  metrics.gauge("moonflux_partitions_declared", fn() {
+    declared_partitions(data_dir).to_double()
+  })
+  metrics.gauge("moonflux_consumer_members", fn() {
+    groups.member_count().to_double()
+  })
+  match metrics_listener {
+    Some(surface) => {
+      let _ = hub.with_metrics(surface, metrics, fn() {
+        let checks = server_health(data_dir)
+        if ha {
+          checks.push(("lease", keeper.is_active()))
+        }
+        checks
+      })
+    }
+    None =>
+      note(
+        "metrics disabled (pass --metrics-listen host:port to expose /metrics and /healthz)",
+      )
+  }
   let rotator = RotationWatch::for_server(flags, data_dir)
   let mut last_rotation : Int64 = -1L
   let mut last_role : LeaseRole? = None
@@ -907,6 +951,22 @@ fn NodeTable::leo_of(
 /// Marks nodes offline whose last report is older than the timeout;
 /// returns the ones that just went offline (so the caller can say so
 /// once rather than every tick).
+
+///|
+/// How many registered nodes are currently considered online (P35). A read of
+/// the same state the liveness sweep uses, so the gauge and the sweep cannot
+/// disagree about who is up.
+fn NodeTable::online_count(self : NodeTable) -> Int {
+  let mut total = 0
+  for entry in self.entries {
+    if entry.online {
+      total = total + 1
+    }
+  }
+  total
+}
+
+///|
 fn NodeTable::sweep(self : NodeTable, now : Int64) -> Array[String] {
   let went_offline : Array[String] = []
   for i in 0..<self.entries.length() {
