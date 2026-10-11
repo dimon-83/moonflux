@@ -168,6 +168,17 @@ if [ "$SELFTEST" = "1" ]; then
   pass "selftest: a missing artifact, a silent non-goal and a wrong count are all rejected"
 fi
 
+# The gap plan's summary table is the other place where "doable" can quietly
+# stand in for "done": a row that still says 可追平/变通 without a landing
+# marker means nobody said whether it happened.
+GAP_PLAN="docs/sdf-gap-closure-plan.md"
+[ -f "$GAP_PLAN" ] || fail "$GAP_PLAN is missing"
+undecided=$(awk '/^\| [0-9]+ \|/ {print}' "$GAP_PLAN" |
+  grep -vE '已追平|已补|已变通|不做|未立项' | wc -l | tr -d ' ')
+[ "$undecided" = "0" ] ||
+  { awk '/^\| [0-9]+ \|/ {print}' "$GAP_PLAN" | grep -vE '已追平|已补|已变通|不做|未立项';     fail "$undecided gap-plan row(s) have no decided verdict"; }
+
 pass "catalog rows checked: $data_rows ($unique_cases reference cases ported, $unique_ext extensions, $non_goals non-goals)"
+pass "every gap-plan row carries a decided verdict (追平/变通/不做/未立项)"
 pass "the gates agree: $gate_cases example cases (p29) + $gate2_cases connector cases (p30) = $both"
 echo "AUDIT-SDF-COVERAGE: manifest and artifacts agree"
