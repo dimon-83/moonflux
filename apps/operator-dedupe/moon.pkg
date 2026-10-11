@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-dedupe: keep the first record for each key, drop the rest
+// (wasm guest, ABI v1 + v3). This is SDF's `dedupe` primitive.
+//
+// The horizon of "the rest" is THE KEY, and that is the whole design: a
+// dedupe that should forget after a window makes the window part of the key
+// (`operator-tumble` already rewrites keys to `key@window`), exactly the rule
+// windows follow everywhere else in this platform (decision 61). So this
+// operator has no clock, no window arithmetic and no time field — it marks
+// keys seen and passes the first one through.
+//
+// Without a window in the key, "seen" is forever, and the state grows with
+// the number of distinct keys. That is stated rather than hidden: a dedupe
+// with an unbounded horizon belongs on a topic whose retention or compaction
+// policy knows it.
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_state_abi_version",
+        "mf_op_state_apply",
+      ],
+    },
+  },
+)

@@ -643,4 +643,36 @@ grep -q '"word":"fluvio"' "$WORK/41.notify" || fail "case 41: the fluvio match i
 grep -q '"title":"An unrelated headline"' "$WORK/41.notify" && fail "case 41: an unmatched article produced a notification"
 pass "41. five notifications, one per matched word and subscriber, and none for the unmatched article"
 
-echo "E2E-P29-EXAMPLES: 43 legs green (22 case specs across 22 example applications; cases 09-11 are gated by e2e-p30-connector-examples.sh)"
+# ---- 42-43. dedupe: SDF's primitive, with the window as the key shape ------
+# NOT a catalog port: no reference example uses `dedupe`. It is here because
+# "SDF has it and we do not" was a recorded difference, and a difference that
+# is closed should be closed with a gate rather than a claim.
+DDD="$WORK/p29-dedupe"
+"$EXE" pipeline run --data-dir "$DDD" --spec "$EXAMPLES/26-dedupe/spec-windowed.json" \
+  > "$WORK/42.out" 2> "$WORK/42.err" || { cat "$WORK/42.err"; fail "case 42: windowed dedupe failed"; }
+check "42 windowed dedupe" "$WORK/42.out" "$EXAMPLES/26-dedupe/expected-windowed.txt"
+[ "$(wc -l < "$WORK/42.out" | tr -d ' ')" = "5" ] ||
+  fail "case 42: expected 7 events to yield 5 (one duplicate per window dropped)"
+"$EXE" consume --topic dedupe-windowed --from 0 --data-dir "$DDD" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/42.state"
+check "42 windowed dedupe state" "$WORK/42.state" "$EXAMPLES/26-dedupe/expected-windowed-state.txt"
+grep -q "^u1@1700000020000	1$" "$WORK/42.state" ||
+  fail "case 42: the second window did not get its own key"
+pass "42. dedupe kept the first record per (user, window) and the window is visibly part of the key"
+
+"$EXE" pipeline run --data-dir "$WORK/p29-dedupe-forever" --spec "$EXAMPLES/26-dedupe/spec-forever.json" \
+  > "$WORK/43.out" 2> "$WORK/43.err" || { cat "$WORK/43.err"; fail "case 43: unbounded dedupe failed"; }
+check "43 permanent dedupe" "$WORK/43.out" "$EXAMPLES/26-dedupe/expected-forever.txt"
+[ "$(wc -l < "$WORK/43.out" | tr -d ' ')" = "3" ] ||
+  fail "case 43: without a window, the second window's repeats must also be dropped"
+"$EXE" consume --topic dedupe-forever --from 0 --data-dir "$WORK/p29-dedupe-forever" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/43.state"
+check "43 permanent dedupe state" "$WORK/43.state" "$EXAMPLES/26-dedupe/expected-forever-state.txt"
+"$EXE" pipeline run --data-dir "$WORK/p29-dedupe-nokey" --spec "$EXAMPLES/26-dedupe/spec-nokey.json" \
+  > "$WORK/43.nokey" 2> "$WORK/43.nokey.err"
+[ -s "$WORK/43.nokey" ] && fail "case 43: a keyless dedupe produced output"
+grep -q "needs a key on every record" "$WORK/43.nokey.err" ||
+  { cat "$WORK/43.nokey.err"; fail "case 43: the keyless run was not refused by name"; }
+pass "43. without a window the dedupe horizon is the whole run, and a run with no key is refused by name"
+
+echo "E2E-P29-EXAMPLES: 45 legs green (23 case specs across 23 example applications; cases 09-11 are gated by e2e-p30-connector-examples.sh)"

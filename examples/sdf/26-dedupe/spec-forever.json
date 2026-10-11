@@ -1,0 +1,37 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-dedupe-forever"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/26-dedupe/events.jsonl"
+    },
+    "topic": {
+      "name": "dedupe-events-plain"
+    },
+    "state": {
+      "topic": "dedupe-forever"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "user",
+          "lowercase": true
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-dedupe/operator-dedupe.wasm",
+        "config": {}
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

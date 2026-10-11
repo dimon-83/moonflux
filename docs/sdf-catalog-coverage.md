@@ -48,6 +48,7 @@
 | `connectors.md`（连接器文档，非 dataflow） | 连接器 | extension | examples/sdf/09-http-source | p29 腿 9–12 + p30 腿（HTTP 轮询源，对端是 `python3 -m http.server`） |
 | `connectors.md`（同上） | 连接器 | extension | examples/sdf/10-mqtt-transit | p30 腿（MQTT 源/汇，独立 Python broker 断言线上字节） |
 | `connectors.md`（同上） | 连接器 | extension | examples/sdf/11-kafka-bridge | p30 腿（Kafka 源/汇，独立 Python broker 断言 CRC 有效的批） |
+| `dedupe` primitive（参考示例集**未使用**） | 能力补齐 | extension | examples/sdf/26-dedupe | p29 腿 42–43（去重期限 = **键的形状**：键含窗口 ⇒ 每窗去重；无键按名拒绝） |
 
 ## 覆盖之外的三个明示非目标
 
@@ -63,7 +64,7 @@
 - 其中 `ported` 条目：**25**（1 条 SQL primitive 明示非目标）——它们指向 **21** 个不同的案例目录
   （`mask-user-pii`/`map`/`mask-ssn` 共用案例 01，这类共享是正常的，但不该让统计含混）
 - `ported` 案例目录：**21**
-- **扩展案例**：**4**（moonflux 自有，见上表：08 日志即状态 + 09/10/11 三类连接器）
-- **案例合计：25** = 21（参考条目对应）+ 4（扩展）；门禁核对这个等式：
-  `e2e-p29-examples.sh` 的 22 个 + `e2e-p30-connector-examples.sh` 的 3 个 = 25，与合计数一致才通过
+- **扩展案例**：**5**（moonflux 自有，见上表：08 日志即状态 + 09/10/11 三类连接器 + 26 dedupe）
+- **案例合计：26** = 21（参考条目对应）+ 5（扩展）；门禁核对这个等式：
+  `e2e-p29-examples.sh` 的 23 个 + `e2e-p30-connector-examples.sh` 的 3 个 = 26，与合计数一致才通过
 - `non-goal`：**1** 条参考条目（`primitives/sql`）+ 2 个跨条目非目标（wasip2/组件模型、仓库内 Rust 工具链）

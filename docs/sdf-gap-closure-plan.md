@@ -17,6 +17,7 @@
 | 7 | pipeline 不能以主题为源 | **⛔ 未立项（架构级），如实留档** | 大 | 会改变"节点是什么"（消费进度、与已应用拓扑的关系）。**对案例的影响与替代**：需要"两个服务隔主题接力"的案例（16/17/23/25）改用**文件夹具回放 + 共享状态主题**——每条案例 README 都写明了这一点，而不是假装有主题源 |
 | 8 | 函数集没有本地创建路径 | **✅ 已补（2026-10-10，T107，决策 56）** | 小（已完成） | `function-set create/get/list/delete --data-dir` 与远端共用同一 handler |
 | 10 | **结构化 JSON 谓词算子**（移植 `bank-processing`/`car-processing` 时新发现） | **✅ 已追平（2026-10-11，T114，决策 63）** | 小 | `apps/operator-predicate`：`{"field":"overdraft","op":"eq","value":true}`（`lt/le/gt/ge/eq/ne`，数值/文本/布尔，`missing: drop|keep`）。`17-bank-processing` 的透支选流**已从字节级 `contains` 换成结构化谓词**，冻结期望不变（腿 22 仍绿）；`car-processing` 的"超速"选流将直接用它 |
+| — | `dedupe` primitive（参考示例集**未使用**） | **✅ 已补（2026-10-11，决策 71）** | 小（已完成） | `apps/operator-dedupe`；期限 = 键的形状（扩展案例 26，门禁腿 42–43） |
 | — | 正则（`primitives/regex`，原缺口清单未单列） | **已追平（2026-10-10，限定子集，边界按名拒绝）** | 中（已完成） | `core/regex`：Thompson NFA 模拟（线性、无回溯爆炸）；不支持者 apply 期按名拒绝；案例 14 + `e2e-p29-examples.sh` 腿 13–15 |
 | 9 | 连接器与外部数据案例 | **✅ 已追平（2026-10-11，T115/决策 66）**：三类连接器案例 + 轮询 HTTP 源 + **宿主侧 callout（`mode` 必填：live/record/replay）** | 小（案例 ✅）+ 中（callout ✅） | callout 与确定性的冲突用"必填 mode + 磁带"选边：`replay` 完全不碰网络 |
 

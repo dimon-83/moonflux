@@ -1,0 +1,29 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-dedupe-nokey"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/26-dedupe/events.jsonl"
+    },
+    "topic": {
+      "name": "dedupe-events-nokey"
+    },
+    "state": {
+      "topic": "dedupe-nokey"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-dedupe/operator-dedupe.wasm",
+        "config": {}
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

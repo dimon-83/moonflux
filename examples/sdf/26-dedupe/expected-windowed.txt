@@ -1,0 +1,5 @@
+{"tst":1700000000000,"user":"u1","action":"login"}
+{"tst":1700000001000,"user":"u2","action":"login"}
+{"tst":1700000020000,"user":"u1","action":"login"}
+{"tst":1700000021000,"user":"u3","action":"login"}
+{"tst":1700000022000,"user":"u2","action":"click"}
