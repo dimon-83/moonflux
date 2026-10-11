@@ -27,3 +27,10 @@
 - [x] 示例 `examples/sdf/22-http-callout`（4 行冻结期望 + 4 次真实交换的磁带）+ p29 腿 34/35
 - [x] 顺带修掉既有缺陷：**spec 拒绝信息此前打在 stdout**（`pipeline run` 的 stdout 是 sink 数据流）→ 改到 stderr
 - [ ] 余下：`openai-callout`（同一算子的 POST + `count-per-model` 状态组合）；`hackernews-notify`
+
+
+## 收尾（2026-10-11）
+
+- [x] `primitives/update-state`（案例 23）：primitive 本体 = 键控行最后写入胜出；`loadtable` 的数字键与 `keyfield` 统一
+- [x] `openai-callout`（案例 24）：`operator-modelreq`（模型清单配置化）+ POST callout + 逐模型计数；凭据 apply 期统一展开（replay 亦需，且缺凭据按名拒绝）
+- [ ] 余下：`hackernews-notify`（文章标题 → 按词展开 → 与订阅者表匹配；需要 `wordkeys` 的 `keep_value` 选项 + 一个只读匹配算子）

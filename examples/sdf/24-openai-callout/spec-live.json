@@ -1,0 +1,60 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-openai-callout"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/24-openai-callout/sentences.txt"
+    },
+    "topic": {
+      "name": "sentence"
+    },
+    "state": {
+      "topic": "count-per-model"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-modelreq/operator-modelreq.wasm",
+        "config": {
+          "default_model": "gpt-3.5-turbo",
+          "models": [
+            "gpt-3.5-turbo",
+            "gpt-3.5-turbo-0125",
+            "gpt-4",
+            "gpt-4-turbo-preview"
+          ]
+        }
+      },
+      {
+        "type": "callout",
+        "method": "POST",
+        "url": "http://127.0.0.1:18089/v1/chat",
+        "body": "{\"model\":\"{model}\",\"input\":\"{input}\"}",
+        "headers": {
+          "Authorization": "Bearer ${OPENAI_API_KEY}"
+        },
+        "mode": "live",
+        "timeout_ms": 3000
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "model"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-counter/operator-counter.wasm",
+        "config": {}
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

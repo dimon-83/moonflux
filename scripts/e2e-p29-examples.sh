@@ -54,6 +54,14 @@
 #                  window, over TLC-shaped trip records
 #  34  callout       the shipped cassette replays the shipped
 #                  answer byte for byte, with no network
+#  36  update-state  the primitive: a keyed row where the last
+#                  write per key wins (the reference's table)
+#  38  openai        a POST callout: model parsing, the request
+#                  bodies the peer saw, and per-model counts
+#  39  openai        the shipped cassette replays offline and
+#                  holds no credential
+#  37  update-state  the write history keeps every write, the
+#                  table keeps one row per key
 #  35  callout       the cassette holds one exchange per car and
 #                  no credentials
 #  33  ny-transit    the average's state is sum,count, so the
@@ -518,4 +526,58 @@ if grep -qi "authorization\|bearer\|token" "$EXAMPLES/22-http-callout/cassette.j
 fi
 pass "35. the cassette holds exactly one exchange per car and nothing that looks like a credential"
 
-echo "E2E-P29-EXAMPLES: 35 legs green (22 case specs across 22 example applications)"
+# ---- 36-37. update-state: the primitive, as a keyed table ---------------
+# The reference's sample data verbatim (four records, id 0 twice). The
+# primitive needs no new operator here: "store this row under this key,
+# later writes win" is a keyed state topic plus compaction.
+DUS="$WORK/p29-update-state"
+"$EXE" pipeline run --data-dir "$DUS" --spec "$EXAMPLES/23-update-state/spec-update-state.json" \
+  > "$WORK/36.out" 2> "$WORK/36.err" || { cat "$WORK/36.err"; fail "case 36: update-state run failed"; }
+check "36 loaded rows" "$WORK/36.out" "$EXAMPLES/23-update-state/expected-stream.txt"
+"$EXE" consume --topic temperature --from 0 --data-dir "$DUS" 2>/dev/null | awk -F'	' '{last[$3]=$4} END {for (k in last) print k"\t"last[k]}' | sort \
+  > "$WORK/36.table"
+check "36 keyed table" "$WORK/36.table" "$EXAMPLES/23-update-state/expected-table.txt"
+grep -q "^0	{\"sensor\":\"SF\",\"temperature\":47}$" "$WORK/36.table" ||
+  { cat "$WORK/36.table"; fail "case 36: the second write for id 0 did not win"; }
+pass "36. the sample data's four rows land in a three-row table, with the last write per key winning"
+
+"$EXE" consume --topic temperature --from 0 --data-dir "$DUS" 2>/dev/null | cut -f3,4 > "$WORK/37.history"
+check "37 write history" "$WORK/37.history" "$EXAMPLES/23-update-state/expected-state-history.txt"
+[ "$(wc -l < "$WORK/37.history" | tr -d ' ')" = "4" ] ||
+  fail "case 37: the write history did not keep all four writes"
+pass "37. the state topic keeps every write (four) and converges to one row per key (three)"
+
+# ---- 38-39. openai-callout: POST, model parsing, per-model counts ------
+# Offline: the example's replay spec reads the shipped cassette, so this leg
+# needs no peer and no API key. Leg 38's request-shape claim is asserted by
+# the callout gate (scripts/e2e-p32-callout.sh leg 6), which has the peer.
+DOA="$WORK/p29-openai"
+# The header is expanded at APPLY time in every mode, replay included: a spec
+# that names a credential is validated the same way whether or not a request
+# goes out (the alternative is a config error that only surfaces in live
+# mode, i.e. in production). Both halves are asserted here.
+unset OPENAI_API_KEY
+"$EXE" pipeline run --data-dir "$DOA" --spec "$EXAMPLES/24-openai-callout/spec-replay.json" \
+  > "$WORK/38.nokey" 2> "$WORK/38.nokey.err"
+[ -s "$WORK/38.nokey" ] && fail "case 38: a replay without the named credential produced output"
+grep -q "OPENAI_API_KEY is not set" "$WORK/38.nokey.err" ||
+  { cat "$WORK/38.nokey.err"; fail "case 38: the missing credential is not named"; }
+OPENAI_API_KEY=p29-dummy-key "$EXE" pipeline run --data-dir "$DOA" --spec "$EXAMPLES/24-openai-callout/spec-replay.json" \
+  > "$WORK/38.out" 2> "$WORK/38.err" || { cat "$WORK/38.err"; fail "case 38: replay run failed"; }
+check "38 per-model attempt counts" "$WORK/38.out" "$EXAMPLES/24-openai-callout/expected.txt"
+"$EXE" consume --topic count-per-model --from 0 --data-dir "$DOA" 2>/dev/null | awk -F'	' '{last[$3]=$4} END {for (k in last) print k"\t"last[k]}' | sort \
+  > "$WORK/38.counts"
+check "38 final per-model counts" "$WORK/38.counts" "$EXAMPLES/24-openai-callout/expected-counts.txt"
+grep -q "^gpt-4	1$" "$WORK/38.counts" || fail "case 38: the explicit gpt-4 line was not counted under gpt-4"
+pass "38. the credential is required and named even offline, and four sentences became three gpt-3.5-turbo / one gpt-4 attempts"
+
+[ "$(wc -l < "$EXAMPLES/24-openai-callout/cassette.jsonl" | tr -d ' ')" = "4" ] ||
+  fail "case 39: the cassette does not hold four exchanges"
+grep -q '"method":"POST"' "$EXAMPLES/24-openai-callout/cassette.jsonl" ||
+  fail "case 39: the POSTs were not recorded"
+if grep -qi "authorization\|bearer\|sk-" "$EXAMPLES/24-openai-callout/cassette.jsonl"; then
+  fail "case 39: the cassette contains something that looks like a credential"
+fi
+pass "39. the POST cassette replays offline and holds no credential"
+
+echo "E2E-P29-EXAMPLES: 39 legs green (24 case specs across 24 example applications)"

@@ -1,0 +1,42 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-update-state"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/23-update-state/data.jsonl"
+    },
+    "topic": {
+      "name": "temp-sensor"
+    },
+    "state": {
+      "topic": "temperature"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "id"
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-loadtable/operator-loadtable.wasm",
+        "config": {
+          "key_field": "id",
+          "value_fields": [
+            "sensor",
+            "temperature"
+          ]
+        }
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

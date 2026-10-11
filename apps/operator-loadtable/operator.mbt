@@ -138,9 +138,27 @@ pub fn mf_op_state_apply(input : Bytes) -> Bytes {
       let updates : Array[@operator.StateEntry] = []
       let out : Array[@protocol.Record] = []
       for r in records {
+        // the key extraction is deliberately the same shape as
+        // operator-keyfield's: a numeric id is stringified, not refused.
+        // State keys are text by contract (the host refuses non-UTF-8), but
+        // "the key is a number in the JSON" is a fact about the data, not a
+        // reason to reject the record (found while porting the update-state
+        // primitive, whose sample data keys by a numeric `id`).
         let key = match @sdk.json_field(r.value, state.key_field) {
           Ok(Some(@sdk.ScalarText(text))) => text
-          Ok(Some(_)) => return Err("key field \{state.key_field} is not text")
+          Ok(Some(@sdk.ScalarNumber(d))) => {
+            let n = d.to_int64()
+            if n.to_double() == d {
+              n.to_string()
+            } else {
+              return Err(
+                "key field \{state.key_field} is not an integer (\{d}); keys are text",
+              )
+            }
+          }
+          Ok(Some(@sdk.ScalarBool(b))) => b.to_string()
+          Ok(Some(@sdk.ScalarNull)) =>
+            return Err("key field \{state.key_field} is null")
           Ok(None) => return Err("key field \{state.key_field} is missing")
           Err(e) => return Err(e)
         }

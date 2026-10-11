@@ -1,0 +1,4 @@
+{"method":"POST","url":"http://127.0.0.1:18089/v1/chat","body":"{\"model\":\"gpt-3.5-turbo\",\"input\":\"hello world\"}","status":200,"response":"{\"model\": \"gpt-3.5-turbo\", \"output\": \"hello from the mock\"}"}
+{"method":"POST","url":"http://127.0.0.1:18089/v1/chat","body":"{\"model\":\"gpt-4\",\"input\":\"gpt-4 hello world\"}","status":200,"response":"{\"model\": \"gpt-4\", \"output\": \"hello from the mock\"}"}
+{"method":"POST","url":"http://127.0.0.1:18089/v1/chat","body":"{\"model\":\"gpt-3.5-turbo\",\"input\":\"gpt-3.5-turbo tell me a joke\"}","status":200,"response":"{\"model\": \"gpt-3.5-turbo\", \"output\": \"hello from the mock\"}"}
+{"method":"POST","url":"http://127.0.0.1:18089/v1/chat","body":"{\"model\":\"gpt-3.5-turbo\",\"input\":\"hello again\"}","status":200,"response":"{\"model\": \"gpt-3.5-turbo\", \"output\": \"hello from the mock\"}"}

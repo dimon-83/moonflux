@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-modelreq: turn a `[model] sentence` line into a chat request
+// (wasm guest, ABI v1). This is the reference openai-callout example's
+// `parse_model`: the first word is the model when it is one the list knows,
+// otherwise the line is the input and the default model is used.
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+      ],
+    },
+  },
+)

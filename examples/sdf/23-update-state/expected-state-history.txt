@@ -1,0 +1,4 @@
+0	{"sensor":"SF","temperature":54}
+1	{"sensor":"LA","temperature":38}
+2	{"sensor":"MO","temperature":65}
+0	{"sensor":"SF","temperature":47}
