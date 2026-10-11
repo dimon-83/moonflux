@@ -2,7 +2,7 @@
 
 > **定位**：项目的**进度管理**单一真相——分阶段路线图、每阶段的交付物与门禁证据、已达成的里程碑清单与后续排期。**规约依据**：AGENTS.md §2（阶段与门禁，工程纪律口径）；**边界声明**：README 只保留路线图**摘要**并链接到这里（2026-09-17 文档重构，决策 37）；阶段推进的门禁必须可证伪、可复现，"看起来能跑"不计数（AGENTS.md §2）。
 >
-> **日期**：2026-10-10 · 状态：P0–P29 全部达成 · 门禁全套 46 步绿（native 293 / wasm-gc 190 / 算子 7）· CI 已接线（`fast` Linux 随推送首绿，`full` macOS 手动）
+> **日期**：2026-10-10 · 状态：P0–P29 全部达成 · 门禁全套 46 步绿（native 302 / wasm-gc 199 / 算子 7）· CI 已接线（`fast` Linux 随推送首绿，`full` macOS 手动）
 
 ## 1. 阶段路线图（含门禁证据）
 
@@ -89,7 +89,7 @@
 - [x] ~~**CI 接线**~~ **已达成**（2026-09-27，决策 51）：`fast` 随推送（Linux，首绿 run `36324100660`）+ `full` 手动（macOS）；**工具链政策**：CI 装 `latest`（CDN 拒版本化 URL，钉不住），仓库采纳该版本格式，本地须 `moon upgrade` 同步
 - [ ] **下一梯队**（按优先级）：多语言客户端 SDK（待需求触发）；~~编辑器函数集 UI~~ **已达成**（2026-10-05，P27，见决策 52）；~~ABI v2 实现~~ **已达成**（2026-09-25，P26，见决策 50）
 - [ ] **编辑器拓扑视图（Studio 提案 P1，条件触发）**：把 `core/pipeline` 的编译结果渲染成节点/边（只读），门禁形态为结构断言；P2 活指标叠加、P3 诚实版状态视图见 [`docs/sdf-studio-exploration.md`](sdf-studio-exploration.md) §4——三者均未立项
-- [ ] **SDF 缺口追平（分批，见 [`docs/sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md)）**：**P30 进行中**——MQTT/HTTP/Kafka 三类外部数据案例已落地（`examples/sdf/09–11` + `scripts/e2e-p30-connector-examples.sh` 6 腿）；**表达式静态检查探针已修复**（T108，决策 55）并解锁 JSON 字段读写（案例 12 三腿含恒等往返）与 `parse-sentence`（案例 13），`e2e-p29-examples.sh` 8 → 12 腿；**函数集本地创建已落地**（T107，决策 56：`--data-dir` 与远端共用同一 handler，P6 门禁 10 → 11 条）；**轮询 HTTP 源已落地**（T109，决策 57）；**算子作者指南 + 稳定 C ABI 头已落地**（T112，决策 58：头部与实现不漂移由探针把守）；余下：正则基础能力（T111）、状态与窗口（P32）→ P31 算子作者指南 + C ABI 头 → P32 状态与窗口（ABI v3，先设计稿）→ P33 多汇；**不做** SQL 引擎 / 组件模型 / 仓库内 Rust 工具链，callout 与主题源须先选边并显式立项
+- [ ] **SDF 缺口追平（分批，见 [`docs/sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md)）**：**P30 进行中**——连接器案例（09–11，7 腿）、T108 探针、T107 函数集本地路径、T109 轮询 HTTP 源、T112 算子作者指南 + C ABI 头、T111 正则能力（`core/regex`，15 腿）均已落地；**T113 状态设计稿已出**（`operator-abi-v3-state.md`），实现（T114）待做
 - [x] ~~P15 后续：每请求重开日志~~ **已达成**（2026-09-19，P16：进程级有界缓存，见决策 40 与 `scripts/e2e-p16-logcache.sh`）
 - [x] ~~P16 后续 ①：benchmark 工具~~ **已达成**（2026-09-22，P17：`benchmark produce/consume/latency` + `scripts/e2e-p17-bench.sh`，见决策 41；执行中抓掉 accept 先于 poll 的每请求一 tick 税，ticket 75）
 - [x] ~~P16 后续 ②：带过滤表达式的逐记录偏移~~ **已达成并扩大**（2026-09-23，P18：不止规则——**compaction 的空洞今天就触发**同样错位；修法为 fetch 应答按连续偏移段分帧，远端/committed/本地三路全真，见决策 42）

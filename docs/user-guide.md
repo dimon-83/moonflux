@@ -103,6 +103,7 @@ JSON
 | `spec.source.type` | `file`（配 `path`）· `http`（配 `url`，http/1.1；可选 `interval_ms`：0/缺省 = 一次性 GET，正数 = 按间隔轮询，轮询时不返回 `Exhausted` 而返回 `Quiet`）· `stdin` |
 | `spec.transforms[].expr` | mbel 表达式（可选 `functions`：按名引用函数集） |
 | `spec.transforms[].operator` | wasm 算子文件路径（配 `config`，原样透传给算子） |
+| `spec.transforms[].pattern` | `{"type":"regex","pattern":"…"}`：内核自带引擎的**匹配过滤器**（可选 `"invert":true` 取反）；模式在 **apply 期编译**，不支持的构造按名拒绝（子集与边界见 `core/regex` 与案例 14） |
 | `spec.topic.name` | 主题名（白名单校验，`core/spec::valid_topic_name`） |
 | `spec.sink.type` | `stdout` · `http`（配 `url`） |
 

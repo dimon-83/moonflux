@@ -300,6 +300,8 @@ fn adopt_cluster_pipeline(
       // a scalar transform references a name in the node's scalar
       // registry, not a function set (P26): nothing to collect here
       @spec.ScalarTransform(_function) => ""
+      // a regex transform carries its pattern, not a function set
+      @spec.RegexTransform(_pattern, _invert) => ""
     }
     if set_name == "" {
       continue

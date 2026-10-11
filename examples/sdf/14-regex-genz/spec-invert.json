@@ -1,0 +1,17 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-14-regex-not-genz" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/14-regex-genz/people.jsonl" },
+    "topic": { "name": "sdf-14-not-genz" },
+    "transforms": [
+      {
+        "type": "regex",
+        "pattern": "(199[7-9])|(200[0-9])|(201[0-2])",
+        "invert": true
+      }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

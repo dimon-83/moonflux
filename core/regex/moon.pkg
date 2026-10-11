@@ -1,0 +1,8 @@
+// core/regex: a small regex engine (P30/T111). Pure computation only —
+// zero IO, zero clock, no third-party dependency (kernel red lines,
+// AGENTS §5). Backend matrix: must compile for every target (no
+// supported_targets).
+
+import {
+  "moonbitlang/core/builtin",
+}

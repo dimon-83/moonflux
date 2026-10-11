@@ -2,7 +2,7 @@
 
 > **定位**：对当前快照（P0–P26）的**生产就绪度评估**——分级结论、支撑证据、会变成事故的缺口、以及不开发新功能即可执行的最小生产化清单。**规约依据**：AGENTS.md §10（证据与状态规范）；**边界声明**：本文是**评估**，不是能力承诺——能力状态的单一真相在 [`feature-matrix.md`](feature-matrix.md)，对标语义在 [`compatibility-matrix.md`](compatibility-matrix.md)，进度在 [`project-roadmap.md`](project-roadmap.md) 与 [`progress-board.md`](progress-board.md)。结论只对文末「评估方法与局限」列出的证据范围成立；未做的验证（压载 / 长稳 / Linux）不在此承诺。
 >
-> **日期**：2026-10-10 · 评估对象：P0–P29（门禁 46 步绿，native 293 / wasm-gc 190；CI 两腿均已绿）；P21–P29 的交付项按维护规则回填第 2/3/4 节（复核留痕见 §5）
+> **日期**：2026-10-10 · 评估对象：P0–P29（门禁 46 步绿，native 302 / wasm-gc 199；CI 两腿均已绿）；P21–P29 的交付项按维护规则回填第 2/3/4 节（复核留痕见 §5）
 
 ## 1. 分级结论
 

@@ -1,0 +1,30 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonflux/core/regex"
+
+// Values
+pub fn compile(String) -> Result[Regex, String]
+
+pub fn is_match(Regex, String) -> Bool
+
+// Errors
+
+// Types and methods
+pub enum Inst {
+  Byte(UInt16, Int)
+  AnyByte(Int)
+  ClassByte(Array[(UInt16, UInt16)], Bool, Int)
+  Split(Int, Int)
+  Jmp(Int)
+  AnchorStart(Int)
+  AnchorEnd(Int)
+  Match
+}
+
+pub struct Regex {
+  insts : Array[Inst]
+  start : Int
+}
+
+// Type aliases
+
+// Traits

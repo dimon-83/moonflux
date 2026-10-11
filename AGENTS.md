@@ -338,6 +338,7 @@ moonflux/
 | 立项评估报告 | [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md) | 对标事实：§2 功能实录、§4 后端、§5 mbel、§6 编辑器 |
 | SDF 示例移植与缺口 | [docs/sdf-examples-port.md](docs/sdf-examples-port.md) | 对标示例集 8 例的对照、语义映射与缺口清单（P29） |
 | SDF Studio 对标探索 | [docs/sdf-studio-exploration.md](docs/sdf-studio-exploration.md) | 图形化方案的事实、对照、三阶段提案与非目标（P29） |
+| 算子 ABI v3 设计稿（键控状态） | [docs/operator-abi-v3-state.md](docs/operator-abi-v3-state.md) | 键控状态与窗口的设计：状态段加法、宿主视图、11 条门禁形态 |
 | 算子作者指南 | [docs/operator-authoring-guide.md](docs/operator-authoring-guide.md) | 写一个 guest 算子：ABI 面、形状、配置、自检、挂载、纪律 |
 | SDF 缺口追平方案 | [docs/sdf-gap-closure-plan.md](docs/sdf-gap-closure-plan.md) | 九条缺口的追平/变通/不做判定与方案（含确定性抉择与门禁形态） |
 | 参考系统作业规则 | [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md) | 在 `~/workspace/fluvio` 内的 agent 硬规则 |

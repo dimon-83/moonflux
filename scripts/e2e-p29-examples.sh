@@ -4,7 +4,7 @@
 # These are not unit fixtures: every case is a *documented application*
 # in examples/sdf/, and this gate proves the document's claim — run the
 # case the way its README says, compare the bytes with the frozen
-# expected file. Twelve legs, each tied to the stateful-dataflow-examples
+# expected file. Fifteen legs, each tied to the stateful-dataflow-examples
 # directory it was ported from (see docs/sdf-examples-port.md):
 #
 #   1  map        mask every digit in a JSON ssn      (primitives/map,
@@ -26,6 +26,10 @@
 #  11  round trip  toPairs -> fromPairs -> toJSON is
 #                the input, byte for byte
 #  12  parse-sentence sentence -> words -> lengths    (packages/parse-sentence)
+#  13  regex       keep the matching records          (primitives/regex)
+#  14  regex invert the same program, opposite set
+#  15  regex bound  an unsupported construct is an
+#                apply-time refusal, by name
 #
 # What this gate deliberately does NOT assert: any SDF behaviour that has
 # no moonflux equivalent (durable keyed state *inside* a service, windows
@@ -241,4 +245,29 @@ pass "11. toJSON(fromPairs(toPairs(fromJSON(value)))) is the input, byte for byt
 check "13 parse-sentence" "$WORK/13.out" "$EXAMPLES/13-parse-sentence/expected.txt"
 pass "12. parse-sentence: sentence-to-words (flat-map) then word-length (len), as the package defines them"
 
-echo "E2E-P29-EXAMPLES: 12 legs green (13 case specs across 13 example applications)"
+# ---- 13-15. regex: the kernel's own engine, as a spec-level filter ----
+# SDF's regex primitive is a filter SmartModule using the regex crate; the
+# port puts the engine in the kernel (pure computation: no IO, no clock,
+# no dependency) and the pattern in the spec. Compilation happens at apply
+# time, which is what makes leg 15 possible: an unsupported construct is a
+# publish-time refusal, not a per-record surprise.
+D="$WORK/d14"
+"$EXE" pipeline run --data-dir "$D" --spec "$EXAMPLES/14-regex-genz/spec.json" \
+  > "$WORK/14.out" 2> "$WORK/14.err" || { cat "$WORK/14.err"; fail "case 14: regex filter run failed"; }
+check "14 regex filter" "$WORK/14.out" "$EXAMPLES/14-regex-genz/expected.txt"
+pass "13. regex: the pattern keeps the records whose value matches"
+
+"$EXE" pipeline run --data-dir "$D" --spec "$EXAMPLES/14-regex-genz/spec-invert.json" \
+  > "$WORK/14i.out" 2> "$WORK/14i.err" || { cat "$WORK/14i.err"; fail "case 14: inverted run failed"; }
+check "14 regex invert" "$WORK/14i.out" "$EXAMPLES/14-regex-genz/expected-invert.txt"
+pass "14. regex invert: the same program keeps the records that do not match"
+
+if "$EXE" pipeline apply --data-dir "$WORK/d14bad" \
+    --file "$EXAMPLES/14-regex-genz/spec-unsupported.json" > "$WORK/14bad.out" 2>&1; then
+  fail "case 14: an unsupported regex construct should be refused at apply"
+fi
+grep -q "unsupported" "$WORK/14bad.out" ||
+  { cat "$WORK/14bad.out"; fail "case 14: the refusal does not name the unsupported construct"; }
+pass "15. regex: an unsupported construct (lookahead) is refused at apply, by name"
+
+echo "E2E-P29-EXAMPLES: 15 legs green (14 case specs across 14 example applications)"

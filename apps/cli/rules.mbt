@@ -13,6 +13,11 @@ priv enum CompiledNode {
   /// A v2 scalar binding (P26): the resolved function name, the live
   /// module instance, and the per-batch call ceiling from the registry.
   Scalar(String, @operator.OperatorInstance, Int)
+  /// A compiled pattern from the kernel's own engine (P30/T111) and
+  /// whether the filter keeps the records that do *not* match. The
+  /// program is compiled at apply time, so an unsupported construct
+  /// never reaches a stream.
+  Regex(@regex.Regex, Bool)
 }
 
 ///|
@@ -46,6 +51,8 @@ fn resolved_function_sets(
       // a scalar transform references a name in the node's scalar
       // registry, not a function set (P26): nothing to collect here
       @spec.ScalarTransform(_function) => ""
+      // a regex transform carries its pattern, not a function set
+      @spec.RegexTransform(_pattern, _invert) => ""
     }
     if name != "" {
       let mut seen = false
@@ -120,6 +127,11 @@ fn compile_node(
         Err(e) => Err("wasm operator \"\{module_id}\": \{e}")
       }
     }
+    RegexTransform(pattern, invert) =>
+      match @regex.compile(pattern) {
+        Ok(compiled) => Ok(Regex(compiled, invert))
+        Err(e) => Err("regex pattern \"\{pattern}\": \{e}")
+      }
     ScalarTransform(function_name) => {
       // the binding happens HERE, at compile/apply time: the name must
       // resolve in the node's scalar registry, and the module must
@@ -182,6 +194,18 @@ fn apply_nodes(
           match @transform.apply(t, r) {
             Ok(next) => out.push(next)
             Err(e) => return Err("mbel: \{e}")
+          }
+        }
+        current = out
+      }
+      Regex(re, invert) => {
+        // a filter is a shorter batch (the same shape the sandbox
+        // operators use): the record passes when its value matches
+        let out : Array[@protocol.Record] = []
+        for r in current {
+          let text = @utf8.decode_lossy(r.value[0:r.value.length()])
+          if @regex.is_match(re, text) != invert {
+            out.push(r)
           }
         }
         current = out

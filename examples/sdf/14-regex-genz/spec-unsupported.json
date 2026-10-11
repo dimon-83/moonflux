@@ -1,0 +1,13 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "sdf-14-regex-unsupported" },
+  "spec": {
+    "source": { "type": "file", "path": "examples/sdf/14-regex-genz/people.jsonl" },
+    "topic": { "name": "sdf-14-unsupported" },
+    "transforms": [
+      { "type": "regex", "pattern": "(?=1998)" }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}

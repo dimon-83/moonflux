@@ -5,6 +5,7 @@ import {
   "moonbitlang/core/json",
   "moonbitlang/core/string",
   "moonflux/core/codec",
+  "moonflux/core/regex",
   "moonflux/core/log",
   "moonflux/core/operator",
   "moonflux/core/auth",

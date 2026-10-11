@@ -60,6 +60,12 @@ pub(all) enum TransformSpec {
   /// one string argument; richer record-to-argument mapping awaits a
   /// real use case (the design's record-mapping boundary).
   ScalarTransform(String)
+  /// A pattern for the kernel's own regex engine (P30/T111), used as a
+  /// filter: a record passes when its value matches anywhere. `invert`
+  /// keeps the records that do *not* match. The pattern is compiled at
+  /// apply time, so an unsupported construct is a publish-time rejection
+  /// instead of a per-record surprise.
+  RegexTransform(String, Bool)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -468,7 +474,10 @@ fn parse_body(
           reject_unknown_keys(
             path,
             t,
-            ["type", "expr", "functions", "module", "config", "function"],
+            [
+              "type", "expr", "functions", "module", "config", "function", "pattern",
+              "invert",
+            ],
             errors,
           )
           match t.get("type") {
@@ -569,11 +578,43 @@ fn parse_body(
                     message: "scalar transforms require a function name (resolved in the node's scalar registry)",
                   })
               }
+            Some(String("regex")) =>
+              match t.get("pattern") {
+                Some(String(pattern)) =>
+                  if pattern.length() == 0 {
+                    errors.push(SpecError::{
+                      path: "\{path}.pattern",
+                      code: "bad-value",
+                      message: "regex pattern must not be empty",
+                    })
+                  } else {
+                    let invert = match t.get("invert") {
+                      None => false
+                      Some(True) => true
+                      Some(False) => false
+                      Some(_) => {
+                        errors.push(SpecError::{
+                          path: "\{path}.invert",
+                          code: "bad-type",
+                          message: "invert must be a boolean",
+                        })
+                        false
+                      }
+                    }
+                    out.push(RegexTransform(pattern, invert))
+                  }
+                _ =>
+                  errors.push(SpecError::{
+                    path: "\{path}.pattern",
+                    code: "missing-field",
+                    message: "regex transforms require a string pattern",
+                  })
+              }
             Some(String(other)) =>
               errors.push(SpecError::{
                 path: "\{path}.type",
                 code: "bad-value",
-                message: "unknown transform type \"\{other}\" (supported: expr, wasm, scalar)",
+                message: "unknown transform type \"\{other}\" (supported: expr, wasm, scalar, regex)",
               })
             _ =>
               errors.push(SpecError::{
