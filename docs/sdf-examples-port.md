@@ -88,8 +88,10 @@
 `sql()` 是 SDF 宿主函数（表=状态对象、`_key` 隐式列、支持 `FULL OUTER JOIN`/`GROUP BY`/`ORDER BY`）。moonflux 没有查询引擎，也不打算把 SQL 塞进数据路径（见 §5）。
 4. **schema 类型语言与 codegen**。`types:` 的对象/列表/枚举（`oneOf`）、字段重命名、per-schema converter、以及"hyphenated 字段 → snake_case"的隐式转换，均无对应物。**部分收口（2026-10-10，T108）**：字段级读写已可直接用 `get(fromJSON(value), k)` / `toJSON(fromPairs([...]))`（案例 12 三腿，含恒等往返）——缺的只是**编译期类型与生成代码**，而这是有意不做的方向（载荷保持不透明，畸形记录在运行期逐条 fail-closed）。
 5. **Rust/SmartModule 工具链**。`sdfg@0.13` + `#[sdf(fn_name=...)]` + `wasm32-wasip2` + crates.io 依赖解析 + Hub 分发。moonflux 的 guest 是 MoonBit 写的（`apps/operator-sdk`），不提供 Rust 编译链，也不从 crates.io 取依赖（AGENTS §1.1 依赖合规）。**作者面已补（2026-10-10，T112，决策 58）**：能力等价物早在（SDK + ABI + 探针 + 双后端对拍 + `build-operators.sh`），现在再加 [算子作者指南](operator-authoring-guide.md) 与稳定 C ABI 头 `apps/operator-sdk/include/moonflux_operator.h`（每次构建校验头部与实现不漂移）。**任何能产出无导入 wasm 的语言都可以写 guest**；仓库仍不提供 Rust 工具链、不引入 wasip2/组件模型。
-6. **`split` 拓扑**。一服务多汇（sink-scoped transforms）在 moonflux 里没有对应物：一份 spec 一个汇、一个主题；一节点一份已应用拓扑。
-7. **pipeline 不能以主题为源**。moonflux 的 spec 源只有 file/http/stdin/mqtt/kafka；"主题→主题"的服务形态要靠服务端的已应用拓扑（消费侧变换），而不是再写一条 pipeline。这是有意的分工，但对 SDF 的读者是首要的心智落差。
+6. **`split` 拓扑**。**已追平（2026-10-11，决策 72 之后重述）**：多汇 = **多条管道读同一来源**，每汇各自一条链——案例 05 按长度切流两条腿、案例 19 按地点切流（Sunnyvale / Saratoga 各一条管道）。**仍然成立的形状差异**：一份 spec 一个汇（SDF 是服务内 sink-scoped transforms），也就是说"一服务多汇"要靠写多条 spec 表达，而不是一个服务里挂多个汇。
+   原来的叙述保留在下面：~~一服务多汇（sink-scoped transforms）在 moonflux 里没有对应物：一份 spec 一个汇、一个主题；一节点一份已应用拓扑。~~
+7. **pipeline 不能以主题为源**。**已追平（2026-10-11，决策 72/73）**：`{"type":"topic","name":"T","from":"beginning"|"end"|<offset>}` 是源、`{"type":"topic","name":"T"}` 是汇，"主题→主题"就是一条常驻 pipeline（追平即 `Quiet`，从不 `Exhausted`）；案例 16/17/23/25 已经从"文件夹具回放"改成真正的主题接力，门禁 `scripts/e2e-p33-topic-relay.sh` **11 腿**。**仍然成立的边界**：起点由 `from` 声明、**没有提交进度**（消费组的事），所以重启会按声明重读，而不是"接着上次读"。
+   原来的叙述保留在下面：~~moonflux 的 spec 源只有 file/http/stdin/mqtt/kafka；"主题→主题"的服务形态要靠服务端的已应用拓扑（消费侧变换），而不是再写一条 pipeline。这是有意的分工，但对 SDF 的读者是首要的心智落差。~~
 8. ~~**函数集没有本地创建路径**（实测，CLI 缺口）~~ **已收口（2026-10-10，T107，决策 56）**：`function-set create/get/list/delete` 现在都接受 `--data-dir`，本地路径**复用节点侧同一份 handler**，因此本地与 serve 的应答逐字节同源；同时给 `--remote` 与 `--data-dir` 互斥按名拒绝（那是两句不同的话）。案例 1 的步骤已从"先起一个 serve 装资产"简化为直接落到运行用的 data dir。
 9. **InfinyOn Cloud / 连接器仓库 / 外部数据源**（`demo-data.infinyon.com`、`mqtt.hsl.fi`、`hnrss.org`、`api.openai.com`、Hub 上的 `http-source@0.4.3` 等）。这些是外部依赖，不在移植范围；moonflux 侧的 HTTP/MQTT/Kafka 连接器是自建实现。
 
