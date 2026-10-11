@@ -368,8 +368,14 @@ fn topic_source_loop(
       pulled.push(entry.record)
     }
     let next_cursor = entries[entries.length() - 1].offset + 1
-    let out_records = match
-      apply_nodes(chain, pulled, state, Some(next_cursor)) {
+    // The progress marker is the RESUME feature's bookkeeping, so it exists
+    // exactly when resume is in use: a plain run must not add a bookkeeping
+    // key to the user's state topic. Measured — examples/sdf/16-word-probe's
+    // expected state gained exactly one unexpected entry, and the example was
+    // right: a run that never asked for continuity should not cause a key to
+    // appear in the user's data.
+    let progress = if resume { Some(next_cursor) } else { None }
+    let out_records = match apply_nodes(chain, pulled, state, progress) {
       Ok(out) => out
       Err(e) => fail("transform: \{e}")
     }

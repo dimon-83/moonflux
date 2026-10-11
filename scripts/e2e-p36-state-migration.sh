@@ -173,7 +173,7 @@ for _ in $(seq 1 80); do
   [ "$("$EXE" consume --topic "$EVENTS" --remote "$LEADER" --from 0 2>/dev/null | wc -l | tr -d ' ')" -ge 4 ] && break
   sleep 0.25
 done
-run_until "$WORK/count.json" "$WORK/a.out" 4 "$A_DIR" --state-remote "127.0.0.1:$SC_PORT"
+run_until "$WORK/count.json" "$WORK/a.out" 4 "$A_DIR" --state-remote "127.0.0.1:$SC_PORT" --resume
 [ "$(wc -l < "$WORK/a.out" | tr -d ' ')" -ge 4 ] ||
   { cat "$WORK/a.out.err"; cat "$WORK/a.out"; fail "2: the stateful pipeline on A did not process the first four records"; }
 pass "2. node A folded four records into $STATE (and emitted four counted records)"
