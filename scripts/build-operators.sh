@@ -9,7 +9,7 @@ cd "$ROOT"
 
 echo "[1/3] building operator modules (wasm target)"
 moon build --target wasm --output-wat
-for op in operator-identity operator-upper operator-fixture operator-scalar operator-filter operator-flatmap operator-counter operator-wordkeys operator-tumble operator-probe operator-bankevents operator-balance operator-predicate operator-keyfield operator-loadtable operator-stolenplates operator-average operator-modelreq operator-average; do
+for op in operator-identity operator-upper operator-fixture operator-scalar operator-filter operator-flatmap operator-counter operator-wordkeys operator-tumble operator-probe operator-bankevents operator-balance operator-predicate operator-keyfield operator-loadtable operator-stolenplates operator-average operator-modelreq operator-subscribe operator-notify operator-average; do
   WASM="_build/wasm/release/build/apps/$op/$op.wasm"
   [ -f "$WASM" ] || WASM="_build/wasm/debug/build/apps/$op/$op.wasm"
   [ -f "$WASM" ] || { echo "missing $WASM" >&2; exit 1; }

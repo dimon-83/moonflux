@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-subscribe: maintain a word's subscriber list in state (wasm
+// guest, ABI v1 + v3). This is the reference hackernews-notify example's
+// process-user-request service: key = the word, state value = the emails
+// interested in it, and a duplicate email is not added twice.
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_state_abi_version",
+        "mf_op_state_apply",
+      ],
+    },
+  },
+)

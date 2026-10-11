@@ -1,0 +1,39 @@
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": {
+    "name": "sdf-hackernews-subscribe"
+  },
+  "spec": {
+    "source": {
+      "type": "file",
+      "path": "examples/sdf/25-hackernews-notify/user-requests.jsonl"
+    },
+    "topic": {
+      "name": "user-request"
+    },
+    "state": {
+      "topic": "notify-table"
+    },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-keyfield/operator-keyfield.wasm",
+        "config": {
+          "field": "word",
+          "lowercase": true
+        }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-subscribe/operator-subscribe.wasm",
+        "config": {
+          "email_field": "email"
+        }
+      }
+    ],
+    "sink": {
+      "type": "stdout"
+    }
+  }
+}

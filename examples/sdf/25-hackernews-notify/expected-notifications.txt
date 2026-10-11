@@ -1,0 +1,5 @@
+{"email":"ada@example.com","word":"rust","link":"https://example.com/1","title":"Rust in the kernel"}
+{"email":"bob@example.com","word":"rust","link":"https://example.com/1","title":"Rust in the kernel"}
+{"email":"ada@example.com","word":"fluvio","link":"https://example.com/2","title":"Fluvio streams and Rust"}
+{"email":"ada@example.com","word":"rust","link":"https://example.com/2","title":"Fluvio streams and Rust"}
+{"email":"bob@example.com","word":"rust","link":"https://example.com/2","title":"Fluvio streams and Rust"}

@@ -58,6 +58,10 @@
 #                  write per key wins (the reference's table)
 #  38  openai        a POST callout: model parsing, the request
 #                  bodies the peer saw, and per-model counts
+#  40  hackernews    the subscription table: two words, the
+#                  duplicate email added only once
+#  41  hackernews    matching: five notifications, one per
+#                  (matched word x subscriber)
 #  39  openai        the shipped cassette replays offline and
 #                  holds no credential
 #  37  update-state  the write history keeps every write, the
@@ -580,4 +584,28 @@ if grep -qi "authorization\|bearer\|sk-" "$EXAMPLES/24-openai-callout/cassette.j
 fi
 pass "39. the POST cassette replays offline and holds no credential"
 
-echo "E2E-P29-EXAMPLES: 39 legs green (24 case specs across 24 example applications)"
+# ---- 40-41. hackernews-notify: subscriptions, then matching -----------
+# The reference's most complex topology: a keyed subscription table shared by
+# two services, an article title expanded into words, and one notification per
+# (matched word, subscriber) pair.
+DHN="$WORK/p29-hackernews"
+"$EXE" pipeline run --data-dir "$DHN" --spec "$EXAMPLES/25-hackernews-notify/spec-subscribe.json" \
+  > "$WORK/40.requests" 2> "$WORK/40.err" || { cat "$WORK/40.err"; fail "case 40: subscribe run failed"; }
+[ "$(wc -l < "$WORK/40.requests" | tr -d ' ')" = "4" ] ||
+  fail "case 40: expected the four requests to be emitted"
+"$EXE" consume --topic notify-table --from 0 --data-dir "$DHN" 2>/dev/null | cut -f3,4 > "$WORK/40.table"
+check "40 subscription table" "$WORK/40.table" "$EXAMPLES/25-hackernews-notify/expected-table.txt"
+grep -q "^rust	ada@example.com,bob@example.com$" "$WORK/40.table" ||
+  { cat "$WORK/40.table"; fail "case 40: the duplicate subscription was not deduplicated"; }
+pass "40. two words in the table, and the repeated email appears exactly once"
+
+"$EXE" pipeline run --data-dir "$DHN" --spec "$EXAMPLES/25-hackernews-notify/spec-notify.json" \
+  > "$WORK/41.notify" 2> "$WORK/41.err" || { cat "$WORK/41.err"; fail "case 41: notify run failed"; }
+check "41 notifications" "$WORK/41.notify" "$EXAMPLES/25-hackernews-notify/expected-notifications.txt"
+[ "$(wc -l < "$WORK/41.notify" | tr -d ' ')" = "5" ] ||
+  fail "case 41: expected five notifications (2 for article 1, 3 for article 2, none for article 3)"
+grep -q '"word":"fluvio"' "$WORK/41.notify" || fail "case 41: the fluvio match is missing"
+grep -q '"title":"An unrelated headline"' "$WORK/41.notify" && fail "case 41: an unmatched article produced a notification"
+pass "41. five notifications, one per matched word and subscriber, and none for the unmatched article"
+
+echo "E2E-P29-EXAMPLES: 42 legs green (22 case specs across 22 example applications; cases 09-11 are gated by e2e-p30-connector-examples.sh)"

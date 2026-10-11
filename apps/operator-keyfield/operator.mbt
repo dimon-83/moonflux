@@ -23,6 +23,9 @@ priv struct KeyFieldState {
   mut field : String
   mut default : String
   mut has_default : Bool
+  /// lowercase the mapped key: the reference lowercases words so that "Rust"
+  /// and "rust" are one subscription
+  mut lowercase : Bool
   labels : Map[String, String]
 }
 
@@ -31,6 +34,7 @@ let state : KeyFieldState = KeyFieldState::{
   field: "",
   default: "",
   has_default: false,
+  lowercase: false,
   labels: {},
 }
 
@@ -74,7 +78,7 @@ pub fn mf_op_init(config : Bytes) -> Int {
   }
   for key in cfg.keys() {
     match key {
-      "field" | "map" | "default" => ()
+      "field" | "map" | "default" | "lowercase" => ()
       _ => return -1
     }
   }
@@ -96,6 +100,12 @@ pub fn mf_op_init(config : Bytes) -> Int {
       state.default = d
       state.has_default = true
     }
+    Some(_) => return -1
+  }
+  match cfg.get("lowercase") {
+    None => ()
+    Some(True) => state.lowercase = true
+    Some(False) => state.lowercase = false
     Some(_) => return -1
   }
   match cfg.get("map") {
@@ -147,7 +157,13 @@ pub fn mf_op_process(input : Bytes) -> Bytes {
         }
         out.push(@protocol.Record::{
           timestamp: r.timestamp,
-          key: @utf8.encode(label),
+          key: @utf8.encode(
+            if state.lowercase {
+              label.to_lower()
+            } else {
+              label
+            },
+          ),
           value: r.value,
           headers: r.headers,
         })

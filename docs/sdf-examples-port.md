@@ -71,6 +71,8 @@
 
 ## 4. 缺口清单（不假装能跑的部分）
 
+> **覆盖状态见 [`sdf-catalog-coverage.md`](sdf-catalog-coverage.md)**：参考示例集 26 个条目逐条的 ported / extension / non-goal 判定、对应案例与门禁腿，由 `scripts/audit-sdf-coverage.sh` 核对（自带反向验证）。
+>
 > **处置方案见 [`sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md)**：九条逐条判定"追平 / 变通 / 不做"、设计要点、门禁形态与依赖顺序。本节只声明缺口本身。
 
 
