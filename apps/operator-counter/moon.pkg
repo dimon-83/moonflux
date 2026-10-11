@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-counter: a keyed counter (wasm guest, ABI v1 + v3). The
+// state lives outside the guest — the host hands in the current value for
+// each key this batch touches and writes back what the guest returns —
+// so the guest still has no imports (docs/operator-abi-v3-state.md).
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/string",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_state_abi_version",
+        "mf_op_state_apply",
+      ],
+    },
+  },
+)

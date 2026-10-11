@@ -108,6 +108,12 @@ typedef struct mf_session {
   int has_scalar;
   wasmtime_func_t f_scalar_version;
   wasmtime_func_t f_scalar_eval;
+  /* ABI v3 stateful exports (T114): OPTIONAL on the same terms as v2 —
+     a module exports both or neither, and the host picks the entry point
+     from what it found. */
+  int has_state;
+  wasmtime_func_t f_state_version;
+  wasmtime_func_t f_state_apply;
 } mf_session_t;
 
 static wasmtime_context_t *mf_store_context(wasmtime_store_t *store) {
@@ -352,6 +358,23 @@ void *mf_we_session_new(const uint8_t *wasm, int wasm_len, char *err,
     s->f_scalar_eval = eval_item.of.func;
     s->has_scalar = 1;
   }
+  /* ABI v3 stateful exports (T114): optional exactly like the scalar
+     pair. Present means both must be functions; absent means the module
+     is not stateful and mf_op_state_apply is never called on it. */
+  s->has_state = 0;
+  if (mf_get_extern(ctx, &s->instance, "mf_op_state_abi_version",
+                    &ver_item) &&
+      mf_get_extern(ctx, &s->instance, "mf_op_state_apply", &eval_item)) {
+    if (ver_item.kind != WASMTIME_EXTERN_FUNC ||
+        eval_item.kind != WASMTIME_EXTERN_FUNC) {
+      snprintf(err, err_len, "state exports are present but not functions");
+      mf_we_session_free(s);
+      return NULL;
+    }
+    s->f_state_version = ver_item.of.func;
+    s->f_state_apply = eval_item.of.func;
+    s->has_state = 1;
+  }
   /* the linear memory export */
   wasmtime_extern_t mem_item;
   if (!mf_get_extern(ctx, &s->instance, "memory", &mem_item)) {
@@ -538,6 +561,33 @@ int mf_we_scalar_version(void *session, int32_t *out, char *err,
     return 1; /* no scalar exports: not an error, a fact */
   }
   return mf_call_0_1(s, &s->f_scalar_version, out, err, err_len);
+}
+
+/* ABI v3 (T114): the guest's state ABI version, or 1 when the module
+   offers no state exports (a fact, not an error — mirroring the scalar
+   probe's contract). */
+int mf_we_state_version(void *session, int32_t *out, char *err,
+                        int err_len) {
+  mf_session_t *s = (mf_session_t *)session;
+  if (!s->has_state) {
+    return 1; /* no state exports: not an error, a fact */
+  }
+  return mf_call_0_1(s, &s->f_state_version, out, err, err_len);
+}
+
+/* ABI v3 (T114): one stateful call. The caller installs fuel first, then
+   writes the v3 payload (state prefix + batch frame) at input_ptr; the
+   guest returns the answer pointer exactly like mf_op_process, and the
+   length/status/error rides the existing v1 exports. Returns -3 when the
+   module has no state exports (a caller bug, not a guest failure). */
+int mf_we_state_apply(void *session, int32_t input_ptr, int32_t *out_ptr,
+                      char *err, int err_len) {
+  mf_session_t *s = (mf_session_t *)session;
+  if (!s->has_state) {
+    snprintf(err, err_len, "module has no state exports");
+    return -3;
+  }
+  return mf_call_1_1(s, &s->f_state_apply, input_ptr, out_ptr, err, err_len);
 }
 
 /* ABI v2 (P26): one scalar evaluation. The caller installs fuel

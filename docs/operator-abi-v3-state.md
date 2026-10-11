@@ -25,7 +25,7 @@
 1. **键来自记录的 key**。状态更新以记录的 `key` 为键；**空 key 拒绝**（结构化错误，指出记录偏移/位置）——不发明第二套键提取面（不抄 SDF 的签名嗅探）。
    *SDF 的 `partition.assign-key` 在本设计里对应什么*：**批算子可以给它输出的记录设置 key**（信封里的记录本来就带 key；今天的 `operator-flatmap` 选择继承源记录的 key，但换个算子就可以把它设成每个 token）。因此"先分词再按键计数"这类数据流 = `flat-map（设置 key）→ 状态算子`，不需要 `state.key` 这种第二套提取面。这条要在实现时用一个"设置 key 的算子"钉住（否则示例会显得只能吃预先打好键的输入）。
 2. **状态主题是该 spec 声明的一条普通主题**（spec 的 `state.topic`），节点的压实策略对它生效；`state.topic` 与数据主题**必须不同**（同名即拒绝：源与状态的环）。
-3. **状态值是不透明字节**，与记录值同口径。宿主不解释它；空值 = 删除该键（一条"墓碑"记录，压实后仍保留最新即墓碑）。
+3. **状态值是不透明字节**，与记录值同口径。宿主不解释它；空值 = 删除该键（一条"墓碑"记录，压实后仍保留最新即墓碑）。**同一批内同键多条更新按序应用、后写胜**（宿主按顺序写入；算子通常应当自行去重到每键一条，否则就是写放大——`operator-counter` 就是这么做的）。
 4. **每个批是一次事务**：批内所有记录的状态读来自**批开始时的视图**（批内不互相看见），批结束时一次性写回状态主题。这样"同一批的顺序"不影响结果，重放可复现。
 5. **确定性**：状态转移只依赖（输入记录、批开始时的旧状态）。旧状态由状态主题的重放决定 ⇒ 同输入同输出（内核红线的直接推论）。
 6. **失败 fail-closed**：算子返回失败 ⇒ **记录不落 sink、状态不写回**（半批不落地的既有纪律扩展到状态）。
@@ -100,7 +100,7 @@ mf_op_state_apply(input_ptr) -> ptr       // 走 v1 的 alloc/output_len/last_st
 ## 8. 落地顺序（实现阶段）
 
 1. ~~信封段 + SDK 读取器/写入器 + 探针的 v3 成对检查（**不接线**，先有形状与门禁）~~ **已完成（2026-10-10）**：`core/operator` 的 `StateEntry` 与 v3 信封（uleb 前缀 + v1 帧到尾）、SDK 的 `GuestStatefulOperator`/`run_stateful`、探针的 v3 成对规则、C 头；测试 13 + 10 条全绿。**v1/v2 未动**（回归全绿）。
-2. 宿主视图与写回 + `spec.state` 解析 + 一个最小状态算子（`apps/operator-counter`）+ 门禁腿 1–8。
+2. 宿主视图与写回 + `spec.state` 解析 + 一个最小状态算子（`apps/operator-counter`）+ 门禁腿 1–8。**进行中**：适配器 v3 调用链路（C 垫片 + FFI + `has_state`/`process_state`）与 `operator-counter` 已完成，并由 `adapters/wasmtime-native` 的真 wasmtime 测试证明"状态接力"（第一次调用产出 `{a:2}`，宿主回喂后第二次得 3）与两条拒绝（无键记录、`mf_op_process` 对状态算子按名拒绝）；**宿主视图与 `spec.state` 待做**。
 3. 窗口助手 + 迟到策略 + 门禁腿 9–10。
 4. 复制交互（腿 11）与文档/案例：`update-state`、`word-counter`、`word-probe`、`helsinki-transit`、`unreal-engine-analytics`、`bank-processing`、`car-processing`/`ny-transit`（SQL 部分如实排除）。
 

@@ -290,3 +290,73 @@ test "a v1-only module keeps scalar_eval absent (P26 coexistence)" {
   assert_true(instance.scalar_eval is None)
   (instance.close)()
 }
+
+///|
+test "a stateful operator runs through wasmtime and reports its pair" {
+  let path = match locate_module("operator-counter") {
+    Some(path) => path
+    None => abort("operator module missing: run scripts/build-operators.sh")
+  }
+  let engine = operator_engine(fn(path) {
+    match @fs.read_file(path) {
+      Ok(bytes) => Ok(bytes)
+      Err(e) => Err("\{e}")
+    }
+  })
+  let instance = match
+    (engine.instantiate)(@operator.OperatorSpec::{
+      name: "counter",
+      module_path: path,
+      budget: Internal,
+      config: "{}",
+    }) {
+    Ok(instance) => instance
+    Err(e) => abort("instantiate: \{e}")
+  }
+  // the pair is a fact the host reads, not a guess
+  assert_true(instance.has_state)
+  // first call: no prior state, two records for one key
+  let keyed : Array[@protocol.Record] = [
+    @protocol.Record::{ timestamp: 1L, key: b"a", value: b"x", headers: [], },
+    @protocol.Record::{ timestamp: 2L, key: b"a", value: b"x", headers: [], },
+  ]
+  let first = @operator.encode_state_payload([], keyed)
+  let (state1, out1) = match (instance.process_state)(first) {
+    Ok(pair) => pair
+    Err(e) => abort("state apply: \{e}")
+  }
+  assert_eq(out1.length(), 2)
+  assert_eq(@utf8.decode_lossy(out1[0].value[0:out1[0].value.length()]), "1")
+  assert_eq(@utf8.decode_lossy(out1[1].value[0:out1[1].value.length()]), "2")
+  assert_eq(state1.length(), 1)
+  assert_eq(
+    @utf8.decode_lossy(state1[0].value[0:state1[0].value.length()]),
+    "2",
+  )
+  // second call: the host hands back what it kept, so the count continues
+  let again : Array[@protocol.Record] = [
+    @protocol.Record::{ timestamp: 3L, key: b"a", value: b"x", headers: [], },
+  ]
+  let (state2, out2) = match
+    (instance.process_state)(@operator.encode_state_payload(state1, again)) {
+    Ok(pair) => pair
+    Err(e) => abort("state apply: \{e}")
+  }
+  assert_eq(@utf8.decode_lossy(out2[0].value[0:out2[0].value.length()]), "3")
+  assert_eq(
+    @utf8.decode_lossy(state2[0].value[0:state2[0].value.length()]),
+    "3",
+  )
+  // a record with no key is refused by name, and nothing is emitted
+  let keyless : Array[@protocol.Record] = [rec("x")]
+  match (instance.process_state)(@operator.encode_state_payload([], keyless)) {
+    Ok(_) => abort("a keyless record was accepted by a counter")
+    Err(e) => assert_true("\{e}".contains("key"))
+  }
+  // the stateless entry point refuses rather than running statelessly
+  match (instance.process)(keyed) {
+    Ok(_) => abort("a stateful operator ran through mf_op_process")
+    Err(e) => assert_true("\{e}".contains("state"))
+  }
+  (instance.close)()
+}

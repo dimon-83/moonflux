@@ -144,6 +144,30 @@ pub extern "C" fn we_scalar_version(
 ) -> Int = "mf_we_scalar_version"
 
 ///|
+/// ABI v3 (T114): the guest's state ABI version, or 1 when the module
+/// offers no state exports.
+#borrow(out, err)
+pub extern "C" fn we_state_version(
+  session : Int64,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_state_version"
+
+///|
+/// ABI v3 (T114): one stateful call over the payload already written at
+/// `ptr`. The guest returns the answer pointer, exactly like
+/// we_process.
+#borrow(out, err)
+pub extern "C" fn we_state_apply(
+  session : Int64,
+  input_ptr : Int,
+  out : FixedArray[Int],
+  err : FixedArray[Byte],
+  err_len : Int,
+) -> Int = "mf_we_state_apply"
+
+///|
 /// ABI v2 (P26): one scalar evaluation over the request already
 /// written at `ptr`. The guest's i64 result packs (ptr << 32) | len on
 /// success, or a negative structured error code.

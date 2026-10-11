@@ -2,13 +2,13 @@
 
 **What to build**（按 `docs/operator-abi-v3-state.md` §8 的四步）：
 1. ✅ **信封状态段 + SDK + 探针 v3 成对检查**（不接线）：`core/operator` 的 `StateEntry` / `encode_state_payload` / `decode_state_payload`（uleb 前缀 + v1 帧到payload尾）；SDK 的 `GuestStatefulOperator` + `run_stateful`；探针的 `STATE_EXPECTED` 成对规则；C 头声明 v3 两个导出。
-2. ⏳ 宿主视图与写回 + `spec.state` 解析 + 计数算子 + **设置 key 的算子**（设计稿补注要求）。
+2. **进行中**：适配器 v3 链路 ✅（C 垫片 `mf_we_state_version`/`mf_we_state_apply` + FFI + `OperatorInstance.has_state`/`process_state` + 真 wasmtime 测试含状态接力与两条拒绝）；`apps/operator-counter` ✅（每键一次写回，去重）；⏳ 宿主视图与写回 + `spec.state` + **设置 key 的算子**。
 3. ⏳ 窗口助手（`key@窗口起点`、水位=已见最大事件时间）+ 迟到策略。
 4. ⏳ 复制交互（两副本重放得同一视图）+ 用它们移植 8 个 stateful dataflow。
 
 **Blocked by**: 无。
 
-**Status**: Slice A ✅ 2026-10-10；其余待做
+**Status**: Slice A ✅、Slice B 适配器部分 ✅（2026-10-10/11）；宿主视图与门禁待做
 
 **Checklist（Slice A）**:
 - [x] `core/operator`：`STATE_ABI_VERSION` / 两个导出常量 / `StateEntry` / v3 信封编解码（含空状态、空记录、截断前缀、离谱计数、缺帧、v1 载荷误喂等 4 条 wbtest；13/13）

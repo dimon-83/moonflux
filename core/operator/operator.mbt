@@ -383,6 +383,18 @@ pub(all) struct OperatorInstance {
     ScalarValue,
     OperatorError,
   ])?
+  /// True when the module exports the v3 stateful pair (T114). The host
+  /// picks the entry point from this fact, never from a guess.
+  has_state : Bool
+  /// The v3 stateful entry: the host hands it a v3 payload (state prefix
+  /// + batch frame) and gets the answer payload back. When `has_state` is
+  /// false this refuses by name, so a host that calls it anyway gets a
+  /// structured error instead of a silent stateless run
+  /// (docs/operator-abi-v3-state.md).
+  process_state : (Bytes) -> Result[
+    (Array[StateEntry], Array[@protocol.Record]),
+    OperatorError,
+  ]
   close : () -> Unit
 }
 
@@ -399,6 +411,14 @@ pub fn passthrough_engine() -> OperatorEngine {
       }
       Ok(OperatorInstance::{
         scalar_eval: None,
+        has_state: false,
+        process_state: fn(_payload) {
+          Err(
+            InvalidSpec(
+              "the in-kernel reference engine has no stateful entry (ABI v3 is a wasm-guest surface)",
+            ),
+          )
+        },
         abi_version: ABI_VERSION,
         process: fn(records) {
           match check_budget(spec.budget, records.length()) {
@@ -436,6 +456,14 @@ pub fn fn_engine(
       }
       Ok(OperatorInstance::{
         scalar_eval: None,
+        has_state: false,
+        process_state: fn(_payload) {
+          Err(
+            InvalidSpec(
+              "the in-kernel reference engine has no stateful entry (ABI v3 is a wasm-guest surface)",
+            ),
+          )
+        },
         abi_version: ABI_VERSION,
         process: fn(records) {
           match check_budget(spec.budget, records.length()) {

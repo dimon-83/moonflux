@@ -96,6 +96,8 @@ pub(all) struct OperatorInstance {
   process : (Array[@protocol.Record]) -> Result[Array[@protocol.Record], OperatorError]
   last_call_ms : () -> Int?
   scalar_eval : ((String, Array[ScalarValue]) -> Result[ScalarValue, OperatorError])?
+  has_state : Bool
+  process_state : (Bytes) -> Result[(Array[StateEntry], Array[@protocol.Record]), OperatorError]
   close : () -> Unit
 }
 

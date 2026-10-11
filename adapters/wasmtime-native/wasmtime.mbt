@@ -124,6 +124,30 @@ pub fn operator_engine(
             )
           }
       }
+      // ABI v3 stateful exports (T114): optional as a PAIR, on the same
+      // terms as the v2 scalar pair — present means both, and an unknown
+      // version is refused rather than attempted.
+      let state = match state_version(session, err) {
+        None => None
+        Some(version) =>
+          if version == @operator.STATE_ABI_VERSION {
+            Some(fn(payload) { state_apply_call(session, payload, err) })
+          } else {
+            we_session_free(session.handle)
+            return Err(
+              @operator.InvalidSpec(
+                "state ABI version \{version} (host speaks \{@operator.STATE_ABI_VERSION})",
+              ),
+            )
+          }
+      }
+      let state_entry = match state {
+        Some(entry) => entry
+        None =>
+          fn(_payload) {
+            Err(@operator.InvalidSpec("module has no state exports (ABI v3)"))
+          }
+      }
       // The wall clock lives here, in the adapter, and it is used for
       // *reporting* only: the enforceable budget is fuel, because fuel
       // is reproducible and a clock is not (README 决策 33).
@@ -131,6 +155,8 @@ pub fn operator_engine(
       Ok(@operator.OperatorInstance::{
         abi_version: out[0],
         scalar_eval: scalar,
+        has_state: state is Some(_),
+        process_state: state_entry,
         process: fn(records) {
           let started = @env.now().reinterpret_as_int64()
           let result = process_batch(session, records)
