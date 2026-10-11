@@ -28,6 +28,7 @@
 | 5 | [`05-split-two-streams`](../examples/sdf/05-split-two-streams/) | `primitives/split/filter` | **两条入口 spec**（各一个过滤分支、各自主题），断言两个分支不相交 | 5 |
 | 6 | [`06-merge-two-sources`](../examples/sdf/06-merge-two-sources/) | `primitives/merge` | **两条入口 spec 写同一个主题**；主题即合并后的流（偏移 0..3 连续） | 6 |
 | 7 | [`07-key-value-keys`](../examples/sdf/07-key-value-keys/) | `primitives/key-value/{input,output,chained}` | key 是**日志的一列**：`produce --key-separator` 打戳、`consume` 第 3 列可见、跨存储存活 | 7 |
+| 15 | [`15-word-counter`](../examples/sdf/15-word-counter/) | `dataflows/word-counter` | `wordkeys`（设键）+ `counter`（ABI v3 状态）；字节级冻结首跑/续跑/状态主题三份 | 16 / 17 |
 | 8 | [`08-state-is-the-log`](../examples/sdf/08-state-is-the-log/) | `primitives/update-state`、`dataflows/word-counter` | ① 同一主题两个视角（`consume --remote` 走已应用拓扑=服务视图；`consume --data-dir`=原始日志视图）；② 键控压实作为"每键最新"的物化，偏移不变 | 8a / 8b |
 | 9 | [`09-http-source`](../examples/sdf/09-http-source/) | `dataflows/car-processing`、`dataflows/ny-transit`（入湖段） | **spec 内的 HTTP 源**：一次性 GET（`spec.json`）与**轮询**（`spec-poll.json`，`interval_ms`）两种形态 → 沙箱过滤 → 主题；日志保留原始抓取 | 1, 7 |
 | 10 | [`10-mqtt-transit`](../examples/sdf/10-mqtt-transit/) | `dataflows/helsinki-transit`（入湖段） | **spec 内的 MQTT 订阅源**（流式，不停机）→ 主题；线上形状由仓库自带的 MQTT 测试 broker 断言 | 2–3 |
@@ -64,9 +65,9 @@
 > **处置方案见 [`sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md)**：九条逐条判定"追平 / 变通 / 不做"、设计要点、门禁形态与依赖顺序。本节只声明缺口本身。
 
 
-1. **服务内持久键控状态**。**部分追平（2026-10-11，T114，决策 60）**：ABI v3 + 状态主题 + 宿主视图已落地（`scripts/e2e-p31-state.sh` 8 腿：跨进程续算、压实后仍正确、确定性、无键拒绝、上限写前拒绝、v1 回归）。**仍缺**：窗口/水位（Slice C）与跨服务状态读，以及用状态重写下面那些 dataflow。原来的叙述保留在下面，读者可以看到它曾经是什么。
-moonflux 的算子是无状态纯函数（guest 无导入、无时钟、无随机源——结构性事实而非约定），宿主也不持有 per-key 状态。影响：`update-state`、`bank-processing` 的余额、`car-processing` 的按色计数、`word-counter`/`word-probe`/`helsinki-transit`/`ny-transit`/`openai-callout` 全部无法等价移植。**moonflux 的替代是"日志即状态"**：全量重放 + 键控压实（每键最新）+ 消费者自己持有聚合状态。这是不同的架构承诺，不是同一件事的另一种写法。
-2. **窗口与水位**。没有 tumbling/hopping window，没有 watermark，没有"水位推进才 flush"的语义；也就没有 SDF `word-counter` README 提到的那个已知缺口（无 idle 触发器）——这里根本不存在该机制。
+1. **服务内持久键控状态**。**已追平（2026-10-11，T114，决策 60/61）**：ABI v3（状态以数据进出、guest 仍无导入）+ `spec.state.topic` + 宿主视图（启动重放、批后写回）已落地，`scripts/e2e-p31-state.sh` **11 腿**（跨进程续算、压实后仍正确、两份全新 dir 逐字节一致、无键拒绝且零写入、上限**写前**拒绝、v3 成对 + 头部、v1 回归、窗口隔离、窗口只随数据推进、"复制状态主题即可复现视图"）。**架构承诺与 SDF 不同，这点说清楚**：状态不是服务内的对象，而是**一条键控主题**——于是复制、压实、floor、恢复全部复用既有四件套，"每键最新"就是压实的语义。**仍缺**：跨节点状态迁移/再均衡（单机状态已具备）。
+   原来的叙述保留在下面，读者可以看到它曾经是什么：~~moonflux 的算子是无状态纯函数（guest 无导入、无时钟、无随机源——结构性事实而非约定），宿主也不持有 per-key 状态。影响：`update-state`、`bank-processing` 的余额、`car-processing` 的按色计数、`word-counter`/`word-probe`/`helsinki-transit`/`ny-transit`/`openai-callout` 全部无法等价移植。~~
+2. **窗口与水位**。**tumbling 已追平（2026-10-11，T114，决策 61）**，而且不需要 watermark：**窗口就是键的形状**——`apps/operator-tumble` 把 key 改写成 `key@窗口起点`，于是窗口复用键控状态（同一词在两个窗口是两个状态项，各自从 1 起算；门禁腿 9）。**如实边界**：① **没有 idle 触发器**（窗口只因更晚窗口的记录而更换——SDF 自己 README 承认的缺口在我们这里同样存在，只是更彻底：没有时钟就没有 idle 这回事）；② **窗口不自动过期**（旧窗口的状态项留到压实/retention）；③ **hopping / watermark 触发 flush 未立项**——那需要"水位推进才产出"，与"算子不读时钟"的红线冲突，要做先得定义事件时间水位的来源。
 **正则（`primitives/regex`）——已追平（2026-10-10，T111，决策 59）**：内核自带 `core/regex`（纯计算、四后端），spec 面 `{"type":"regex","pattern":P}`（可选 `invert`）；子集明确，`\b`/反向引用/环视/懒惰量词/Unicode 类等在 apply 期按名拒绝。SDF 那个示例真正演示的 crates.io 依赖管理**不抄**（AGENTS §1.1）。
 
 3. **SQL 引擎**。

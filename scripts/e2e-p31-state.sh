@@ -23,6 +23,15 @@
 #   7  the v3 pair rule               the ABI probe (which also checks the
 #                                    published C header) stays green
 #   8  v1 is untouched                an ordinary batch operator still runs
+#   9  windows are key shapes         a tumbling keyer isolates the same key
+#                                    in different windows, and the window
+#                                    start is visible in the state topic
+#   10 no idle trigger                 windows move when data moves: a
+#                                    second run keeps filling the SAME
+#                                    windows, because nothing advances time
+#   11 state is the log                copying the state topic alone into a
+#                                    fresh data dir reproduces the view: no
+#                                    durable state lives anywhere else
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -212,4 +221,81 @@ pass "7. the ABI probe (v1 signatures + v2/v3 pairs + published header) is green
 check_values "8 v1 operator" "$WORK/upper.out" "THE CAT THE DOG THE"
 pass "8. a v1 batch operator still runs: the state addition changed no existing path"
 
-echo "E2E-P31-STATE: 8 legs green (keyed state end to end)"
+# ---- 9. a tumbling window is a key shape -------------------------------
+cat > "$WORK/events.jsonl" <<'JSONL'
+{"ts": 1000, "word": "the"}
+{"ts": 2000, "word": "the"}
+{"ts": 61000, "word": "the"}
+{"ts": 62000, "word": "cat"}
+JSONL
+cat > "$WORK/window.json" <<EOF
+{
+  "apiVersion": "moonflux.io/v1alpha1",
+  "kind": "Pipeline",
+  "metadata": { "name": "p31-window" },
+  "spec": {
+    "source": { "type": "file", "path": "$WORK/events.jsonl" },
+    "topic": { "name": "shots" },
+    "state": { "topic": "window-state" },
+    "transforms": [
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-tumble/operator-tumble.wasm",
+        "config": { "window_ms": 60000, "time_field": "ts", "key_field": "word" }
+      },
+      {
+        "type": "wasm",
+        "module": "_build/wasm/debug/build/apps/operator-counter/operator-counter.wasm",
+        "config": {}
+      }
+    ],
+    "sink": { "type": "stdout" }
+  }
+}
+EOF
+DW="$WORK/dWindow"
+"$EXE" pipeline run --data-dir "$DW" --spec "$WORK/window.json" > "$WORK/win1.out" 2> "$WORK/win1.err" ||
+  { cat "$WORK/win1.err"; fail "the windowed run failed"; }
+# the same word in two windows counts 1,2 in the first and 1 in the second:
+# the windows are independent state entries, not one running total
+check_values "9 windowed counts" "$WORK/win1.out" "$(printf '1\n2\n1\n1')"
+"$EXE" consume --topic window-state --from 0 --data-dir "$DW" 2>/dev/null | cut -f3 | sort > "$WORK/win.keys"
+check_values "9 window keys" "$WORK/win.keys" "$(printf 'cat@60000\nthe@0\nthe@60000')"
+# the first window's final total is its own entry, asserted by value: this
+# is what "each window is its own state" means in the topic
+"$EXE" consume --topic window-state --from 0 --data-dir "$DW" 2>/dev/null |
+  awk -F'	' '$3 == "the@0" { print $4 }' > "$WORK/the0.val"
+check_values "9 the the@0 window total" "$WORK/the0.val" "2"
+pass "9. a tumbling keyer makes each window its own state entry, and the window start is readable in the key"
+
+# ---- 10. no idle trigger: windows move only when data moves -------------
+"$EXE" pipeline run --data-dir "$DW" --spec "$WORK/window.json" > "$WORK/win2.out" 2>/dev/null ||
+  fail "the second windowed run failed"
+# nothing closed or expired the first window in between: the same records
+# land in the same windows and the counts continue
+check_values "10 windows keep filling" "$WORK/win2.out" "$(printf '3\n4\n2\n2')"
+pass "10. windows advance only with data — a window is not closed by anything but a later record"
+
+# ---- 11. the view is a pure function of the state topic ----------------
+# Replication in moonflux is log replication (already gated by p7/p14). What
+# has to be true *here* is that keyed state adds no second durable store: the
+# topic alone must reproduce the view.
+D2="$WORK/dWindowCopy"
+mkdir -p "$D2/topics"
+cp -r "$DW/topics/window-state" "$D2/topics/window-state"
+# two data dirs whose state topics have identical content, same input: the
+# answers must agree, and they must continue from the copied state rather
+# than from zero — a third, empty dir proves the difference is the log
+"$EXE" pipeline run --data-dir "$DW" --spec "$WORK/window.json" > "$WORK/win3a.out" 2>/dev/null ||
+  fail "the run in the original dir failed"
+"$EXE" pipeline run --data-dir "$D2" --spec "$WORK/window.json" > "$WORK/win3b.out" 2> "$WORK/win3.err" ||
+  { cat "$WORK/win3.err"; fail "the run on a copied state topic failed"; }
+diff -u "$WORK/win3a.out" "$WORK/win3b.out" ||
+  fail "two dirs with identical state topics disagreed on the answer"
+check_values "11 continuation from the copied state" "$WORK/win3b.out" "$(printf '5\n6\n3\n3')"
+"$EXE" pipeline run --data-dir "$WORK/dWindowFresh" --spec "$WORK/window.json" > "$WORK/win3c.out" 2>/dev/null ||
+  fail "the run in a fresh dir failed"
+check_values "11 a fresh dir starts from zero" "$WORK/win3c.out" "$(printf '1\n2\n1\n1')"
+pass "11. the state topic alone reproduces the view: the same log in another dir gives the same answer, and an empty dir starts from zero"
+
+echo "E2E-P31-STATE: 11 legs green (keyed state and windows end to end)"

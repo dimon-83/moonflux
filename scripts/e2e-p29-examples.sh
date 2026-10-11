@@ -29,6 +29,12 @@
 #  13  regex       keep the matching records          (primitives/regex)
 #  14  regex invert the same program, opposite set
 #  15  regex bound  an unsupported construct is an
+#                  apply-time refusal, by name
+#  16  word-counter keyed state: the running count per
+#                  word, byte for byte
+#  17  word-counter the state topic holds one entry per
+#      (state/state) word, and a second run continues
+#                  from it (the log is the truth)
 #                apply-time refusal, by name
 #
 # What this gate deliberately does NOT assert: any SDF behaviour that has
@@ -270,4 +276,23 @@ grep -q "unsupported" "$WORK/14bad.out" ||
   { cat "$WORK/14bad.out"; fail "case 14: the refusal does not name the unsupported construct"; }
 pass "15. regex: an unsupported construct (lookahead) is refused at apply, by name"
 
-echo "E2E-P29-EXAMPLES: 15 legs green (14 case specs across 14 example applications)"
+# ---- 16-17. word-counter: keyed state, per-word counts -----------------
+# The stateful case: the words become record keys, and a v3 operator counts
+# them per key. Leg 16 is the byte-exact stream; leg 17 is the state topic
+# (the durable half) plus a second run, which must continue rather than
+# restart. That second run is the whole point of "state lives in a log".
+DWC="$WORK/p29-wordcounter"
+"$EXE" pipeline run --data-dir "$DWC" --spec "$EXAMPLES/15-word-counter/spec.json" \
+  > "$WORK/16.out" 2> "$WORK/16.err" || { cat "$WORK/16.err"; fail "case 16: word-counter run failed"; }
+check "16 word-counter counts" "$WORK/16.out" "$EXAMPLES/15-word-counter/expected.txt"
+pass "16. word-counter: one running count per word occurrence, byte for byte"
+
+"$EXE" consume --topic word-counts --from 0 --data-dir "$DWC" 2>/dev/null | cut -f3,4 | sort \
+  > "$WORK/17.state"
+check "17 state topic per word" "$WORK/17.state" "$EXAMPLES/15-word-counter/expected-state.txt"
+"$EXE" pipeline run --data-dir "$DWC" --spec "$EXAMPLES/15-word-counter/spec.json" \
+  > "$WORK/17.out" 2> "$WORK/17.err" || { cat "$WORK/17.err"; fail "case 17: second run failed"; }
+check "17 second run continues" "$WORK/17.out" "$EXAMPLES/15-word-counter/expected-second-run.txt"
+pass "17. the state topic holds one entry per word, and the second run continues from it"
+
+echo "E2E-P29-EXAMPLES: 17 legs green (15 case specs across 15 example applications)"

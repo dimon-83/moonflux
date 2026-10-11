@@ -89,7 +89,7 @@
 - [x] ~~**CI 接线**~~ **已达成**（2026-09-27，决策 51）：`fast` 随推送（Linux，首绿 run `36324100660`）+ `full` 手动（macOS）；**工具链政策**：CI 装 `latest`（CDN 拒版本化 URL，钉不住），仓库采纳该版本格式，本地须 `moon upgrade` 同步
 - [ ] **下一梯队**（按优先级）：多语言客户端 SDK（待需求触发）；~~编辑器函数集 UI~~ **已达成**（2026-10-05，P27，见决策 52）；~~ABI v2 实现~~ **已达成**（2026-09-25，P26，见决策 50）
 - [ ] **编辑器拓扑视图（Studio 提案 P1，条件触发）**：把 `core/pipeline` 的编译结果渲染成节点/边（只读），门禁形态为结构断言；P2 活指标叠加、P3 诚实版状态视图见 [`docs/sdf-studio-exploration.md`](sdf-studio-exploration.md) §4——三者均未立项
-- [ ] **SDF 缺口追平（分批，见 [`docs/sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md)）**：**P30 进行中**——连接器案例（09–11，7 腿）、T108 探针、T107 函数集本地路径、T109 轮询 HTTP 源、T112 算子作者指南 + C ABI 头、T111 正则能力（`core/regex`，15 腿）均已落地；**T114 状态实现第 1–2 步已完成**（信封/SDK/探针/C 头；适配器 v3 链路 + `operator-counter` + 真 wasmtime 测试），T113 设计稿已出（`operator-abi-v3-state.md`），实现（T114）待做
+- [ ] **SDF 缺口追平（分批，见 [`docs/sdf-gap-closure-plan.md`](sdf-gap-closure-plan.md)）**：**P30 进行中**——连接器案例（09–11，7 腿）、T108 探针、T107 函数集本地路径、T109 轮询 HTTP 源、T112 算子作者指南 + C ABI 头、T111 正则能力（`core/regex`，15 腿）均已落地；**T114 第 1–3 步已完成**：信封/SDK/探针/C 头；适配器 v3 链路 + `operator-counter`/`operator-wordkeys`；`spec.state` + 宿主视图与写回 + **门禁 `e2e-p31-state.sh` 11 腿**（含窗口即键的形状、复制状态主题复现视图）；**首个状态示例 `15-word-counter`** 已入册（p29 15 → 17 腿、14 → 15 个应用）
 - [x] ~~P15 后续：每请求重开日志~~ **已达成**（2026-09-19，P16：进程级有界缓存，见决策 40 与 `scripts/e2e-p16-logcache.sh`）
 - [x] ~~P16 后续 ①：benchmark 工具~~ **已达成**（2026-09-22，P17：`benchmark produce/consume/latency` + `scripts/e2e-p17-bench.sh`，见决策 41；执行中抓掉 accept 先于 poll 的每请求一 tick 税，ticket 75）
 - [x] ~~P16 后续 ②：带过滤表达式的逐记录偏移~~ **已达成并扩大**（2026-09-23，P18：不止规则——**compaction 的空洞今天就触发**同样错位；修法为 fetch 应答按连续偏移段分帧，远端/committed/本地三路全真，见决策 42）

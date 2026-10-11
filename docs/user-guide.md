@@ -220,6 +220,17 @@ cli.exe function-set list   --remote 127.0.0.1:19451
 
 - **状态就在那条主题里**：宿主启动时重放出视图（缓存），每批把变更按 key 写回（真相）；压实把它收敛成"每键最新"，floor 之下的读仍是结构化拒绝。
 - **哪些节点有状态由模块决定**：导出 v3 成对（`mf_op_state_abi_version`/`mf_op_state_apply`）的模块自动成为状态节点；**键必须由记录携带**（`produce --key`、`--key-separator`，或像 `operator-wordkeys` 那样在算子里给输出设键）。
+**窗口**（窗口就是键的形状，所以它和状态是同一套东西）：
+
+```json
+{ "type": "wasm", "module": ".../operator-tumble.wasm",
+  "config": { "window_ms": 60000, "time_field": "ts", "key_field": "word" } }
+```
+
+- 每条记录的 key 变成 `key@窗口起点`；同一个词在 `the@0` 与 `the@60000` 是**两个独立的状态项**，各自从 1 起算。
+- `time_field` 从值里的 JSON 取事件时间（文件源给整批同一个读时时间戳，带时间戳的数据文件必须这样取）；`key_field` 从值里取键；两者可省。
+- **如实边界**：无 idle 触发器、窗口不自动过期（留到压实/retention）、算子不读时钟——**窗口只随数据推进**。
+
 - **四条边界**：键须为 UTF-8 文本；视图上限 `MOONFLUX_STATE_KEYS`（默认 100000，**超限在写之前拒绝**）；`state.topic` 不得等于数据主题；**状态只支持 `pipeline run`**——serve 的取数路径遇到状态节点按名拒绝。
 
 **wasm 算子**（沙箱，guest 无 IO/时钟）：

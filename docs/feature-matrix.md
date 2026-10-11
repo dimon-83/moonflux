@@ -62,7 +62,10 @@
 | 不可信标量函数进沙箱（ABI v2 标量调用，P26） | ✅ | 可选成对导出 `mf_op_scalar_abi_version`/`mf_op_eval`（返回指针、长度沿 v1 的 output_len）；节点注册表 `scalar-functions.json` + `{"type":"scalar"}` 变换；参数类型显式声明；燃料每调用、fail-closed；**与 mbel `upper()` 逐字节对拍**；`scripts/e2e-p26-scalar.sh`（6 腿）+ 设计稿 §7 落地实录（决策 50） |
 | JSON 载荷的字段级读写（`fromJSON`/`get`/`toJSON`/`fromPairs`，P30/T108） | ✅ | 发布期探针按**表达式自己命名的键**构造字符串/数值两种形状（任一成立即发布），字面量坏 JSON、类型冲突与未知名仍被拒；`scripts/e2e-p29-examples.sh` 腿 9–11（含**逐字节恒等往返**）+ `scripts/e2e-p1-rules.sh` 两条拒绝腿 |
 | 键控状态（ABI v3 + 状态主题 + 宿主视图，P30/T114） | ✅ | `spec.state.topic` 声明状态主题；宿主启动重放视图（`apps/cli/state.mbt`）、每批按键写回；`{"type":"wasm"}` 模块**导出 v3 成对即自动成为状态节点**；键须 UTF-8、视图上限 `MOONFLUX_STATE_KEYS`（**写前拒绝**）、状态主题≠数据主题、serve 取数路径按名拒绝；`scripts/e2e-p31-state.sh` 8 腿 + 真 wasmtime 适配器测试 + `core/spec`/`core/operator`/SDK 单测 |
-| 有状态算子 / 算子间 shuffle | ⏳ | 未立项（报告 §5 范围外）；SDF 示例集里那一族（`update-state`、窗口计数）因此不可等价移植，缺口清单见 [`sdf-examples-port.md`](sdf-examples-port.md) §4 |
+| **键控状态**（ABI v3 + 状态主题 + 宿主视图，P30/T114） | ✅ | `spec.state.topic` 声明状态主题；宿主启动重放视图、每批按键写回（`apps/cli/state.mbt`）；`{"type":"wasm"}` 模块**导出 v3 成对即自动成为状态节点**；键须 UTF-8、视图上限 `MOONFLUX_STATE_KEYS`（**写前拒绝**）、状态主题≠数据主题、serve 取数路径按名拒绝；`scripts/e2e-p31-state.sh` 腿 1–8 + 真 wasmtime 适配器测试 |
+| **窗口**（tumbling，P30/T114 §5） | ✅ | **窗口即键的形状**：`apps/operator-tumble` 把 key 改写为 `key@窗口起点`（`window_ms` + `time_field`/`key_field`），窗口因此复用键控状态，不需要新 ABI 或宿主支持；**无 idle 触发器、无自动过期、不读时钟**（如实边界）；`e2e-p31-state.sh` 腿 9–10；示例 `examples/sdf/15-word-counter` |
+| 窗口（hopping / watermark 触发 flush） | ⏳ | 未立项：需要"水位推进才产出"的语义，与"算子不读时钟"的红线冲突，要做就得先定义事件时间水位的来源 |
+| 有状态算子 / 算子间 shuffle（跨节点） | ⏳ | 单机状态已具备（上行）；跨节点状态迁移/再均衡未立项，缺口清单见 [`sdf-examples-port.md`](sdf-examples-port.md) §4 |
 | 沙箱 filter / flat-map 算子（1→0 / 1→N，P29） | ✅ | `apps/operator-filter`（`min_len`/`contains`）与 `apps/operator-flatmap`（`separator`）——过滤与扇出**不能**用 mbel 表达（表达式必须返回字符串），只能落在批算子契约上；配置在 `mf_op_init` 校验（未知键、空分隔符、小数门槛都拒绝）；`scripts/e2e-p29-examples.sh` 腿 2–5 |
 | SDF 示例集的 moonflux 应用案例（8 例，P29） | ✅ | `examples/sdf/*`（冻结 spec + 夹具 + expected + 逐例 README）由 `scripts/e2e-p29-examples.sh`（8 腿，字节级对拍）验真；对照表与缺口见 [`sdf-examples-port.md`](sdf-examples-port.md) |
 | SDF Studio 式图形化（拓扑视图 / 活指标 / 状态视图） | ⏳ | **未实现，已提案**：三阶段与门禁形态见 [`sdf-studio-exploration.md`](sdf-studio-exploration.md) §4；现有编辑器是 spec 渲染器（`web/editor/` + `apps/editor-kernel`），不画编译后拓扑 |

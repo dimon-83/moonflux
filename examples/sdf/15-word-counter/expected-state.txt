@@ -1,0 +1,7 @@
+ate	1
+cat	2
+mat	1
+on	1
+rat	1
+sat	1
+the	4

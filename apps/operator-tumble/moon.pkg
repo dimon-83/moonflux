@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-tumble: derive a tumbling-window key from each record's
+// event time (wasm guest, ABI v1). Windowing in moonflux is not a second
+// stateful concept: it is a KEY SHAPE. State is keyed by the record key,
+// so rewriting the key to `key@window_start` makes every window its own
+// state entry — which is why windows need no new ABI, no host support,
+// and no timer (P30/T114, docs/operator-abi-v3-state.md §5).
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+      ],
+    },
+  },
+)

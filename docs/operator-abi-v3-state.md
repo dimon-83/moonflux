@@ -2,7 +2,7 @@
 
 > **定位**：给 moonflux 补上九条缺口里的第 1 条（**服务内持久键控状态**）与第 2 条（**窗口与水位**）的设计。**规约依据**：AGENTS.md §5（内核红线：零 IO、确定性）、§8.1（算子沙箱纪律：ABI 加法、guest 无导入、双预算、fail-closed）、§7（对标规则）。**边界声明**：本文是**设计稿**——按 P26 的惯例（"先改稿再改码"），先定稿再实现；文中每一条"必须"都要在实现时变成门禁腿，做不到的就改设计而不是放宽门禁。
 >
-> **日期**：2026-10-11 · 状态：**已实现（§6 腿 1–8 落地）**；窗口（§5）与复制交互腿（§6 腿 11）待做。证据：[`scripts/e2e-p31-state.sh`](../scripts/e2e-p31-state.sh)（8 腿）+ `core/spec` / `core/operator` / SDK / `adapters/wasmtime-native` 的单测
+> **日期**：2026-10-11 · 状态：**§5 与 §6 腿 1–11 全部落地**。窗口以"键的形状"实现（`apps/operator-tumble`），腿 11 以"复制状态主题即可复现视图"落地。证据：[`scripts/e2e-p31-state.sh`](../scripts/e2e-p31-state.sh)（8 腿）+ `core/spec` / `core/operator` / SDK / `adapters/wasmtime-native` 的单测
 
 ## 0. 一句话
 
