@@ -21,11 +21,17 @@ pub const EXPORT_SCALAR_ABI_VERSION : String = "mf_op_scalar_abi_version"
 
 pub const EXPORT_SCALAR_EVAL : String = "mf_op_eval"
 
+pub const EXPORT_STATE_ABI_VERSION : String = "mf_op_state_abi_version"
+
+pub const EXPORT_STATE_APPLY : String = "mf_op_state_apply"
+
 pub const SCALAR_ABI_VERSION : Int = 1
 
 pub const SCALAR_ERR_EVAL : Int64 = -1
 
 pub const SCALAR_ERR_REQUEST : Int64 = -2
+
+pub const STATE_ABI_VERSION : Int = 1
 
 pub fn call_timeout_hint_ms(BudgetTier) -> Int
 
@@ -37,11 +43,15 @@ pub fn decode_scalar_answer(Bytes) -> Result[ScalarValue, String]
 
 pub fn decode_scalar_request(Bytes) -> Result[(String, Array[ScalarValue]), String]
 
+pub fn decode_state_payload(Bytes) -> Result[(Array[StateEntry], Array[@protocol.Record]), OperatorError]
+
 pub fn encode_process_payload(Array[@protocol.Record]) -> Bytes
 
 pub fn encode_scalar_answer(ScalarValue) -> Bytes
 
 pub fn encode_scalar_request(String, Array[ScalarValue]) -> Bytes
+
+pub fn encode_state_payload(Array[StateEntry], Array[@protocol.Record]) -> Bytes
 
 pub fn fn_engine((Array[@protocol.Record]) -> Array[@protocol.Record]) -> OperatorEngine
 
@@ -102,6 +112,11 @@ pub(all) enum ScalarValue {
   SNum(Double)
   SBool(Bool)
   SArr(Array[ScalarValue])
+} derive(Eq, @debug.Debug)
+
+pub(all) struct StateEntry {
+  key : Bytes
+  value : Bytes
 } derive(Eq, @debug.Debug)
 
 // Type aliases

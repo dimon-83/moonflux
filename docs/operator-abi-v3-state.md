@@ -2,7 +2,7 @@
 
 > **定位**：给 moonflux 补上九条缺口里的第 1 条（**服务内持久键控状态**）与第 2 条（**窗口与水位**）的设计。**规约依据**：AGENTS.md §5（内核红线：零 IO、确定性）、§8.1（算子沙箱纪律：ABI 加法、guest 无导入、双预算、fail-closed）、§7（对标规则）。**边界声明**：本文是**设计稿**——按 P26 的惯例（"先改稿再改码"），先定稿再实现；文中每一条"必须"都要在实现时变成门禁腿，做不到的就改设计而不是放宽门禁。
 >
-> **日期**：2026-10-10 · 状态：**设计中（未实现）**
+> **日期**：2026-10-10 · 状态：**实现中**（§8 第 1 步已完成：信封状态段 + SDK + 探针成对检查 + C 头；见 ticket 114）
 
 ## 0. 一句话
 
@@ -99,7 +99,7 @@ mf_op_state_apply(input_ptr) -> ptr       // 走 v1 的 alloc/output_len/last_st
 
 ## 8. 落地顺序（实现阶段）
 
-1. 信封段 + SDK 读取器/写入器 + 探针的 v3 成对检查（**不接线**，先有形状与门禁）。
+1. ~~信封段 + SDK 读取器/写入器 + 探针的 v3 成对检查（**不接线**，先有形状与门禁）~~ **已完成（2026-10-10）**：`core/operator` 的 `StateEntry` 与 v3 信封（uleb 前缀 + v1 帧到尾）、SDK 的 `GuestStatefulOperator`/`run_stateful`、探针的 v3 成对规则、C 头；测试 13 + 10 条全绿。**v1/v2 未动**（回归全绿）。
 2. 宿主视图与写回 + `spec.state` 解析 + 一个最小状态算子（`apps/operator-counter`）+ 门禁腿 1–8。
 3. 窗口助手 + 迟到策略 + 门禁腿 9–10。
 4. 复制交互（腿 11）与文档/案例：`update-state`、`word-counter`、`word-probe`、`helsinki-transit`、`unreal-engine-analytics`、`bank-processing`、`car-processing`/`ny-transit`（SQL 部分如实排除）。

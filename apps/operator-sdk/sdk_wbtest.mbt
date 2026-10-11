@@ -117,3 +117,89 @@ test "malformed envelope fails with status and error text" {
   assert_true(run_buffered(identity(), call_state.input_buf) != 0)
   assert_true(last_error_text() != "")
 }
+
+///|
+test "a stateful call receives state and returns the state to write back" {
+  // the smallest thing that proves state crosses the boundary: it appends
+  // this batch's values to whatever the state said, and hands the result
+  // back as the state to keep
+  let appender = GuestStatefulOperator::{
+    name: "appender",
+    process: fn(state, records) {
+      let mut acc = ""
+      for e in state {
+        if @utf8.decode_lossy(e.key[0:e.key.length()]) == "log" {
+          acc = @utf8.decode_lossy(e.value[0:e.value.length()])
+        }
+      }
+      for r in records {
+        acc = acc + value_of(r)
+      }
+      let out : Array[@operator.StateEntry] = [
+        @operator.StateEntry::{
+          key: @utf8.encode("log"),
+          value: @utf8.encode(acc),
+        },
+      ]
+      Ok((out, records))
+    },
+  }
+  // first batch: no prior state
+  assert_eq(
+    run_stateful(
+      appender,
+      @operator.encode_state_payload([], [rec("a"), rec("b")]),
+    ),
+    0,
+  )
+  let (state1, records1) = match
+    @operator.decode_state_payload(buffered_output()) {
+    Ok(pair) => pair
+    Err(e) => abort("decode: \{e}")
+  }
+  assert_eq(state1.length(), 1)
+  assert_eq(
+    @utf8.decode_lossy(state1[0].value[0:state1[0].value.length()]),
+    "ab",
+  )
+  assert_eq(records1.length(), 2)
+  // second batch: the host feeds the state it got back, so the guest sees
+  // what the previous call wrote
+  assert_eq(
+    run_stateful(appender, @operator.encode_state_payload(state1, [rec("c")])),
+    0,
+  )
+  let (state2, _) = match @operator.decode_state_payload(buffered_output()) {
+    Ok(pair) => pair
+    Err(e) => abort("decode: \{e}")
+  }
+  assert_eq(
+    @utf8.decode_lossy(state2[0].value[0:state2[0].value.length()]),
+    "abc",
+  )
+}
+
+///|
+test "a stateful call that refuses is fail-closed" {
+  let refusing = GuestStatefulOperator::{
+    name: "refuser",
+    process: fn(_state, _records) { Err("nope") },
+  }
+  let input = @operator.encode_state_payload([], [rec("a")])
+  assert_eq(run_stateful(refusing, input), 1)
+  assert_eq(buffered_output().length(), 0)
+  assert_true(last_error_text().contains("nope"))
+}
+
+///|
+test "a malformed state payload is refused before the guest runs" {
+  let never = GuestStatefulOperator::{
+    name: "never",
+    process: fn(_state, _records) {
+      abort("the guest must not run on a malformed payload")
+    },
+  }
+  let input = b"\x05\x01k"
+  assert_eq(run_stateful(never, input), 1)
+  assert_true(last_error_text().contains("state payload"))
+}

@@ -46,6 +46,13 @@ SCALAR_EXPECTED = {
     "mf_op_eval": "(i32, i32) -> (i32)",
 }
 
+# ABI v3 (T114): keyed state is optional as a pair, on the same terms as
+# v2 — a stateful module exports both, a stateless one neither.
+STATE_EXPECTED = {
+    "mf_op_state_abi_version": "() -> (i32)",
+    "mf_op_state_apply": "(i32) -> (i32)",
+}
+
 
 def probe(wat_path: pathlib.Path) -> list:
     problems = []
@@ -109,7 +116,7 @@ def probe(wat_path: pathlib.Path) -> list:
             return  # v1-only module: valid, and the pair stays absent
         if optional_pair and present != len(table):
             problems.append(
-                f"{wat_path.name}: scalar exports are a PAIR — "
+                f"{wat_path.name}: optional ABI exports are a PAIR — "
                 f"{sorted(n for n in table if n in export_fn)} present, "
                 f"{sorted(n for n in table if n not in export_fn)} missing"
             )
@@ -127,6 +134,7 @@ def probe(wat_path: pathlib.Path) -> list:
 
     check(EXPECTED)
     check(SCALAR_EXPECTED, optional_pair=True)
+    check(STATE_EXPECTED, optional_pair=True)
     return problems
 
 
@@ -148,7 +156,7 @@ def check_header() -> list[str]:
         return [f"{HEADER.relative_to(ROOT)} is missing (the author-facing ABI contract)"]
     text = HEADER.read_text()
     declared = set(re.findall(r"\b(mf_op_[a-z_]+)\s*\(", text))
-    expected = set(EXPECTED) | set(SCALAR_EXPECTED)
+    expected = set(EXPECTED) | set(SCALAR_EXPECTED) | set(STATE_EXPECTED)
     for name in sorted(expected - declared):
         problems.append(f"header does not declare {name}")
     for name in sorted(declared - expected):

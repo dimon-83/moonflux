@@ -197,3 +197,72 @@ test "scalar request/answer round trip with the declared kind boundary" {
     Ok(_) => abort("a nameless request was accepted")
   }
 }
+
+///|
+test "state payload round trip carries state and records together" {
+  let records = [rec("a"), rec("b")]
+  let state = [
+    StateEntry::{ key: @utf8.encode("k1"), value: @utf8.encode("1"), },
+    StateEntry::{ key: @utf8.encode("k2"), value: b"", },
+  ]
+  let payload = encode_state_payload(state, records)
+  match decode_state_payload(payload) {
+    Ok((decoded_state, decoded_records)) => {
+      assert_eq(decoded_state, state)
+      assert_eq(decoded_records, records)
+    }
+    Err(e) => abort("state payload rejected: \{e}")
+  }
+}
+
+///|
+test "state payload tolerates empty state and empty records" {
+  let payload = encode_state_payload([], [])
+  match decode_state_payload(payload) {
+    Ok((state, records)) => {
+      assert_eq(state.length(), 0)
+      assert_eq(records.length(), 0)
+    }
+    Err(e) => abort("empty state payload rejected: \{e}")
+  }
+  let only_records = encode_state_payload([], [rec("x")])
+  match decode_state_payload(only_records) {
+    Ok((state, records)) => {
+      assert_eq(state.length(), 0)
+      assert_eq(records.length(), 1)
+    }
+    Err(e) => abort("records-only state payload rejected: \{e}")
+  }
+}
+
+///|
+test "a malformed state prefix is a structured rejection, never a partial parse" {
+  // an entry count that runs past the payload
+  let truncated = b"\x02\x01k"
+  match decode_state_payload(truncated) {
+    Ok(_) => abort("a truncated state prefix was accepted")
+    Err(e) => assert_true("\{e}".contains("state prefix"))
+  }
+  // an implausible count
+  let huge = b"\xff\xff\xff\xff\x0f"
+  match decode_state_payload(huge) {
+    Ok(_) => abort("an implausible entry count was accepted")
+    Err(e) => assert_true("\{e}".contains("state prefix"))
+  }
+  // a well-formed prefix with no frame behind it
+  let no_frame = encode_state_payload(
+    [StateEntry::{ key: @utf8.encode("k"), value: @utf8.encode("v"), }],
+    [],
+  )
+  let clipped = no_frame[0:no_frame.length() - 4].to_owned()
+  match decode_state_payload(clipped) {
+    Ok(_) => abort("a state payload without a frame was accepted")
+    Err(_) => ()
+  }
+  // a v1 payload is NOT a v3 payload: the first byte it reads as a count
+  // is frame data, so a stateful entry point must never be handed one
+  match decode_state_payload(encode_process_payload([rec("hello")])) {
+    Ok(_) => ()
+    Err(_) => ()
+  }
+}

@@ -42,7 +42,11 @@ pub fn run_call(GuestOperator, Bytes) -> Result[Bytes, String]
 
 pub fn run_scalar(Array[GuestScalarFn], Bytes) -> Bytes
 
+pub fn run_stateful(GuestStatefulOperator, Bytes) -> Int
+
 pub fn scalar_abi_version() -> Int
+
+pub fn state_abi_version() -> Int
 
 pub fn uppercase() -> GuestOperator
 
@@ -60,6 +64,11 @@ pub(all) struct GuestScalarFn {
   name : String
   params : Array[ScalarKind]
   eval : (Array[@operator.ScalarValue]) -> Result[@operator.ScalarValue, String]
+}
+
+pub(all) struct GuestStatefulOperator {
+  name : String
+  process : (Array[@operator.StateEntry], Array[@protocol.Record]) -> Result[(Array[@operator.StateEntry], Array[@protocol.Record]), String]
 }
 
 pub(all) enum ScalarKind {

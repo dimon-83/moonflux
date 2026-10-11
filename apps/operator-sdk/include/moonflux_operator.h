@@ -86,4 +86,22 @@ int32_t mf_op_last_error(void);
 int32_t mf_op_scalar_abi_version(void);
 int32_t mf_op_eval(int32_t input_ptr);
 
+/* ABI v3 — the stateful call (P30/T114). OPTIONAL and SYMMETRIC, on the
+ * same terms as v2: a module that keeps keyed state exports both of these,
+ * a stateless module neither.
+ *
+ * State arrives and leaves as DATA, which is why a stateful guest still
+ * has no imports. The v3 payload is a self-describing state prefix (uleb
+ * entry count, then per entry: uleb key length + key, uleb value length +
+ * value) followed by the v1 batch frame; the answer uses the same layout.
+ * Only a module exporting this pair is ever called through
+ * mf_op_state_apply, so the v1/v2 payload shapes are untouched.
+ *
+ * Values are opaque bytes: the host moves them and never interprets them.
+ * See docs/operator-abi-v3-state.md for the host-side view and the
+ * durability story (the state lives in a compacted keyed topic).
+ */
+int32_t mf_op_state_abi_version(void);
+int32_t mf_op_state_apply(int32_t input_ptr);
+
 #endif /* MOONFLUX_OPERATOR_H */

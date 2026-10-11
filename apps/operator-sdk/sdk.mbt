@@ -17,6 +17,56 @@ pub(all) struct GuestOperator {
 }
 
 ///|
+/// A guest that keeps keyed state (ABI v3). The host hands it the state
+/// entries for this batch and the batch itself; the guest returns the
+/// records to emit and the state to write back. Keys and values are
+/// opaque bytes on both sides of the boundary — the host never parses a
+/// value, exactly as it never parses a record.
+pub(all) struct GuestStatefulOperator {
+  name : String
+  process : (Array[@operator.StateEntry], Array[@protocol.Record]) -> Result[
+    (Array[@operator.StateEntry], Array[@protocol.Record]),
+    String,
+  ]
+}
+
+///|
+/// ABI entry: the state ABI this SDK implements (drives
+/// mf_op_state_abi_version).
+pub fn state_abi_version() -> Int {
+  @operator.STATE_ABI_VERSION
+}
+
+///|
+/// Runs one stateful call over the host-provided v3 payload. Output lands
+/// in the same buffered slot the batch path uses, so
+/// mf_op_state_apply / mf_op_output_len / mf_op_last_status are the same
+/// three lines every other operator has.
+pub fn run_stateful(op : GuestStatefulOperator, input : Bytes) -> Int {
+  let (state_in, records) = match @operator.decode_state_payload(input) {
+    Ok(pair) => pair
+    Err(e) => {
+      call_state.output_buf = b""
+      call_state.last_status = 1
+      call_state.last_error = "state payload: \{e}"
+      return call_state.last_status
+    }
+  }
+  match (op.process)(state_in, records) {
+    Ok((state_out, out)) => {
+      call_state.output_buf = @operator.encode_state_payload(state_out, out)
+      call_state.last_status = 0
+    }
+    Err(e) => {
+      call_state.output_buf = b""
+      call_state.last_status = 1
+      call_state.last_error = "operator \{op.name}: \{e}"
+    }
+  }
+  call_state.last_status
+}
+
+///|
 /// ABI entry: the version this SDK implements (drives mf_op_abi_version).
 pub fn abi_version() -> Int {
   @operator.ABI_VERSION

@@ -188,6 +188,144 @@ pub fn check_budget(
 }
 
 ///|
+/// ABI v3 (P30/T114): keyed state as an *additive* entry point. A guest
+/// that keeps state exports `mf_op_state_abi_version` and
+/// `mf_op_state_apply` as a pair; a v1/v2 module exports neither and is
+/// untouched. State arrives and leaves as data, so the guest still has
+/// no imports — see docs/operator-abi-v3-state.md.
+pub const STATE_ABI_VERSION = 1
+
+///|
+pub const EXPORT_STATE_ABI_VERSION = "mf_op_state_abi_version"
+
+///|
+pub const EXPORT_STATE_APPLY = "mf_op_state_apply"
+
+///|
+/// One keyed state entry. Both sides are opaque bytes: the host moves
+/// them and never interprets a value, exactly as it treats a record.
+pub(all) struct StateEntry {
+  key : Bytes
+  value : Bytes
+} derive(Debug, Eq)
+
+///|
+/// Encodes the v3 envelope: a self-describing state prefix, then the v1
+/// batch frame running to the end of the payload. Prefix layout (all
+/// lengths uleb128):
+///
+///   entry_count
+///   { key_len, key, value_len, value } * entry_count
+///
+/// Only a module that exports the v3 pair is ever called through
+/// `mf_op_state_apply`, so this shape needs no compatibility with the
+/// v1 payload — the *surface* is what stays additive, not the bytes.
+pub fn encode_state_payload(
+  state : Array[StateEntry],
+  records : Array[@protocol.Record],
+) -> Bytes {
+  let body = @buffer.Buffer::Buffer()
+  body.write_leb128(state.length())
+  for e in state {
+    write_len_bytes(body, e.key)
+    write_len_bytes(body, e.value)
+  }
+  let frame = @protocol.encode_frame(ENVELOPE_BASE_OFFSET, records)
+  body.write_bytes(frame[0:frame.length()])
+  body.to_bytes()
+}
+
+///|
+/// Decodes a v3 envelope. A malformed prefix is a structured rejection:
+/// the guest must never see a half-parsed state section.
+pub fn decode_state_payload(
+  payload : Bytes,
+) -> Result[(Array[StateEntry], Array[@protocol.Record]), OperatorError] {
+  let mut pos = 0
+  let count = match read_uleb_at(payload, pos) {
+    Ok(pair) => {
+      pos = pair.1
+      pair.0
+    }
+    Err(e) => return Err(BadEnvelope("state prefix: \{e}"))
+  }
+  if count < 0 || count > 1000000 {
+    return Err(BadEnvelope("state prefix: implausible entry count \{count}"))
+  }
+  let state : Array[StateEntry] = []
+  for _ in 0..<count {
+    let key = match read_len_bytes_at(payload, pos) {
+      Ok(pair) => {
+        pos = pair.1
+        pair.0
+      }
+      Err(e) => return Err(BadEnvelope("state prefix: \{e}"))
+    }
+    let value = match read_len_bytes_at(payload, pos) {
+      Ok(pair) => {
+        pos = pair.1
+        pair.0
+      }
+      Err(e) => return Err(BadEnvelope("state prefix: \{e}"))
+    }
+    state.push(StateEntry::{ key, value, })
+  }
+  // own the remainder: the frame decoder takes Bytes, and sharing a view
+  // of a payload the guest still holds is not this boundary's business
+  let rest = payload[pos:payload.length()].to_owned()
+  match decode_process_payload(rest) {
+    Ok(records) => Ok((state, records))
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// Writes a uleb128 length followed by the bytes it describes.
+fn write_len_bytes(buf : @buffer.Buffer, data : Bytes) -> Unit {
+  buf.write_leb128(data.length())
+  buf.write_bytes(data[0:data.length()])
+}
+
+///|
+/// Reads one uleb128 at `pos`, returning the value and the next offset.
+fn read_uleb_at(data : Bytes, pos : Int) -> Result[(Int, Int), String] {
+  let mut value = 0
+  let mut shift = 0
+  let mut at = pos
+  while true {
+    if at >= data.length() {
+      return Err("truncated uleb128")
+    }
+    let b = data[at].to_int()
+    at = at + 1
+    value = value | ((b & 127) << shift)
+    if (b & 128) == 0 {
+      return Ok((value, at))
+    }
+    shift = shift + 7
+    if shift > 28 {
+      return Err("uleb128 too long")
+    }
+  }
+  Err("truncated uleb128")
+}
+
+///|
+/// Reads one length-prefixed byte string at `pos`.
+fn read_len_bytes_at(data : Bytes, pos : Int) -> Result[(Bytes, Int), String] {
+  let len = match read_uleb_at(data, pos) {
+    Ok(pair) => pair
+    Err(e) => return Err(e)
+  }
+  let start = len.1
+  let end = start + len.0
+  if len.0 < 0 || end > data.length() {
+    return Err("length-prefixed section runs past the payload")
+  }
+  Ok((data[start:end].to_owned(), end))
+}
+
+///|
 /// Encodes the process-call envelope: one batch frame, unassigned
 /// base offset. Both directions use this shape.
 pub fn encode_process_payload(records : Array[@protocol.Record]) -> Bytes {
