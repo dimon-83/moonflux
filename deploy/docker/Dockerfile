@@ -22,9 +22,14 @@
 # ---- builder -------------------------------------------------------------
 FROM debian:bookworm-slim AS builder
 ARG WASMTIME_VERSION=48.0.2
+# gcc/libc6-dev are not optional: the MoonBit native backend needs a C
+# compiler/linker driver, and scripts/build-operators.sh runs the operator
+# behavior tests on the native target as its third step. The first CI run of
+# this image failed exactly there ("no system C compiler found; tried cc, gcc,
+# clang"), which is the sort of thing only a pristine-tree build finds.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl xz-utils python3 git \
+      ca-certificates curl xz-utils python3 git gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # The wasmtime C API, at the version and prefix CI uses (/usr/local/include is
@@ -39,7 +44,8 @@ RUN set -eux; \
     cp -R "/tmp/${W}/lib/." /usr/local/lib/; \
     rm -rf /tmp/wasmtime.tar.xz "/tmp/${W}"; \
     test -f /usr/local/include/wasmtime.h; \
-    test -f /usr/local/lib/libwasmtime.so
+    test -f /usr/local/lib/libwasmtime.so; \
+    ldconfig
 
 RUN curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
 ENV PATH="/root/.moon/bin:${PATH}"
