@@ -40,17 +40,44 @@ command -v openssl > /dev/null 2>&1 || fail "openssl is required to mint the tes
 command -v python3 > /dev/null 2>&1 || fail "python3 is required for the fixture server"
 
 # ---- certificates: a good one for 127.0.0.1, and a wrong trust anchor ----
-openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
-  -keyout "$WORK/server.key" -out "$WORK/server.crt" \
-  -subj "/CN=127.0.0.1" \
-  -addext "subjectAltName=IP:127.0.0.1" \
-  -addext "basicConstraints=critical,CA:TRUE" > /dev/null 2>&1 ||
+#
+# Extensions go in CONFIG FILES, not `-addext`: macOS ships LibreSSL, whose
+# `-addext` accepts the flag and applies only one of the extensions — the result
+# was a certificate python's ssl refused outright on the macOS runner
+# ("[X509V3: INVALID_CERTIFICATE] invalid certificate"), while Linux's OpenSSL 3
+# accepted the same invocation. A config file is the form both implement.
+cat > "$WORK/server.cnf" <<'CNF'
+[req]
+prompt = no
+distinguished_name = dn
+x509_extensions = v3
+[dn]
+CN = 127.0.0.1
+[v3]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,digitalSignature,keyEncipherment,keyCertSign
+extendedKeyUsage = serverAuth
+subjectAltName = IP:127.0.0.1
+CNF
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -config "$WORK/server.cnf" \
+  -keyout "$WORK/server.key" -out "$WORK/server.crt" > /dev/null 2>&1 ||
   fail "could not mint the server certificate"
-openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
-  -keyout "$WORK/other.key" -out "$WORK/other.crt" \
-  -subj "/CN=not-our-server" \
-  -addext "subjectAltName=DNS:not-our-server" \
-  -addext "basicConstraints=critical,CA:TRUE" > /dev/null 2>&1 ||
+
+cat > "$WORK/other.cnf" <<'CNF'
+[req]
+prompt = no
+distinguished_name = dn
+x509_extensions = v3
+[dn]
+CN = not-our-server
+[v3]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,digitalSignature,keyEncipherment,keyCertSign
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:not-our-server
+CNF
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -config "$WORK/other.cnf" \
+  -keyout "$WORK/other.key" -out "$WORK/other.crt" > /dev/null 2>&1 ||
   fail "could not mint the wrong trust anchor"
 
 cat > "$WORK/body.json" <<'JSON'
@@ -153,9 +180,16 @@ pass "3b. **对端**在 TLS 上确实收到了 Accept-Profile（请求头没有�
 # `set_host` is for, and a client that only checks the CA would accept it
 openssl req -newkey rsa:2048 -nodes -keyout "$WORK/mismatch.key" -out "$WORK/mismatch.csr" \
   -subj "/CN=not-127.0.0.1" > /dev/null 2>&1 || fail "4: could not build the mismatched CSR"
+cat > "$WORK/mismatch.cnf" <<'CNF'
+[v3]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:somewhere-else.example
+CNF
 openssl x509 -req -in "$WORK/mismatch.csr" -CA "$WORK/server.crt" -CAkey "$WORK/server.key" \
   -CAcreateserial -days 2 -out "$WORK/mismatch.crt" \
-  -extfile <(printf "subjectAltName=DNS:somewhere-else.example") > /dev/null 2>&1 ||
+  -extfile "$WORK/mismatch.cnf" -extensions v3 > /dev/null 2>&1 ||
   fail "4: could not sign the mismatched certificate"
 MISMATCH_PORT=$((PORT + 1))
 : > "$WORK/requests-mismatch.jsonl"
