@@ -1,0 +1,128 @@
+# moonflux in containers (README decision 87).
+#
+# The shape follows the native deployment's finding (decision 86): a case is not
+# a task, because cases genuinely collide on topic names across the catalog
+# (`sentence` in 15 and 24, `cars` in 19 and 22). So there is ONE BROKER for
+# watching, and ONE CONTAINER PER CASE, each with its own data dir — the same
+# "one case is one deployment" rule, expressed with volumes instead of
+# directories.
+#
+#   docker compose -f deploy/docker/compose.yaml up -d broker console
+#   docker compose -f deploy/docker/compose.yaml --profile case \
+#     run --rm -e CASE=13-parse-sentence case
+#
+# The console is the editor page over a static server; it takes the broker's
+# port from the URL (`?broker=19801`), which is how the page already works.
+
+name: moonflux
+
+services:
+  # the run registry (P37-2) and, if you point cases at it, their log service
+  broker:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: moonflux:local
+    command:
+      - serve
+      - --data-dir
+      - /data
+      - --listen
+      - 0.0.0.0:19801
+      - --metrics-listen
+      - 0.0.0.0:19802
+    ports:
+      - "19801:19801"   # clients (produce/consume/pipeline run --control)
+      - "19802:19802"   # /metrics and /healthz
+    volumes:
+      - broker-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:19802/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # the editor/console page. It is a static file plus the kernel module the
+  # image builds; nothing here talks to the broker on the page's behalf.
+  console:
+    image: moonflux:local
+    entrypoint: ["python3", "-m", "http.server"]
+    command: ["8080", "--directory", "/opt/moonflux/web/editor"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      broker:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ONE CASE = ONE CONTAINER. `CASE` names a directory under examples/sdf, and
+  # the spec is resolved the same way the native deployment resolves it (the
+  # catalog records the file name; here a glob because compose cannot read the
+  # catalog). The run reports to the broker while its records stay in
+  # /data/cases/<case>.
+  case:
+    profiles: ["case"]
+    image: moonflux:local
+    working_dir: /opt/moonflux
+    entrypoint: ["/bin/sh", "-lc"]
+    # `$${CASE:?…}` (not `${CASE:?…}`): the missing-variable check belongs to the
+    # CONTAINER's shell, not to compose's config-time interpolation — a
+    # `docker compose config` that a user runs to inspect the file must not
+    # demand a case name, while starting the service without one must still fail
+    # loudly and name what is missing.
+    command:
+      - >
+        exec /usr/local/bin/moonflux pipeline run
+        --data-dir "/data/cases/$${CASE:?set CASE to a directory under examples/sdf}"
+        --spec "$$(ls "examples/sdf/$${CASE:?set CASE}"/spec*.json | head -1)"
+        --control "$${MOONFLUX_REGISTRY:-broker:19801}"
+    environment:
+      CASE: ${CASE:-13-parse-sentence}
+      MOONFLUX_REGISTRY: ${MOONFLUX_REGISTRY:-broker:19801}
+    volumes:
+      - case-data:/data
+    depends_on:
+      broker:
+        condition: service_healthy
+
+  # The clustered alternative to the single broker: a control plane and two data
+  # nodes. `docker compose --profile cluster up` runs this instead of relying on
+  # one `serve` process.
+  sc:
+    profiles: ["cluster"]
+    image: moonflux:local
+    command: ["sc", "--listen", "0.0.0.0:19900", "--data-dir", "/data"]
+    ports:
+      - "19900:19900"
+    volumes:
+      - sc-data:/data
+    restart: unless-stopped
+
+  spu-a:
+    profiles: ["cluster"]
+    image: moonflux:local
+    command: ["spu", "--id", "spu-a", "--listen", "0.0.0.0:19901", "--data-dir", "/data", "--sc", "sc:19900"]
+    volumes:
+      - spu-a-data:/data
+    depends_on:
+      - sc
+    restart: unless-stopped
+
+  spu-b:
+    profiles: ["cluster"]
+    image: moonflux:local
+    command: ["spu", "--id", "spu-b", "--listen", "0.0.0.0:19902", "--data-dir", "/data", "--sc", "sc:19900"]
+    volumes:
+      - spu-b-data:/data
+    depends_on:
+      - sc
+    restart: unless-stopped
+
+volumes:
+  broker-data:
+  case-data:
+  sc-data:
+  spu-a-data:
+  spu-b-data:

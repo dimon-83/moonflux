@@ -49,7 +49,7 @@
 | :--- | :--- | :--- | :--- |
 | 0a | **P37-1 多任务地基（本地口径）** | ✅ 2026-10-13 | 决策 81：`topology.json` v2 集合 + 按名 upsert/`--set`/`delete`/`list` + **取数按 topic 选链** + v1 内存迁移 + `moonflux_tasks` 无标签 gauge；门禁 `e2e-p37-multi-task.sh` **10 腿**。顺带修：健康检查恒真、诊断走块缓冲 stdout、`--set` 吞参数（并加 `audit-flags.py` 门禁防这一类） |
 | 0f | **SDF 例子 native 部署** | ✅ 2026-10-13 | 决策 86：`deploy-sdf.sh` + 部署根 + 三种模式（无静默跳过）；**每用例自己的数据目录**化解跨用例主题冲突（sentence/cars）；门禁 **7 腿**。指南 [`deployment.md`](deployment.md) |
-| 0g | **Docker 部署** | ⏳ 第二批 | 多阶段 Dockerfile + compose + CI docker 作业（本机无守护进程，必须 CI 真构建） |
+| 0g | **SDF 例子 Docker 部署** | ✅ 2026-10-13 | 决策 87：多阶段 Dockerfile + compose（broker/console/一用例一容器/集群 profile）；**本机无守护进程**，动态证明在 CI `docker` 作业（`MOONFLUX_REQUIRE_DOCKER=1`，含容器内真实用例逐字节对拍）；套件内只做静态且明说 |
 | 0e | **P37-3b 控制台面板** | ✅ 2026-10-13 | 决策 85：任务清单 + 运行面板；ABI 4；**按 request id 读应答**；门禁让 node 用页面产物**连真 broker** 与 CLI 逐字段对拍（抓到"内核少读一层文档"的真 bug）。门禁 **5 腿** |
 | 0d | **P37-3a 控制台视图模型** | ✅ 2026-10-13 | 决策 84：内核导出 `view_model` + CLI `pipeline view` + 页面拓扑面板；**CLI 与页面 JS 产物逐字节一致**（门禁在 node 里跑真产物）；ABI 3。门禁 **5 腿**。**3b（任务清单/执行记录面板）待做** |
 | 0c | **P37-2 运行登记** | ✅ 2026-10-13 | 决策 83：`run list` + `CMD_RUN_REPORT`（Node）/`CMD_RUN_LIST`（只读）；**stopped vs offline 可区分**且回收不碰 stopped；run-log 主题 + **run id 由偏移推导**；无标签 metrics。门禁 **7 腿**。顺带修：负数 uleb 往返（-1 读成 127）、CLI 动词白名单（新增 `audit-verbs.py`） |

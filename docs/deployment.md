@@ -95,16 +95,32 @@ scripts/deploy-sdf.sh stop
 5. **Docker 路径**：见 §6——本机 docker 守护进程不可用，所以 Docker 只能在 CI 的 ubuntu
    runner 上真构建真冒烟，本地只做静态校验（这条边界同样写在决策里）。
 
-## 6. Docker 部署（P37-6 / 本目标第二批）
+## 6. Docker 部署（决策 87）
 
-> 状态：**未落地**。计划与边界先写在这里，落地后回填实测输出。
->
-> - `Dockerfile` 多阶段：构建阶段装 MoonBit 工具链并 `moon build --target native` +
->   `scripts/build-operators.sh`；运行阶段带 CLI、算子 wasm（**保留仓库根相对路径**）、
->   `web/editor/`，并以非 root 用户运行。
-> - `compose.yaml`：`broker`（`serve` + `--metrics-listen`，healthcheck 打 `/healthz`）、
->   可选 `sc`/`spu` 组成集群形状、按用例的容器（一用例一容器，各自的数据目录挂卷），
->   以及控制台（静态托管的 `web/editor`，连 broker 的 WS）。
-> - CI：新增 `docker` 作业（ubuntu-latest 自带 docker）在**真守护进程**上构建并冒烟
->   （`cli doctor`、一条最小管道、`/healthz`、`docker compose config`）；本机无守护进程时
->   只做静态校验（引用的产物存在、compose 合法）。
+**镜像保留仓库相对布局**：目录里的 spec 用仓库相对路径引用算子 wasm（77 处，**debug** 路径），
+所以 `/opt/moonflux` 就是仓库根，运行阶段带的正是那些 debug 模块。改写 spec 去迁就镜像，
+就是让镜像来管目录——不做。
+
+```bash
+# 起 broker（+ /metrics 与 /healthz）与控制台
+docker compose -f deploy/docker/compose.yaml up -d broker console
+# 控制台：http://localhost:8080/?broker=19801
+
+# 一用例一容器：CASE 是 examples/sdf 下的目录名
+docker compose -f deploy/docker/compose.yaml --profile case \
+  run --rm -e CASE=13-parse-sentence case
+
+# 集群形状（控制面 + 两个数据节点）代替单个 broker
+docker compose -f deploy/docker/compose.yaml --profile cluster up -d
+
+# 只要镜像
+docker build -f deploy/docker/Dockerfile -t moonflux:local .
+docker run --rm moonflux:local doctor
+```
+
+**怎么被证明的（以及为什么不在本机）**：本机只有 docker **客户端、没有守护进程**，
+所以容器路径由 **CI 的 `docker` 作业**证明（`MOONFLUX_REQUIRE_DOCKER=1`）：从干净检出
+构建镜像 → `doctor` 断言平台事实 → 目录里的 spec 编出视图模型 → broker 容器答 `/healthz`
+与无标签 metrics → **在容器里跑一个真实用例并与 `expected.txt` 逐字节对拍**。
+`scripts/e2e-p42-docker.sh` 在 `gates.sh` 里只做静态（并在输出里**明确说动态那半没跑**）；
+`REQUIRE_DOCKER=1` 时没有守护进程就是**失败**——所以"没有守护进程"不会悄悄放过一个容器门禁。

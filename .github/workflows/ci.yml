@@ -98,6 +98,27 @@ jobs:
       - name: Gates (fast)
         run: bash scripts/gates.sh fast
 
+  # The container path. It runs on ubuntu-latest because that runner HAS a
+  # docker daemon; this development machine does not (only the client), which is
+  # exactly why the container half is proven here and not locally. The gate
+  # builds the image from a clean checkout — the Dockerfile installs the
+  # toolchain and builds the platform itself, so this job also proves that the
+  # image needs nothing from the host but the source.
+  docker:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Show the engine
+        run: |
+          docker version
+          docker compose version
+      - name: Docker gate (build, smoke, one catalog case)
+        env:
+          MOONFLUX_REQUIRE_DOCKER: "1"
+          MOONFLUX_DOCKER_TAG: moonflux:ci
+        run: bash scripts/e2e-p42-docker.sh
+
   full-linux:
     # the full suite on Linux (P34, item ② of the user's list). The macOS
     # full job proved the gates; "proven on macOS" is not the same claim as

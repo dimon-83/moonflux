@@ -1,0 +1,8 @@
+# The build context must not carry what the image builds itself: a host _build/
+# would overwrite the artifacts the builder just produced (and can be gigabytes).
+_build/
+_deploy/
+.git/
+.moonflux-data/
+*.log
+uncovered.log
