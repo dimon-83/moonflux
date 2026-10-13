@@ -83,8 +83,13 @@ grep -q "_build/wasm/debug/build/apps" "$DOCKERFILE" ||
   fail "the image does not carry the wasm modules at the path the catalog names"
 pass "static: the image's sources are in the tree and the catalog's module paths are what it copies"
 
-# the compose file parses with the docker CLI (no daemon needed for `config`)
-if docker compose -f "$COMPOSE" config -q > "$WORK/compose.out" 2>&1; then
+# The compose file must hold the shape the deployment depends on. When a compose
+# CLI is present, ask IT (a real parse, including every profile); when it is not
+# — GitHub's macOS runner has no Docker at all, which is how this leg failed the
+# first time it ran there — assert the structure textually and say which check
+# ran. The dedicated docker job has the CLI, so the real parse is never skipped
+# in CI; it is only skipped on machines that cannot run compose anyway.
+if command -v docker > /dev/null 2>&1 && docker compose version > /dev/null 2>&1; then
   # `--profile "*"` so profiled services count too: the case service is the
   # container-per-case shape, and the cluster profile is the alternative to a
   # single broker. Omitting them here would let the compose file lose them
@@ -93,10 +98,18 @@ if docker compose -f "$COMPOSE" config -q > "$WORK/compose.out" 2>&1; then
   for service in broker console case sc spu-a spu-b; do
     echo "$SERVICES" | grep -qx "$service" || fail "compose has no $service service"
   done
-  pass "static: compose parses and declares the broker/console/case and cluster services"
+  pass "static: compose parses (docker compose config) and declares the broker/console/case and cluster services"
 else
-  cat "$WORK/compose.out"
-  fail "compose did not parse"
+  python3 - "$COMPOSE" <<'PY' || fail "the compose file lost part of the shape the deployment needs"
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+for needle in ["  broker:", "  console:", "  case:", "  sc:", "  spu-a:", "  spu-b:",
+               "profiles:", "healthcheck:", "/healthz", "volumes:"]:
+    if needle not in text:
+        print(f"compose is missing {needle!r}", file=sys.stderr)
+        sys.exit(1)
+PY
+  pass "static: compose carries the broker/console/case and cluster services (structure only: no compose CLI here)"
 fi
 
 # the CI job is where the dynamic half is mandatory: if it is gone, the
