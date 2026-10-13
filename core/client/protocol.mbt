@@ -1223,6 +1223,7 @@ pub const CMD_CLUSTER_PIPELINE_APPLY = 32
 /// "Root only" — which is where changing a cluster's desired state belongs.
 pub const CMD_CLUSTER_PIPELINE_DELETE = 37
 
+///|
 /// The control plane's task-set document (a node pulls it when the revision
 /// moves; the payload is empty to ask for the revision alone).
 pub const CMD_CLUSTER_PIPELINE_FETCH = 33
