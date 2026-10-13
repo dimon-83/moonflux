@@ -98,9 +98,12 @@
 > （`core/pipeline/view.mbt`），CLI `pipeline view` 与**页面加载的 JS 产物**输出逐字节一致
 > （门禁在 node 里跑真产物对拍），页面按模型里的边走序渲染、`runnable=false` 画虚线。
 > 编辑器内核 ABI → **3**（页面断言 3）；**JS 导出表是列举式的**，新增导出必须登记。
-> 门禁 `scripts/e2e-p39-console.sh` **5 腿**。**尚未落地（P37-3b）**：任务清单与执行记录
-> 面板需要 broker 往返（两个内核帧构造/解码函数）——浏览器不拥有日志，执行记录永远是
-> 读 broker 上 `<task>.run-log` 主题。
+> 门禁 `scripts/e2e-p39-console.sh` **5 腿**。**P37-3b 已落地 2026-10-13（决策 85）**：
+> 任务清单与运行面板——两个新内核导出（`mf_editor_task_list`/`mf_editor_run_list`）、
+> ABI **4**、**按 request id 读应答**（`CMD_OK` 不区分命令，靠载荷形状猜就是 P27 的教训）；
+> 门禁 `e2e-p40-panels.sh` **5 腿**让 node 用页面那个产物**连真 broker**，与 CLI 逐字段
+> 对拍（任务名/主题/变换数、run 的 id/任务/状态/pid/进度）——**它当场抓到内核少读一层
+> 文档的 bug**。执行记录仍只读 broker 的 `<task>.run-log`：**浏览器不拥有日志**。
 
 ## 5. 控制台（P37-3，T1 与之后）
 

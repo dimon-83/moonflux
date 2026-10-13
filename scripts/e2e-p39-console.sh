@@ -133,8 +133,14 @@ assert model["pipeline"] == "chain-task" and model["topic"] == "events"
 PY
 grep -q "mf_editor_view" web/editor/index.html ||
   fail "4: the page does not call the view-model export"
-grep -q "kernel ABI \${abi} — this page expects 3" web/editor/index.html ||
-  fail "4: the page does not assert ABI 3 (the version that carries the view model)"
+# the page's expected number must equal what the KERNEL reports: a literal here
+# would have to be edited on every bump, and the invariant is what matters
+KERNEL_ABI=$(node -e "const k = await import('$WORK/kernel.mjs'); console.log(k.mf_editor_abi_version())" 2>/dev/null ||
+  node --input-type=module -e "const k = await import('$WORK/kernel.mjs'); console.log(k.mf_editor_abi_version())")
+PAGE_ABI=$(sed -n 's/.*this page expects \([0-9]*\);.*/\1/p' web/editor/index.html | head -1)
+[ -n "$PAGE_ABI" ] || fail "4: the page does not state the ABI it expects"
+[ "$PAGE_ABI" = "$KERNEL_ABI" ] ||
+  fail "4: the page expects ABI $PAGE_ABI but the kernel reports $KERNEL_ABI"
 pass "4. the model is versioned, says what can run, and the page asserts the matching ABI"
 
 # ---- 5. a bad spec is a structured refusal, not a crash ----------------

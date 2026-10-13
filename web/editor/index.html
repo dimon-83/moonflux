@@ -164,6 +164,20 @@
     <div id="graph" class="graph"></div>
     <p class="hintline">every node and edge here comes from <code>mf_editor_view</code>;
       the page renders the model and never derives the topology itself.</p>
+
+    <h2>tasks <span class="status">(the broker's set; same source as <code>pipeline list</code>)</span></h2>
+    <p class="hintline">applied task set at the connected node — the page asks with the
+      same command the CLI does, and renders what comes back.
+      <button class="act" id="btn-tasks">refresh tasks</button></p>
+    <table><thead><tr><th>task</th><th>topic</th><th>transforms</th><th>applied_at</th></tr></thead>
+           <tbody id="task-rows"></tbody></table>
+
+    <h2>runs <span class="status">(same source as <code>run list</code>)</span></h2>
+    <p class="hintline">what is running, where, and how each run ended — <code>stopped</code> and
+      <code>offline</code> are different facts, and the table keeps them apart.
+      <button class="act" id="btn-runs">refresh runs</button></p>
+    <table><thead><tr><th>run</th><th>task</th><th>state</th><th>pid</th><th>progress</th><th>log</th></tr></thead>
+           <tbody id="run-rows"></tbody></table>
     <h2>records</h2>
     <table><thead><tr><th>offset</th><th>key</th><th>value</th></tr></thead>
            <tbody id="rows"></tbody></table>
@@ -198,7 +212,7 @@ let graph = {
 // editor-kernel.js next to this page would leave the function-set
 // surface silently missing, so the mismatch is announced, not guessed
 const abi = kernel.mf_editor_abi_version();
-if (abi !== 3) say(`kernel ABI ${abi} — this page expects 3; rebuild apps/editor-kernel (js)`);
+if (abi !== 4) say(`kernel ABI ${abi} — this page expects 4; rebuild apps/editor-kernel (js)`);
 $("kernel").textContent = "kernel ABI " + abi;
 
 // ---- rendering --------------------------------------------------------
@@ -434,6 +448,68 @@ function nodeBox(node) {
   return box;
 }
 
+$("btn-tasks").addEventListener("click", () =>
+  guard("tasks", () => send(kernel.mf_editor_task_list(), "tasks")));
+$("btn-runs").addEventListener("click", () =>
+  guard("runs", () => send(kernel.mf_editor_run_list(), "runs")));
+
+// The two panels render ONLY what the kernel decoded (kind "task-set" /
+// "runs"), and the run-log button fetches the run's own topic through the same
+// fetch path the consume button uses: a browser cannot own a log, so execution
+// records are always read from the broker.
+function renderTasks(decoded) {
+  const body = $("task-rows");
+  body.textContent = "";
+  const tasks = decoded.tasks || [];
+  if (tasks.length === 0) {
+    const row = body.insertRow();
+    row.insertCell().textContent = "(no task is applied)";
+    row.cells[0].colSpan = 4;
+    return;
+  }
+  for (const task of tasks) {
+    const row = body.insertRow();
+    row.insertCell().textContent = task.name;
+    row.insertCell().textContent = task.topic;
+    row.insertCell().textContent = String(task.transforms);
+    row.insertCell().textContent = task.applied_at ? new Date(task.applied_at).toISOString() : "-";
+  }
+  say(`task set at revision ${decoded.revision}: ${tasks.length} task(s)`);
+}
+
+function renderRuns(decoded) {
+  const body = $("run-rows");
+  body.textContent = "";
+  const runs = decoded.runs || [];
+  if (runs.length === 0) {
+    const row = body.insertRow();
+    row.insertCell().textContent = "(no run is reporting)";
+    row.cells[0].colSpan = 6;
+    return;
+  }
+  for (const run of runs) {
+    const row = body.insertRow();
+    row.insertCell().textContent = run.id;
+    row.insertCell().textContent = run.task;
+    const state = row.insertCell();
+    state.textContent = run.state;
+    state.className = run.state === "running" ? "" : "status";
+    row.insertCell().textContent = String(run.pid);
+    row.insertCell().textContent = run.progress < 0 ? "-" : String(run.progress);
+    const logCell = row.insertCell();
+    const log = document.createElement("button");
+    log.className = "act";
+    log.textContent = "log";
+    log.addEventListener("click", () =>
+      guard("run-log", () =>
+        send(kernel.mf_editor_fetch(`${run.task}.run-log`, 0n, 200), `run-log:${run.task}`)));
+    logCell.append(log);
+  }
+  say(`runs: ${runs.filter((r) => r.state === "running").length} running, ` +
+      `${runs.filter((r) => r.state === "stopped").length} stopped, ` +
+      `${runs.filter((r) => r.state === "offline").length} offline`);
+}
+
 $("name").addEventListener("input", (ev) => { graph.name = ev.target.value; refresh(); });
 $("topic").addEventListener("input", (ev) => { graph.topic = ev.target.value; refresh(); });
 
@@ -486,10 +562,16 @@ function connect() {
 function handle(decoded) {
   const action = awaiting.get(decoded.rid) ?? "reply";
   awaiting.delete(decoded.rid);
-  if (decoded.kind === "welcome") {
+  if (decoded.kind === "task-set") {
+    renderTasks(decoded);
+  } else if (decoded.kind === "runs") {
+    renderRuns(decoded);
+  } else if (decoded.kind === "welcome") {
     say(`hello accepted (server v${decoded.major}.${decoded.minor})`);
     // the panel comes alive with the connection: list what the node holds
     guard("set-list", () => send(kernel.mf_editor_function_set_list(), "set-list"));
+    guard("tasks", () => send(kernel.mf_editor_task_list(), "tasks"));
+    guard("runs", () => send(kernel.mf_editor_run_list(), "runs"));
     updateButtons();
   } else if (decoded.kind === "ok") {
     if (decoded.pipeline) {

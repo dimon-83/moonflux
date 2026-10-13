@@ -23,10 +23,11 @@
 /// leave the panel silently missing, so the page asserts the version
 /// instead of discovering that by absence.
 pub fn mf_editor_abi_version() -> Int32 {
-  // 3: the topology view model (mf_editor_view) joined the surface. The page
-  // asserts this number, so a page that cannot render the model refuses
-  // instead of guessing.
-  3
+  // 4: the task-set and run-table panels joined the surface (mf_editor_task_list,
+  // mf_editor_run_list) — an artifact from ABI 3 has the view model but not
+  // these, and the page would call a missing function. The page asserts this
+  // number, so a stale artifact beside a fresh page refuses instead of guessing.
+  4
 }
 
 // ---------------------------------------------------------------------
@@ -238,15 +239,24 @@ pub fn mf_editor_validate(spec_json : String) -> String {
 /// protocol's bookkeeping and JS keeps the socket.
 priv struct Session {
   mut next_rid : Int32
+  /// What each outstanding request was asking for, by request id.
+  ///
+  /// Why this is needed: the broker answers every successful command with
+  /// `CMD_OK`, so a reply's command byte does NOT say which question it
+  /// answers. Guessing from the payload shape would be the P27 lesson all over
+  /// again (a JSON `{` impersonating a uleb length); the page already routes by
+  /// request id, so the kernel does the same.
+  pending : Map[Int32, String]
 }
 
 ///|
-let session : Session = Session::{ next_rid: 1, }
+let session : Session = Session::{ next_rid: 1, pending: {}, }
 
 ///|
 /// Resets the session (a new connection starts over).
 pub fn mf_editor_session_reset() -> Unit {
   session.next_rid = 1
+  session.pending.clear()
 }
 
 ///|
@@ -450,6 +460,15 @@ pub fn mf_editor_function_set_delete(name : String) -> Bytes {
 fn request(cmd : Int32, payload : Bytes) -> Bytes {
   let rid = session.next_rid
   session.next_rid = rid + 1
+  // remember the question: the answer's command byte is always CMD_OK
+  let kind = match cmd {
+    @client.CMD_CLUSTER_PIPELINE_FETCH => "task-set"
+    @client.CMD_RUN_LIST => "runs"
+    _ => ""
+  }
+  if kind != "" {
+    session.pending[rid] = kind
+  }
   frame(cmd, rid, payload)
 }
 
@@ -491,6 +510,42 @@ pub fn mf_editor_feed(reply : Bytes) -> String {
   let root : Map[String, Json] = {}
   root["cmd"] = Json::number(cmd.to_double())
   root["rid"] = Json::number(rid.to_double())
+  // the question decides how the answer is read (see Session.pending)
+  match session.pending.get(rid) {
+    Some("task-set") => {
+      let _ = session.pending.remove(rid)
+      let decoded = match @client.decode_cluster_pipeline(payload) {
+        Ok(pipe) => pipe
+        Err(e) => return json_error("task set reply: \{e}")
+      }
+      root["kind"] = Json::string("task-set")
+      root["revision"] = Json::number(decoded.revision.to_double())
+      root["tasks"] = Json::array(task_rows(decoded.document))
+      return Json::object(root).stringify()
+    }
+    Some("runs") => {
+      let _ = session.pending.remove(rid)
+      let runs = match @client.decode_runs(payload) {
+        Ok(runs) => runs
+        Err(e) => return json_error("run list reply: \{e}")
+      }
+      root["kind"] = Json::string("runs")
+      let items : Array[Json] = []
+      for run in runs {
+        let item : Map[String, Json] = {}
+        item["id"] = Json::string(run.id)
+        item["task"] = Json::string(run.task)
+        item["state"] = Json::string(run.state)
+        item["revision"] = Json::number(run.revision.to_double())
+        item["pid"] = Json::number(run.pid.to_double())
+        item["progress"] = Json::number(run.progress.to_double())
+        items.push(Json::object(item))
+      }
+      root["runs"] = Json::array(items)
+      return Json::object(root).stringify()
+    }
+    _ => ()
+  }
   match cmd {
     @client.CMD_WELCOME => {
       root["kind"] = Json::string("welcome")
@@ -675,6 +730,21 @@ fn main {
 }
 
 ///|
+/// Asks the broker/control plane for the task set (P37-3b). The frame is the
+/// same command `pipeline list --remote` sends (`CMD_CLUSTER_PIPELINE_FETCH`
+/// with a non-empty payload: empty asks only for the revision).
+pub fn mf_editor_task_list() -> Bytes {
+  request(@client.CMD_CLUSTER_PIPELINE_FETCH, @utf8.encode("panel"))
+}
+
+///|
+/// Asks for the run table (P37-3b): what is running, where, and how each run
+/// ended.
+pub fn mf_editor_run_list() -> Bytes {
+  request(@client.CMD_RUN_LIST, b"")
+}
+
+///|
 /// The compiled topology as the console's view model (P37-3), for a spec
 /// document the page already holds — no broker round trip, no second
 /// derivation: this calls the same `core/pipeline` projection the CLI's
@@ -700,4 +770,69 @@ pub fn mf_editor_view(spec_json : String) -> String {
     }
   }
   @pipeline.view_model_text(spec, @pipeline.compile(spec))
+}
+
+///|
+/// The task rows a console shows, read out of a set document: name, topic,
+/// transform count and (when the document records them) the function-set
+/// revisions and the apply time. A task the document cannot name is SKIPPED
+/// rather than shown as a blank row — the console must not render a task that
+/// does not exist, and it must not invent a name for one it cannot read.
+fn task_rows(document : String) -> Array[Json] {
+  let out : Array[Json] = []
+  if document.length() == 0 {
+    return out
+  }
+  let doc = @json.parse(document[0:document.length()]) catch { _ => return out }
+  let items : Array[Json] = match doc.value("pipelines") {
+    Some(Array(items)) => items
+    _ =>
+      match doc.value("spec") {
+        // a legacy single-task document
+        Some(_) => [doc]
+        None => []
+      }
+  }
+  for item in items {
+    let name = match item.value("pipeline") {
+      Some(String(name)) => name
+      _ => continue
+    }
+    // Two levels, and getting this wrong is how the page showed every task as
+    // "topic - , 0 transforms" while the CLI showed the truth (measured by the
+    // P40 gate's cross-host comparison): a stored task object's `spec` is the
+    // whole DOCUMENT, so the topic and the transform list live one level
+    // further down, in the document's own `spec` body.
+    let body = match item.value("spec") {
+      Some(document) =>
+        match document.value("spec") {
+          Some(body) => body
+          // a bare spec document: `spec` already IS the body
+          None => document
+        }
+      None => continue
+    }
+    let topic = match body.value("topic") {
+      Some(topic) =>
+        match topic.value("name") {
+          Some(String(name)) => name
+          _ => "-"
+        }
+      _ => "-"
+    }
+    let transforms = match body.value("transforms") {
+      Some(Array(items)) => items.length()
+      _ => 0
+    }
+    let row : Map[String, Json] = {}
+    row["name"] = Json::string(name)
+    row["topic"] = Json::string(topic)
+    row["transforms"] = Json::number(transforms.to_double())
+    match item.value("applied_at") {
+      Some(Number(n)) => row["applied_at"] = Json::number(n)
+      _ => ()
+    }
+    out.push(Json::object(row))
+  }
+  out
 }

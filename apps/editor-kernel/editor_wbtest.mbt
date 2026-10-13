@@ -7,10 +7,10 @@
 
 ///|
 test "abi: the page's expected kernel version" {
-  // 3: the topology view model (mf_editor_view) joined the surface. This
-  // number and the page's own assertion move together, so a stale artifact
-  // beside a fresh page is announced instead of guessed at (P37-3a).
-  assert_eq(mf_editor_abi_version(), 3)
+  // 4: the task-set and run-table panels joined the surface. This number and
+  // the page's own assertion move together, so a stale artifact beside a fresh
+  // page is announced instead of guessed at (P37-3a/3b).
+  assert_eq(mf_editor_abi_version(), 4)
 }
 
 ///|
