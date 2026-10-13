@@ -66,6 +66,9 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   let groups = GroupRegistry::new(data_dir, NODE_TIMEOUT_MS.to_int64())
   // gauges are closures read at scrape time: they cannot drift from the
   // state they describe (P35)
+  // P37: how many tasks this data dir holds. A COUNT, never a label — task
+  // names are user input and a metric label must not be (decision 79).
+  metrics.gauge("moonflux_tasks", fn() { task_count(data_dir).to_double() })
   metrics.gauge("moonflux_topics", fn() {
     declared_topics(data_dir).to_double()
   })
@@ -814,7 +817,7 @@ fn dispatch_fetch_partition(
     Ok(entries) => entries
     Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
   }
-  let framed = match frame_window(entries, rules, from) {
+  let framed = match frame_window(entries, rules, topic, from) {
     Ok(framed) => framed
     Err((code, message)) => return err_reply(code, message)
   }
@@ -921,14 +924,18 @@ priv struct FramedWindow {
 fn frame_window(
   entries : Array[@log.LogEntry],
   rules : RuleState,
+  topic : String,
   from : Int64,
 ) -> Result[FramedWindow, (Int32, String)] {
+  // the chain is picked BY TOPIC (P37): a data dir can hold several tasks,
+  // and the read path knows which topic it is reading
+  let chain = rules.chain_for_topic(topic)
   let packer = ReplyPacker::new(from)
   let mut bytes = @protocol.FRAME_OVERHEAD_BYTES
   let mut records = 0
   let mut scan_end = from
   for entry in entries {
-    let out_one = match apply_nodes(rules.chain, [entry.record], None, None) {
+    let out_one = match apply_nodes(chain, [entry.record], None, None) {
       Ok(out_one) => out_one
       Err(e) => return Err((@client.ERR_TRANSFORM, "transform: \{e}"))
     }
@@ -991,7 +998,7 @@ fn dispatch_fetch(
   // the client derives per-record offsets from each frame's own base.
   // The dynamic rule chain (mbel transforms) runs here, on the
   // consumption path.
-  let framed = match frame_window(entries, rules, from) {
+  let framed = match frame_window(entries, rules, topic, from) {
     Ok(framed) => framed
     Err((code, message)) => return err_reply(code, message)
   }
@@ -1084,7 +1091,7 @@ fn dispatch_fetch_committed(
     Ok(entries) => entries
     Err(e) => return err_reply(@client.ERR_STORAGE, "read: \{e}")
   }
-  let framed = match frame_window(entries, rules, from) {
+  let framed = match frame_window(entries, rules, topic, from) {
     Ok(framed) => framed
     Err((code, message)) => return err_reply(code, message)
   }

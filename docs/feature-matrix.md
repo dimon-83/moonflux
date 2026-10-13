@@ -75,6 +75,7 @@
 | **主题源 / 主题汇**（P31，决策 72–73） | ✅ | `{"type":"topic","name":"T","from":"beginning\|end\|<offset>"}` 作为源（**不复制**：`spec.topic` 必须就是它）、`{"type":"topic","name":"T"}` 作为汇；主题源是**常驻**的（追平 = `Quiet`，从不 `Exhausted`）；**跟随者旁路日志缓存**（另一进程是写入者）；环校验四条 apply 期按名拒绝。`scripts/e2e-p33-topic-relay.sh` 11 腿 |
 | **`dedupe` primitive**（P31，决策 71） | ✅ | `apps/operator-dedupe`：每个键的第一条通过（1→0）；**期限 = 键的形状**（`keyfield → tumble → dedupe` ⇒ 每窗去重一次，无窗口 ⇒ 永久，且状态上界如实写明）；无键的链在**宿主**处按名拒绝 |
 | 窗口（hopping / 定时器触发 flush） | ⏳ | 未立项：与"算子不读时钟"的红线正面冲突，要做先定义事件时间水位的来源 | 未立项：需要"水位推进才产出"的语义，与"算子不读时钟"的红线冲突，要做就得先定义事件时间水位的来源 |
+| **多任务（一个节点持一组任务）**（P37-1，决策 81） | ✅（本地口径） | `topology.json` v2 集合 + 一个文档级修订（整份采纳）；`apply` 按名 upsert / `--set` 替换全集 / `delete --name` / `list`；**取数按 topic 选链**；同主题冲突按名拒绝；v1 文档内存迁移；`moonflux_tasks` 无标签 gauge。**集群侧 upsert/delete 与节点采纳 = P37-1b（未落地）**。门禁 `e2e-p37-multi-task.sh` 10 腿 |
 | **有状态管道的跨节点迁移与续算**（P36，决策 77） | ✅ | 状态 = 键控主题（随复制走）+ **进度标记**（状态主题保留键 = 已折算到的输入偏移）+ **写入走集群**（`--state-remote`，一个分区一个写入者）；`--resume` 从标记续算，**不重不漏**；一次批 = 一次 append。**边界**：副本新鲜度决定正确性、无跨节点键空间再均衡、不是分布式事务——见 [`state-migration.md`](state-migration.md) §3。门禁 `e2e-p36-state-migration.sh` 8 腿 |
 | 算子间 shuffle（跨节点键空间再均衡） | ⏳ | 未立项：把键空间在多个运行实例之间切分没有做（管道是进程，跟随所在节点的副本） |
 | 沙箱 filter / flat-map 算子（1→0 / 1→N，P29） | ✅ | `apps/operator-filter`（`min_len`/`contains`）与 `apps/operator-flatmap`（`separator`）——过滤与扇出**不能**用 mbel 表达（表达式必须返回字符串），只能落在批算子契约上；配置在 `mf_op_init` 校验（未知键、空分隔符、小数门槛都拒绝）；`scripts/e2e-p29-examples.sh` 腿 2–5 |

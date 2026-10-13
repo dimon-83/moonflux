@@ -127,6 +127,7 @@ fn flag_is_boolean(name : String) -> Bool {
   // `--resume --state-remote X` would have read "resume=--state-remote" and
   // dropped the address (the P18 lesson, which this list exists to keep)
   name == "resume" ||
+  name == "set" ||
   name == "ha" ||
   name == "force" ||
   name == "json"

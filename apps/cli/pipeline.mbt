@@ -16,6 +16,8 @@ fn cmd_pipeline(argv : Array[String]) -> Unit {
   match argv[0] {
     "plan" => pipeline_plan(argv[1:argv.length()].to_owned())
     "apply" => pipeline_apply(argv[1:argv.length()].to_owned())
+    "delete" => pipeline_delete(argv[1:argv.length()].to_owned())
+    "list" => pipeline_list(argv[1:argv.length()].to_owned())
     "run" => pipeline_run(argv[1:argv.length()].to_owned())
     _ => usage()
   }
@@ -39,47 +41,25 @@ fn topology_path(data_dir : String) -> String {
 /// Loads the applied topology, if any. Missing file = never applied.
 /// Corrupt or invalid applied state = fatal (plan cannot trust it).
 fn load_applied(data_dir : String) -> Applied? {
-  let path = topology_path(data_dir)
-  match @fs.exists(path) {
-    Ok(true) => ()
-    Ok(false) => return None
-    Err(e) => fail("stat \{path}: \{e}")
+  // P37: the applied state is a SET of tasks now. This compat reader answers
+  // "which single pipeline is this data dir about" for the callers that only
+  // need one (the plan diff, the node's compat LEO field, self-placement):
+  // the FIRST task in name order. Anything that must see every task uses
+  // `load_task_set` directly.
+  let set = load_task_set(data_dir)
+  if set.tasks.length() == 0 {
+    return None
   }
-  let text = match @fs.read_file(path) {
-    Ok(text) => text
-    Err(e) => fail("read \{path}: \{e}")
-  }
-  let decoded = @utf8.decode_lossy(text[0:text.length()])
-  let json = @json.parse(decoded[0:decoded.length()]) catch {
-    _ => fail("corrupt \{path}: invalid json")
-  }
-  let name = match json.value("pipeline") {
-    Some(String(name)) => name
-    _ => fail("corrupt \{path}: missing pipeline name")
-  }
-  let spec_json = match json.value("spec") {
-    Some(spec_json) => spec_json
-    None => fail("corrupt \{path}: missing spec")
-  }
-  let spec_text = spec_json.stringify()
-  match @spec.parse_spec(spec_text) {
-    Ok(spec) => Some(Applied::{ pipeline: name, spec, })
-    Err(errors) => {
-      let sb = StringBuilder::new()
-      sb.write_string("corrupt \{path}: stored spec no longer valid: ")
-      for e in errors {
-        sb.write_string("\{e.code} at \{e.path}; ")
-      }
-      fail(sb.to_string())
-    }
-  }
+  let first = set.tasks[0]
+  Some(Applied::{ pipeline: first.name, spec: first.spec, })
 }
 
 ///|
-/// Persists the compiled state: pipeline name + the spec document, and
-/// the rule-asset revisions the apply resolved (the spec pins a *name*;
-/// the topology records what that name meant at apply time, so drift
-/// between a running pipeline and the store is visible).
+/// Persists ONE task as the whole set. This is the old single-pipeline writer
+/// kept for the paths that legitimately replace everything (the cluster
+/// adoption path writes the control plane's document; `--set` writes the
+/// operator's set). Upsert lives in `pipeline_apply`, which must preserve the
+/// sibling tasks' stored JSON.
 fn persist_applied(
   data_dir : String,
   name : String,
@@ -87,41 +67,13 @@ fn persist_applied(
   function_sets : Array[(String, Int64)],
   cluster_revision : Int64?,
 ) -> Result[Unit, String] {
-  // Clock lives in the apps layer (kernel red line: core never reads
-  // the wall clock); the timestamp records when apply compiled+saved.
-  let doc_map : Map[String, Json] = {}
-  doc_map["pipeline"] = Json::string(name)
-  doc_map["applied_at"] = Json::number(
-    @env.now().reinterpret_as_int64().to_double(),
+  let task = task_json(
+    name,
+    spec_json,
+    function_sets,
+    @env.now().reinterpret_as_int64(),
   )
-  let set_items : Array[Json] = []
-  for pair in function_sets {
-    let (set_name, revision) = pair
-    let item : Map[String, Json] = {}
-    item["name"] = Json::string(set_name)
-    item["revision"] = Json::number(revision.to_double())
-    set_items.push(Json::object(item))
-  }
-  doc_map["functions"] = Json::array(set_items)
-  // which cluster revision this document came from (P11): absent for a
-  // locally applied pipeline, which is not cluster-managed at all
-  match cluster_revision {
-    Some(revision) =>
-      doc_map["cluster_revision"] = Json::number(revision.to_double())
-    None => ()
-  }
-  doc_map["spec"] = spec_json
-  let doc = Json::object(doc_map)
-  let text = doc.stringify(indent=2)
-  match @fs.mkdirs(data_dir) {
-    Ok(_) => ()
-    Err(e) => return Err("mkdir \{data_dir}: \{e}")
-  }
-  match
-    @fs.write_file(topology_path(data_dir), @utf8.encode(text[0:text.length()])) {
-    Ok(_) => Ok(())
-    Err(e) => Err("write topology: \{e}")
-  }
+  write_task_set(data_dir, [task], cluster_revision)
 }
 
 ///|
@@ -164,7 +116,9 @@ fn pipeline_plan(argv : Array[String]) -> Unit {
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
   let (spec, _) = load_spec_doc(spec_path)
   let new_topology = @pipeline.compile(spec)
-  let applied = load_applied(data_dir)
+  // diff against the task of the SAME NAME in the applied set (P37):
+  // planning task B must not be diffed against task A
+  let applied = load_task_set(data_dir).find(new_topology.pipeline)
   let old : @pipeline.Topology? = match applied {
     Some(a) => Some(@pipeline.compile(a.spec))
     None => None
@@ -216,37 +170,237 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
     cli_exit(0)
   }
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
-  let (spec, spec_json) = load_spec_doc(spec_path)
-  let new_topology = @pipeline.compile(spec)
-  // publish-time static check: every transform must compile before
-  // the topology is persisted (AGENTS §8) — bad rules never apply,
-  // and a function-set reference that does not resolve is exactly
-  // such a bad rule
   let store = file_metadata_store(data_dir)
+  let existing = load_task_set(data_dir)
+  let now = @env.now().reinterpret_as_int64()
+  // Two shapes of input, deliberately different:
+  //   (default) one spec  -> UPSERT by metadata.name, siblings preserved
+  //   --set               -> a set document replaces the whole set
+  // The distinction matters because the first is what an operator does to a
+  // task and the second is what an operator does to a catalog.
+  let (tasks, message) = if flags.get("set") is Some(_) {
+    let incoming = load_set_doc(spec_path)
+    let prepared : Array[TaskDoc] = []
+    for triple in incoming {
+      let (name, spec, spec_json) = triple
+      prepared.push(prepare_task(store, data_dir, name, spec, spec_json, now))
+    }
+    (prepared, "applied \{prepared.length()} task(s) as the whole set")
+  } else {
+    let (spec, spec_json) = load_spec_doc(spec_path)
+    let topology = @pipeline.compile(spec)
+    let task = prepare_task(
+      store,
+      data_dir,
+      topology.pipeline,
+      spec,
+      spec_json,
+      now,
+    )
+    let merged : Array[TaskDoc] = []
+    let mut replaced = false
+    for t in existing.tasks {
+      if t.name == task.name {
+        merged.push(task)
+        replaced = true
+      } else {
+        merged.push(t)
+      }
+    }
+    if !replaced {
+      merged.push(task)
+    }
+    let verb = if replaced { "updated" } else { "added" }
+    (
+      merged,
+      "\{verb} task \{topology.pipeline}: \{topology.processes.length()} processes, \{merged.length()} task(s) in the set",
+    )
+  }
+  match validate_tasks(tasks, data_dir) {
+    Ok(_) => ()
+    Err(e) => fail(e)
+  }
+  let jsons : Array[Json] = []
+  for t in tasks {
+    jsons.push(t.json)
+  }
+  // a LOCAL apply is not the cluster's document, so the cluster revision is
+  // dropped: on a cluster-managed node the control plane's set is adopted
+  // again on the next heartbeat (use `--remote` to change the cluster's
+  // desired state — documented, and the gate shows the behaviour)
+  match write_task_set(data_dir, jsons, None) {
+    Ok(_) => ()
+    Err(e) => fail(e)
+  }
+  println("\{message} -> \{topology_path(data_dir)}")
+  cli_exit(0)
+}
+
+///|
+/// Publish-time checks for one task (AGENTS §8): every transform must compile
+/// against THIS data dir's function sets before anything is stored, and the
+/// function-set revisions the spec resolved are recorded with it. Bad rules
+/// never apply.
+fn prepare_task(
+  store : MetadataStore,
+  data_dir : String,
+  name : String,
+  spec : @spec.PipelineSpec,
+  spec_json : Json,
+  now : Int64,
+) -> TaskDoc {
   for t in spec.transforms {
     match compile_node(store, data_dir, t) {
       Ok(_) => ()
-      Err(e) => fail("transform rejected: \{e}")
+      Err(e) => fail("task \{name}: transform rejected: \{e}")
     }
   }
   let function_sets = match resolved_function_sets(spec, store) {
     Ok(sets) => sets
-    Err(e) => fail("transform rejected: \{e}")
+    Err(e) => fail("task \{name}: transform rejected: \{e}")
   }
-  match
-    persist_applied(
-      data_dir,
-      new_topology.pipeline,
-      spec_json,
-      function_sets,
-      None,
-    ) {
+  TaskDoc::{ name, spec, json: task_json(name, spec_json, function_sets, now), }
+}
+
+///|
+/// Reads a `--set` document: `{"pipelines": [...]}` where each element is
+/// either a stored task object (`{pipeline, spec, ...}`, i.e. what apply
+/// writes and what `list` reads) or a bare spec document. Accepting both is
+/// what makes a catalog round-trip possible without a second format.
+fn load_set_doc(path : String) -> Array[(String, @spec.PipelineSpec, Json)] {
+  let bytes = match @fs.read_file(path) {
+    Ok(bytes) => bytes
+    Err(e) => fail("read \{path}: \{e}")
+  }
+  let text = @utf8.decode_lossy(bytes[0:bytes.length()])
+  let doc = @json.parse(text[0:text.length()]) catch {
+    e => fail("\{path}: invalid json: \{e}")
+  }
+  let items : Array[Json] = match doc.value("pipelines") {
+    Some(Array(items)) => items
+    _ =>
+      fail(
+        "\{path}: --set needs a set document (\"pipelines\": [...]); apply one spec without --set",
+      )
+  }
+  let out : Array[(String, @spec.PipelineSpec, Json)] = []
+  for item in items {
+    let (name, spec_json) = match item.value("pipeline") {
+      Some(String(name)) =>
+        match item.value("spec") {
+          Some(spec_json) => (name, spec_json)
+          None => fail("\{path}: task \{name} has no spec")
+        }
+      _ => {
+        // a bare spec: its identity is metadata.name
+        let text = item.stringify()
+        let spec = match @spec.parse_spec(text) {
+          Ok(spec) => spec
+          Err(errors) => {
+            for e in errors {
+              warn("  \{e.path}: [\{e.code}] \{e.message}")
+            }
+            fail(
+              "\{path}: a spec in the set did not parse (\{errors.length()} error(s))",
+            )
+          }
+        }
+        (spec.metadata_name, item)
+      }
+    }
+    let spec_text = spec_json.stringify()
+    let spec = match @spec.parse_spec(spec_text) {
+      Ok(spec) => spec
+      Err(errors) => {
+        for e in errors {
+          warn("  \{e.path}: [\{e.code}] \{e.message}")
+        }
+        fail(
+          "\{path}: the spec for task \{name} did not parse (\{errors.length()} error(s))",
+        )
+      }
+    }
+    out.push((name, spec, spec_json))
+  }
+  out
+}
+
+///|
+/// `pipeline delete --name X [--data-dir D]`: removes one task, refusing a
+/// name that is not there (a delete that silently does nothing hides typos).
+fn pipeline_delete(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let name = flags.require("name")
+  let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
+  let set = load_task_set(data_dir)
+  if set.find(name) is None {
+    let known = if set.tasks.length() == 0 {
+      "none"
+    } else {
+      task_names(set).join(", ")
+    }
+    fail("no task named \{name} under \{data_dir} (tasks: \{known})")
+  }
+  let kept : Array[Json] = []
+  for t in set.tasks {
+    if t.name != name {
+      kept.push(t.json)
+    }
+  }
+  match write_task_set(data_dir, kept, None) {
     Ok(_) => ()
     Err(e) => fail(e)
   }
-  println(
-    "applied pipeline \{new_topology.pipeline}: \{new_topology.processes.length()} processes -> \{topology_path(data_dir)}",
-  )
+  println("deleted task \{name} (\{kept.length()} task(s) left)")
+  cli_exit(0)
+}
+
+///|
+/// `pipeline list [--data-dir D | --remote SC]`: the task set, one tab
+/// separated line per task (the shape `topic list` uses, so `cut -f1` works).
+fn pipeline_list(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  if flags.get("remote") is Some(sc_addr) {
+    // a non-empty payload asks the control plane for the DOCUMENT (the empty
+    // one asks only for the revision number)
+    let payload = match
+      control_call_secure(
+        sc_addr,
+        @client.CMD_CLUSTER_PIPELINE_FETCH,
+        @utf8.encode("get"),
+        peer_link(flags),
+      ) {
+      Ok(payload) => payload
+      Err(e) => fail("pipeline list: \{e}")
+    }
+    let pipeline = match @client.decode_cluster_pipeline(payload) {
+      Ok(pipeline) => pipeline
+      Err(e) => fail("pipeline list: \{e}")
+    }
+    if pipeline.spec_json.length() == 0 {
+      println("no task is applied on this cluster")
+      cli_exit(0)
+    }
+    let set = match
+      parse_task_set_text(pipeline.spec_json, "the cluster's task set") {
+      Ok(set) => set
+      Err(e) => fail(e)
+    }
+    for line in task_list_lines(set) {
+      println(line)
+    }
+    println("cluster_revision=\{pipeline.revision}")
+    cli_exit(0)
+  }
+  let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
+  let set = load_task_set(data_dir)
+  if set.tasks.length() == 0 {
+    println("no task applied under \{data_dir}")
+    cli_exit(0)
+  }
+  for line in task_list_lines(set) {
+    println(line)
+  }
   cli_exit(0)
 }
 
@@ -398,14 +552,36 @@ fn pipeline_run(argv : Array[String]) -> Unit {
       let (spec, _) = load_spec_doc(path)
       Applied::{ pipeline: spec.metadata_name, spec, }
     }
-    None =>
-      match load_applied(data_dir) {
-        Some(applied) => applied
-        None =>
-          fail(
-            "no applied pipeline under \{data_dir}; run: moonflux pipeline apply -f <spec> or pass --spec",
-          )
+    None => {
+      let set = load_task_set(data_dir)
+      let known = if set.tasks.length() == 0 {
+        "none"
+      } else {
+        task_names(set).join(", ")
       }
+      if set.tasks.length() == 0 {
+        fail(
+          "no applied pipeline under \{data_dir}; run: moonflux pipeline apply -f <spec> or pass --spec",
+        )
+      }
+      match flags.get("name") {
+        Some(want) =>
+          match set.find(want) {
+            Some(task) => Applied::{ pipeline: task.name, spec: task.spec, }
+            None =>
+              fail("no task named \{want} under \{data_dir} (tasks: \{known})")
+          }
+        None =>
+          if set.tasks.length() == 1 {
+            let task = set.tasks[0]
+            Applied::{ pipeline: task.name, spec: task.spec, }
+          } else {
+            fail(
+              "the applied set has \{set.tasks.length()} tasks (\{known}); pass --name <task>",
+            )
+          }
+      }
+    }
   }
   if flags.get("name") is Some(want) {
     if want != applied.pipeline {

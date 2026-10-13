@@ -42,6 +42,16 @@
 
 ## 3. 平台侧改动（P37-1 多任务地基）
 
+> **落地实录 2026-10-13（本地口径，决策 81）**：文档形状、命令面、按 topic 选链、
+> 同主题冲突按名拒绝、v1 内存迁移、`--set` 全集替换、`pipeline run --name` 都已落地，
+> 门禁 `scripts/e2e-p37-multi-task.sh` **10 腿**全绿。**尚未落地（P37-1b）**：集群侧的
+> upsert/delete 与节点采纳集合文档——今天 `apply --remote` 仍发布单个 spec，混版节点
+> 会拒绝解析并保留在跑的（有噪音、不静默）。另外落地时确认了三条纪律：本地 apply
+> **丢弃** `cluster_revision`；`/metrics` 里**不得出现任务名**（只出 `moonflux_tasks` 计数）；
+> `rules active` 这类诊断必须走 **stderr**（块缓冲的 stdout 会让它"打印了但看不见"）。
+
+
+
 | 项 | 今天 | 改成 | 兼容 |
 | :--- | :--- | :--- | :--- |
 | 文档形状 | `{pipeline, spec, cluster_revision?}` | `{pipelines: [{pipeline, spec}, ...], cluster_revision?}` | **读旧文档 = 单任务集合**（内存迁移）；写永远写 v2。旧数据目录与既有门禁不受影响 |

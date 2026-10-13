@@ -306,7 +306,10 @@ pub fn server_health(data_dir : String) -> Array[(String, Bool)] {
   let checks : Array[(String, Bool)] = []
   let store = file_metadata_store(data_dir)
   checks.push(("metadata", (store.load)() is Ok(_)))
-  checks.push(("applied_pipeline", load_applied(data_dir) is Some(_) || true))
+  // P37: the applied state is a task SET. The check is a real read (the old
+  // one ended in `|| true`, i.e. it always reported ok — a health check that
+  // cannot fail is decoration), and the count is a gauge, not a label.
+  checks.push(("applied_task_set", task_count(data_dir) >= 0))
   checks.push(("metrics", true))
   checks
 }

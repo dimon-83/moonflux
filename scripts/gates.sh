@@ -40,6 +40,7 @@ step "moon fmt --check" moon fmt --check
 # apply fails. Eleven gates died silently that way on the Linux full run (the
 # failure was invisible because stdout was redirected and `set -e` exited).
 # A platform-dependent death that says nothing is worth a five-line guard.
+step "audit-flags.py" scripts/audit-flags.py
 step "no gate routes data through the stdin device" bash -c '
   # COMMENT LINES ARE NOT USAGES. The first version of this guard matched the
   # explanation in e2e-p7-partitions.sh and failed on its own documentation —
@@ -168,6 +169,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p34-sc-ha.sh" scripts/e2e-p34-sc-ha.sh
   step "e2e-p35-metrics.sh" scripts/e2e-p35-metrics.sh
   step "e2e-p36-state-migration.sh" scripts/e2e-p36-state-migration.sh
+  step "e2e-p37-multi-task.sh" scripts/e2e-p37-multi-task.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh

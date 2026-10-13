@@ -30,14 +30,33 @@ priv enum CompiledNode {
 
 ///|
 struct RuleState {
-  mut chain : Array[CompiledNode]
-  mut pipeline : String
+  /// The transform chain of each applied task, keyed by the task's DATA TOPIC.
+  /// A topic belongs to exactly one task (enforced at apply time, see
+  /// `validate_tasks`), which is what makes this lookup unambiguous: the read
+  /// path knows the topic it is reading and nothing else.
+  mut chains : Map[String, Array[CompiledNode]]
+  /// The applied tasks' names, for the "rules active" line (name order).
+  mut pipelines : Array[String]
   mut stamp : Int64
 }
 
 ///|
 fn RuleState::new() -> RuleState {
-  RuleState::{ chain: [], pipeline: "", stamp: -1L, }
+  RuleState::{ chains: {}, pipelines: [], stamp: -1L, }
+}
+
+///|
+/// The chain to apply to records read from `topic`: empty when no task claims
+/// that topic (the read path then passes records through untouched, which is
+/// what it did before any pipeline was applied).
+fn RuleState::chain_for_topic(
+  self : RuleState,
+  topic : String,
+) -> Array[CompiledNode] {
+  match self.chains.get(topic) {
+    Some(chain) => chain
+    None => []
+  }
 }
 
 ///|
@@ -432,19 +451,27 @@ fn RuleState::sync(self : RuleState, data_dir : String) -> Unit {
   let path = topology_path(data_dir)
   let stamp = match @fs.mtime(path) {
     Ok(stamp) => stamp
-    Err(_) => return // nothing applied; keep current (empty) chain
+    Err(_) => return // nothing applied; keep current (empty) chains
   }
   if stamp == self.stamp {
     return
   }
-  match load_chain_from_topology(data_dir) {
-    Ok((name, chain)) => {
-      self.chain = chain
-      self.pipeline = name
+  match load_chains_from_topology(data_dir) {
+    Ok((pipelines, chains)) => {
+      self.chains = chains
+      self.pipelines = pipelines
       self.stamp = stamp
-      if chain.length() > 0 {
-        println(
-          "rules active: pipeline \{self.pipeline}, \{chain.length()} transform(s) (version \{stamp})",
+      let mut transforms = 0
+      for _topic, chain in chains {
+        transforms = transforms + chain.length()
+      }
+      if pipelines.length() > 0 {
+        // stderr, not stdout: this is a lifecycle diagnostic (P16's rule), and
+        // a redirected stdout is block buffered — the line simply does not
+        // appear until the buffer fills, which made the P37 gate wait for a
+        // message the server had already "printed"
+        warn(
+          "rules active: \{pipelines.length()} task(s) (\{pipelines.join(", ")}), \{transforms} transform(s) (version \{stamp})\n",
         )
       }
     }
@@ -452,27 +479,33 @@ fn RuleState::sync(self : RuleState, data_dir : String) -> Unit {
       // keep previous rules; stamp anyway so a fixed spec (new mtime
       // from the next apply) triggers exactly one fresh attempt
       self.stamp = stamp
-      println("warning: rule reload rejected, keeping previous rules: \{e}")
+      warn("warning: rule reload rejected, keeping previous rules: \{e}\n")
     }
   }
 }
 
 ///|
 /// Compiles the applied spec's transform chain (compile-once assets).
-fn load_chain_from_topology(
+fn load_chains_from_topology(
   data_dir : String,
-) -> Result[(String, Array[CompiledNode]), String] {
-  let applied = match load_applied(data_dir) {
-    Some(applied) => applied
-    None => return Ok(("", []))
+) -> Result[(Array[String], Map[String, Array[CompiledNode]]), String] {
+  let set = match try_load_task_set(data_dir) {
+    Ok(set) => set
+    Err(e) => return Err(e)
   }
   let store = file_metadata_store(data_dir)
-  let chain : Array[CompiledNode] = []
-  for t in applied.spec.transforms {
-    match compile_node(store, data_dir, t) {
-      Ok(node) => chain.push(node)
-      Err(e) => return Err(e)
+  let chains : Map[String, Array[CompiledNode]] = {}
+  let names : Array[String] = []
+  for task in set.tasks {
+    let chain : Array[CompiledNode] = []
+    for t in task.spec.transforms {
+      match compile_node(store, data_dir, t) {
+        Ok(node) => chain.push(node)
+        Err(e) => return Err("task \{task.name}: \{e}")
+      }
     }
+    chains[task.spec.topic.name] = chain
+    names.push(task.name)
   }
-  Ok((applied.pipeline, chain))
+  Ok((names, chains))
 }

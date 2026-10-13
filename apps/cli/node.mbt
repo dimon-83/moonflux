@@ -393,10 +393,10 @@ fn cmd_spu(argv : Array[String]) -> Unit {
   // this node's link (P12): presented to the control plane and to every
   // partition's leader, because either may require it
   let sc_link = peer_link(flags)
-  hosts.applied_topic = applied_topic(data_dir)
+  hosts.applied_topics = applied_topics_set(data_dir)
   if sc is None {
     hosts.self_place("no control plane configured")
-    if hosts.applied_topic.length() == 0 {
+    if hosts.applied_topics.length() == 0 {
       note(
         "no pipeline applied yet: this node serves requests but hosts nothing",
       )
@@ -460,7 +460,7 @@ fn cmd_spu(argv : Array[String]) -> Unit {
             address: "\{host}:\{actual}",
             leo,
           }
-          hosts.applied_topic = applied_topic(data_dir)
+          hosts.applied_topics = applied_topics_set(data_dir)
           let cmd = if registered {
             @client.CMD_HEARTBEAT
           } else {
@@ -673,6 +673,7 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   // gauges read state at scrape time; the lease check makes a STANDBY
   // report 503, which is exactly what a load balancer in front of two
   // control planes needs to see (P35)
+  metrics.gauge("moonflux_tasks", fn() { task_count(data_dir).to_double() })
   metrics.gauge("moonflux_nodes_online", fn() {
     table.online_count().to_double()
   })
@@ -1869,11 +1870,18 @@ fn PartitionHost::observe_follower(
 /// from the control plane's view of the world, which today is the
 /// applied pipeline's topic (topic creation becomes a control-plane
 /// verb in T24).
-fn applied_topic(data_dir : String) -> String {
-  match load_applied(data_dir) {
-    Some(applied) => applied.spec.topic.name
-    None => ""
+fn applied_topics_set(data_dir : String) -> Array[String] {
+  // every applied task's topic (P37): a node that runs two tasks may need to
+  // hold the partition of either one, and the degenerate self-hosting rule
+  // (P7) applies to each of them
+  let out : Array[String] = []
+  for task in load_task_set(data_dir).tasks {
+    let topic = task.spec.topic.name
+    if topic.length() > 0 && !out.contains(topic) {
+      out.push(topic)
+    }
   }
+  out
 }
 
 ///|
@@ -1985,7 +1993,7 @@ struct HostTable {
   /// declares it, this node is the only holder there is, and that is
   /// the degenerate placement `self_place` makes — the pre-P7 behavior,
   /// now written down instead of implied.
-  mut applied_topic : String
+  mut applied_topics : Array[String]
   mut hosts : Array[PartitionHost]
   /// Last background-compaction attempt per `topic/partition` (P28).
   /// Keyed by partition, not indexed by host slot, so placement changes
@@ -2007,7 +2015,7 @@ fn HostTable::new(
     node_id,
     address,
     link,
-    applied_topic: "",
+    applied_topics: [],
     hosts: [],
     compaction_due: Map::new(),
   }
@@ -2018,29 +2026,32 @@ fn HostTable::new(
 /// control plane placement exists for it — a declared topic is always
 /// the control plane's call, never this node's.
 fn HostTable::self_place(self : HostTable, reason : String) -> Unit {
-  if self.applied_topic.length() == 0 {
-    return
-  }
-  match self.get(self.applied_topic, 0) {
-    Some(_) => ()
-    None => {
-      let host = PartitionHost::new(
-        self.data_dir,
-        self.node_id,
-        self.address,
-        self.link,
-        self.applied_topic,
-        0,
-      )
-      host.adopt_view(@client.PartitionView::{
-        leader: self.address,
-        replicas: [self.address],
-        nominated: "",
-      })
-      self.hosts.push(host)
-      note(
-        "hosting \{self.applied_topic}[0] alone (\{reason}); committed prefix = log end until a replica set says otherwise",
-      )
+  // one partition 0 per applied task's topic: with several tasks a node may
+  // legitimately hold each of their partitions alone (the degenerate
+  // undeclared case, P7), and skipping the second task would make half the
+  // node's own work unreadable
+  for topic in self.applied_topics {
+    match self.get(topic, 0) {
+      Some(_) => ()
+      None => {
+        let host = PartitionHost::new(
+          self.data_dir,
+          self.node_id,
+          self.address,
+          self.link,
+          topic,
+          0,
+        )
+        host.adopt_view(@client.PartitionView::{
+          leader: self.address,
+          replicas: [self.address],
+          nominated: "",
+        })
+        self.hosts.push(host)
+        note(
+          "hosting \{topic}[0] alone (\{reason}); committed prefix = log end until a replica set says otherwise",
+        )
+      }
     }
   }
 }
@@ -2137,7 +2148,7 @@ fn HostTable::ensure(
   if sc_addr.length() == 0 {
     // nobody to ask: the applied topic is all this node knows, and it
     // is the only holder there is
-    if topic == self.applied_topic && partition == 0 {
+    if self.applied_topics.contains(topic) && partition == 0 {
       self.self_place("no control plane configured")
       return self.get(topic, partition)
     }
@@ -2146,7 +2157,7 @@ fn HostTable::ensure(
   match ask_leader(sc_addr, topic, partition, self.link) {
     Ok(view) => {
       if view.replicas.length() == 0 &&
-        topic == self.applied_topic &&
+        self.applied_topics.contains(topic) &&
         partition == 0 {
         // the control plane knows nothing about this topic (nobody
         // declared it), and this node runs the pipeline that writes it
@@ -2173,7 +2184,7 @@ fn HostTable::ensure(
       self.get(topic, partition)
     }
     Err(e) => {
-      if topic == self.applied_topic && partition == 0 {
+      if self.applied_topics.contains(topic) && partition == 0 {
         // the control plane is unreachable: fall back to holding the
         // pipeline's own partition rather than failing the request.
         // A divergence this creates is resolved by the rejoin rule
