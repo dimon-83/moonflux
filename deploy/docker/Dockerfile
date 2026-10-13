@@ -46,7 +46,7 @@ ENV PATH="/root/.moon/bin:${PATH}"
 
 WORKDIR /src
 # the registry index first, so a source change does not re-fetch the world
-COPY moon.mod.json ./
+COPY moon.mod ./
 COPY .mooncakes ./.mooncakes
 RUN moon update
 COPY . .
@@ -63,8 +63,7 @@ RUN apt-get update \
       ca-certificates curl python3 \
  && rm -rf /var/lib/apt/lists/*
 # the shared library the operator host dlopens at runtime
-COPY --from=builder /usr/local/lib/libwasmtime.so /usr/local/lib/libwasmtime.so
-COPY --from=builder /usr/local/lib/libwasmtime.so.* /usr/local/lib/
+COPY --from=builder /usr/local/lib/libwasmtime.so* /usr/local/lib/
 RUN ldconfig
 
 WORKDIR /opt/moonflux
