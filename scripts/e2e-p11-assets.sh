@@ -92,11 +92,15 @@ doc = {
 }
 open(out, "w").write(json.dumps(doc, indent=2))
 PY
-  "$EXE" pipeline apply -f "$WORK/spec.json" --remote "$SC"
+  # --replace: this gate publishes "the cluster's pipeline", one at a time,
+  # which is what apply meant before P37 made it an upsert into a task set.
+  # Two publishes with different names but the same topic would otherwise be a
+  # topic collision (refused by name), which is not what this gate is about.
+  "$EXE" pipeline apply --replace -f "$WORK/spec.json" --remote "$SC"
 }
 
 adoptions() { # $1 = node name -> how many times it adopted a revision
-  grep -c "cluster pipeline revision" "$WORK/$1.log" || true
+  grep -c "cluster task set revision" "$WORK/$1.log" || true
 }
 
 # ---- cluster up ---------------------------------------------------------
@@ -123,8 +127,8 @@ done
 publish cluster-demo 'upper(value)' > /dev/null || fail "the publish failed"
 ADOPTED=""
 for _ in $(seq 1 60); do
-  if grep -q "cluster pipeline revision 1 adopted" "$WORK/spu-a.log" &&
-    grep -q "cluster pipeline revision 1 adopted" "$WORK/spu-b.log"; then
+  if grep -q "cluster task set revision 1 adopted" "$WORK/spu-a.log" &&
+    grep -q "cluster task set revision 1 adopted" "$WORK/spu-b.log"; then
     ADOPTED=yes
     break
   fi
@@ -148,7 +152,7 @@ A_ADOPT="$(adoptions spu-a)"
 sleep 3
 A_ADOPT_LATER="$(adoptions spu-a)"
 [ "$A_ADOPT" = "$A_ADOPT_LATER" ] \
-  || { grep "cluster pipeline revision" "$WORK/spu-a.log"; fail "the node re-adopted without a new revision"; }
+  || { grep "cluster task set revision" "$WORK/spu-a.log"; fail "the node re-adopted without a new revision"; }
 pass "revision 1 was adopted once; heartbeats carried it without re-fetching ($A_ADOPT adoption(s) in 3s)"
 
 # ---- 5. a function set published only at the control plane -------------
@@ -162,8 +166,8 @@ PULLED=""
 for _ in $(seq 1 80); do
   if grep -q "pulled function set textkit" "$WORK/spu-a.log" &&
     grep -q "pulled function set textkit" "$WORK/spu-b.log" &&
-    grep -q "cluster pipeline revision 2 adopted" "$WORK/spu-a.log" &&
-    grep -q "cluster pipeline revision 2 adopted" "$WORK/spu-b.log"; then
+    grep -q "cluster task set revision 2 adopted" "$WORK/spu-a.log" &&
+    grep -q "cluster task set revision 2 adopted" "$WORK/spu-b.log"; then
     PULLED=yes
     break
   fi
@@ -184,7 +188,7 @@ C_PID="$(start_spu spu-c "$C_PORT")"
 wait_listen "$C_PORT" || fail "spu-c did not start"
 LATE=""
 for _ in $(seq 1 80); do
-  if grep -q "cluster pipeline revision 2 adopted" "$WORK/spu-c.log" &&
+  if grep -q "cluster task set revision 2 adopted" "$WORK/spu-c.log" &&
     grep -q "pulled function set textkit" "$WORK/spu-c.log"; then
     LATE=yes
     break

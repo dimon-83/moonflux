@@ -196,9 +196,7 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
     let incoming = load_set_doc(spec_path)
     let prepared : Array[TaskDoc] = []
     for doc in incoming {
-      prepared.push(
-        prepare_task(store, data_dir, doc.name, doc.spec, doc.json, now),
-      )
+      prepared.push(prepare_stored_task(store, data_dir, doc, now))
     }
     (prepared, "applied \{prepared.length()} task(s) as the whole set")
   } else {
@@ -286,6 +284,41 @@ fn prepare_task(
     Err(e) => fail("task \{name}: transform rejected: \{e}")
   }
   TaskDoc::{ name, spec, json: task_json(name, spec_json, function_sets, now), }
+}
+
+///|
+/// Publish-time checks for a task that already has its STORED shape (an import
+/// through `--set`): compile every transform against this data dir's function
+/// sets, and re-derive the function-set revisions the spec resolves. The spec
+/// DOCUMENT lives inside the stored object's `spec` field — handing the object
+/// itself to `prepare_task` would store a task object as if it were a spec
+/// document, which the reader then refuses (measured: "stored spec for task-a
+/// no longer valid: unknown-field at $.pipeline").
+fn prepare_stored_task(
+  store : MetadataStore,
+  data_dir : String,
+  doc : TaskDoc,
+  now : Int64,
+) -> TaskDoc {
+  let spec_json = match doc.json.value("spec") {
+    Some(spec_json) => spec_json
+    None => fail("task \{doc.name}: the set document has no spec for it")
+  }
+  for t in doc.spec.transforms {
+    match compile_node(store, data_dir, t) {
+      Ok(_) => ()
+      Err(e) => fail("task \{doc.name}: transform rejected: \{e}")
+    }
+  }
+  let function_sets = match resolved_function_sets(doc.spec, store) {
+    Ok(sets) => sets
+    Err(e) => fail("task \{doc.name}: transform rejected: \{e}")
+  }
+  TaskDoc::{
+    name: doc.name,
+    spec: doc.spec,
+    json: task_json(doc.name, spec_json, function_sets, now),
+  }
 }
 
 ///|
