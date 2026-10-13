@@ -58,18 +58,25 @@ wait_http() { # url tenths
 # repository cannot keep
 [ -f "$ROOT/web/editor/index.html" ] || fail "web/editor/index.html is missing"
 [ -d "$ROOT/examples/sdf" ] || fail "examples/sdf is missing"
-python3 - "$ROOT" <<'PY' || fail "the catalog references operator modules that are not in the tree"
+# The SHAPE of every wasm reference, not the presence of the file: these paths
+# are repo-relative and live under the directory the image copies. Whether the
+# modules exist on THIS host is a build output — a clean checkout (which is
+# exactly where the CI docker job runs) legitimately has none, and the image
+# build plus the case run are what prove they can be produced. Asking for the
+# files here made the gate fail in CI for a fact about build artifacts, which is
+# how this check was found to be asking the wrong question.
+python3 - "$ROOT" <<'PY' || fail "the catalog's wasm references are not the repo-relative shape the image carries"
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
-missing = set()
+wrong = set()
 for spec in (root / "examples" / "sdf").glob("*/spec*.json"):
     for t in json.loads(spec.read_text())["spec"].get("transforms", []):
         if t.get("type") == "wasm":
             module = t.get("module", "")
-            if module and not (root / module).exists():
-                missing.add(module)
-if missing:
-    print("\n".join(sorted(missing)), file=sys.stderr)
+            if module and not module.startswith("_build/wasm/"):
+                wrong.add(module)
+if wrong:
+    print("\n".join(sorted(wrong)), file=sys.stderr)
     sys.exit(1)
 PY
 grep -q "_build/wasm/debug/build/apps" "$DOCKERFILE" ||
