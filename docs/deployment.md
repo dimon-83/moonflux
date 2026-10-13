@@ -118,6 +118,15 @@ docker build -f deploy/docker/Dockerfile -t moonflux:local .
 docker run --rm moonflux:local doctor
 ```
 
+**实测（本机 arm64，本地守护进程起来后真跑，随后 CI amd64 复跑）**：镜像 70.5 MB；
+`doctor` 在镜像内报出落盘原语与算子宿主；目录 spec 在镜像内编出视图模型；broker 容器答
+`/healthz` 且 `/metrics` 无标签；**`13-parse-sentence` 在容器里跑出与其 `expected.txt`
+逐字节一致**。构建侧需要：C 工具链且**必须是 clang**（native-stub 按名解析 clang）、
+wasmtime C API **按构建架构**选包并在装完后 `ldconfig`、基础镜像名是 `moon.mod`（不是
+`.json`）。另外：**`scripts/build-operators.sh` 现在能在干净树里构建了**——此前模块级
+`--target wasm` 在冷树产出 0 个 `.wasm`，而 `--output-wat` 只产 `.wat`；是镜像构建第一次
+从纯净树构建才暴露出来的。
+
 **怎么被证明的（以及为什么不在本机）**：本机只有 docker **客户端、没有守护进程**，
 所以容器路径由 **CI 的 `docker` 作业**证明（`MOONFLUX_REQUIRE_DOCKER=1`）：从干净检出
 构建镜像 → `doctor` 断言平台事实 → 目录里的 spec 编出视图模型 → broker 容器答 `/healthz`

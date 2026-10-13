@@ -1,4 +1,9 @@
-# syntax=docker/dockerfile:1
+# NOTE: no `# syntax=` line on purpose. Nothing here needs a frontend image, and
+# asking for one makes the build depend on pulling docker/dockerfile from Docker
+# Hub before it can even start — a restricted network fails at step zero with an
+# error about the frontend rather than about moonflux (measured: "failed to
+# resolve source metadata for docker.io/docker/dockerfile:1: EOF" on a machine
+# that could still build from a locally present base image).
 #
 # moonflux, in a container: the platform plus the SDF example catalog.
 #
@@ -22,20 +27,35 @@
 # ---- builder -------------------------------------------------------------
 FROM debian:bookworm-slim AS builder
 ARG WASMTIME_VERSION=48.0.2
-# gcc/libc6-dev are not optional: the MoonBit native backend needs a C
-# compiler/linker driver, and scripts/build-operators.sh runs the operator
-# behavior tests on the native target as its third step. The first CI run of
-# this image failed exactly there ("no system C compiler found; tried cc, gcc,
-# clang"), which is the sort of thing only a pristine-tree build finds.
+# A C toolchain is not optional, and it must be CLANG:
+#
+#   * scripts/build-operators.sh's third step runs the operator behavior tests on
+#     the native target, which needs a C compiler at all (the first CI run of
+#     this image failed there: "no system C compiler found; tried cc, gcc,
+#     clang");
+#   * constructing the CLI then needs clang BY NAME — the wasmtime adapter is a
+#     native-stub package, and MoonBit resolves `clang` for it (`failed to
+#     resolve native compiler executable 'clang'` with gcc present). binutils
+#     comes along for the linker, libc6-dev for the headers.
+#
+# Both messages were read off a build, not guessed; the second one only appeared
+# after the first was fixed.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl xz-utils python3 git gcc libc6-dev \
+      ca-certificates curl xz-utils python3 git clang binutils libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # The wasmtime C API, at the version and prefix CI uses (/usr/local/include is
 # what adapters/wasmtime-native/moon.pkg names in its stub-cc-flags).
+ARG TARGETARCH
 RUN set -eux; \
-    W="wasmtime-v${WASMTIME_VERSION}-x86_64-linux-c-api"; \
+    ARCH="${TARGETARCH:-$(uname -m)}"; \
+    case "$ARCH" in \
+      amd64|x86_64) WARCH=x86_64 ;; \
+      arm64|aarch64) WARCH=aarch64 ;; \
+      *) echo "no wasmtime C API mapping for architecture $ARCH" >&2; exit 1 ;; \
+    esac; \
+    W="wasmtime-v${WASMTIME_VERSION}-${WARCH}-linux-c-api"; \
     curl -sSfL -o /tmp/wasmtime.tar.xz \
       "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/${W}.tar.xz"; \
     tar -xJf /tmp/wasmtime.tar.xz -C /tmp; \
