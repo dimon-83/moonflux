@@ -212,4 +212,101 @@ kill -9 $MISMATCH_PID 2>/dev/null
   { head -2 "$WORK/out-mismatch.txt"; fail "4: a certificate for another host name was accepted"; }
 pass "4. 名字不匹配的证书被拒（只校验 CA 的客户端会接受它——这条正是 set_host 的意义）"
 
+# ---- 5. SNI decides which certificate the server hands over -----------
+# The bug this leg exists for: the shim pinned the host for VERIFICATION but
+# never sent SNI, so a multi-vhost server answered with its default certificate
+# and every handshake failed with "unable to get local issuer certificate"
+# (code 20) — while openssl s_client, which sends SNI, verified with the same
+# bundle. No single-certificate fixture can see the difference, which is why the
+# earlier legs passed while the real host failed.
+#
+# The default certificate here is deliberately the WRONG one for `localhost`;
+# only a client that names it gets the certificate that can verify. The leg
+# asserts BOTH that data arrived AND that the peer logged the name it was given —
+# and the check below proves the default certificate could not have verified, so
+# the leg has teeth.
+# A proper localhost CHAIN (CA -> leaf), not a self-signed CA-as-server: the
+# client trusts the CA and the leaf must carry the name it asked for.
+cat > "$WORK/lhca.cnf" <<'CNF'
+[req]
+prompt = no
+distinguished_name = dn
+x509_extensions = v3
+[dn]
+CN = p45 localhost CA
+[v3]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+CNF
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -config "$WORK/lhca.cnf" \
+  -keyout "$WORK/lhca.key" -out "$WORK/lhca.crt" > /dev/null 2>&1 ||
+  fail "5: could not mint the localhost CA"
+openssl req -new -newkey rsa:2048 -nodes -subj "/CN=localhost" \
+  -keyout "$WORK/localhost.key" -out "$WORK/localhost.csr" > /dev/null 2>&1 ||
+  fail "5: could not build the localhost CSR"
+cat > "$WORK/localhost.ext" <<'EXT'
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:localhost
+EXT
+openssl x509 -req -in "$WORK/localhost.csr" -CA "$WORK/lhca.crt" -CAkey "$WORK/lhca.key" \
+  -CAcreateserial -days 2 -extfile "$WORK/localhost.ext" -out "$WORK/localhost.crt" \
+  > /dev/null 2>&1 || fail "5: could not sign the localhost certificate"
+if openssl verify -CAfile "$WORK/lhca.crt" -verify_hostname localhost "$WORK/server.crt" \
+  > /dev/null 2>&1; then
+  fail "5: the default certificate verifies for localhost, so this leg proves nothing"
+fi
+
+# `openssl s_server` does SNI natively (-servername + -cert2/-key2) and prints
+# the name it received to stderr — a peer view we can assert. python's
+# sni_callback was tried first and swapped nothing: the client kept receiving the
+# DEFAULT certificate (it failed with "self-signed certificate", code 18, which
+# is what the default is here).
+# A fixture that REFUSES the handshake unless SNI carries the expected name, so
+# "data arrived" is itself the proof that the name went out. This is the shape
+# `openssl s_server -servername` would give; LibreSSL's s_server does not support
+# the -cert2/-key2 pair it needs (measured: it printed usage), and python's
+# sni_callback cannot swap certificates usefully here (the client kept receiving
+# the default certificate), so the refusal is the discriminator instead.
+SNI_PORT=$((PORT + 2))
+: > "$WORK/requests-sni.jsonl"
+python3 "$ROOT/scripts/http_fixture_server.py" --port "$SNI_PORT" --body "$WORK/body.json" \
+  --log "$WORK/requests-sni.jsonl" --tls-cert "$WORK/localhost.crt" \
+  --tls-key "$WORK/localhost.key" --require-sni localhost > "$WORK/server-sni.log" 2>&1 &
+SNI_PID=$!
+for _ in $(seq 1 80); do
+  grep -q "fixture server on" "$WORK/server-sni.log" 2>/dev/null && break
+  sleep 0.1
+done
+
+# (a) the IP form sends SNI=127.0.0.1, which the fixture refuses: no data, and a
+#     named TLS failure rather than a timeout
+sed -e "s/127.0.0.1:$PORT/127.0.0.1:$SNI_PORT/" \
+    -e "s#\"ca\": \"[^\"]*\"#\"ca\": \"$WORK/lhca.crt\"#" \
+    "$WORK/spec-good.json" > "$WORK/spec-sni-ip.json"
+"$EXE" pipeline run --data-dir "$WORK/d-sni-ip" --spec "$WORK/spec-sni-ip.json" \
+  > "$WORK/out-sni-ip.txt" 2> "$WORK/err-sni-ip.txt" &
+RUN=$!
+sleep 4
+kill -9 $RUN 2>/dev/null
+[ -s "$WORK/out-sni-ip.txt" ] &&
+  { head -2 "$WORK/out-sni-ip.txt"; fail "5: the fixture served a connection whose SNI it should have refused"; }
+
+# (b) naming localhost satisfies it: data arrives
+sed -e "s/127.0.0.1:$PORT/localhost:$SNI_PORT/" \
+    -e "s#\"ca\": \"[^\"]*\"#\"ca\": \"$WORK/lhca.crt\"#" \
+    "$WORK/spec-good.json" > "$WORK/spec-sni.json"
+"$EXE" pipeline run --data-dir "$WORK/d-sni" --spec "$WORK/spec-sni.json" \
+  > "$WORK/out-sni.txt" 2> "$WORK/err-sni.txt" &
+RUN=$!
+sleep 4
+kill -9 $RUN 2>/dev/null
+kill -9 "$SNI_PID" 2>/dev/null
+[ -s "$WORK/out-sni.txt" ] ||
+  { tail -3 "$WORK/err-sni.txt"; fail "5: no data when the handshake requires SNI"; }
+grep -q '"sni": "localhost"' "$WORK/requests-sni.jsonl" ||
+  { head -2 "$WORK/requests-sni.jsonl"; fail "5: the peer never saw the SNI name"; }
+pass "5. 客户端真的发 SNI（对端 stderr/日志看到 localhost，且名字不对时它拒握手、零记录）"
+
 echo "E2E-P45-HTTP-TLS: $PASS passed, 0 failed"

@@ -60,6 +60,7 @@ static void (*p_ERR_error_string_n)(unsigned long, char *, size_t);
 static void (*p_ERR_clear_error)(void);
 static int (*p_OPENSSL_init_ssl)(uint64_t, const void *);
 static int (*p_SSL_set1_host)(SSL *, const char *);
+static long (*p_SSL_ctrl)(SSL *, int, long, void *);
 static long (*p_SSL_get_verify_result)(const SSL *);
 
 static const char *const k_candidates[] = {
@@ -202,6 +203,7 @@ int32_t mf_tls_init(void) {
   // optional: older builds may not export it, and it is only a nicety
   *(void **)(&p_OPENSSL_init_ssl) = dlsym(ssl_handle, "OPENSSL_init_ssl");
   *(void **)(&p_SSL_set1_host) = dlsym(ssl_handle, "SSL_set1_host");
+  RESOLVE(p_SSL_ctrl, ssl_handle, "SSL_ctrl");
   *(void **)(&p_SSL_get_verify_result) = dlsym(ssl_handle, "SSL_get_verify_result");
 #undef RESOLVE
 
@@ -324,9 +326,38 @@ intptr_t mf_tls_new(intptr_t ctx, int32_t fd) {
 /// Pins the host name the server certificate must match. Called by the
 /// client before the handshake: a certificate that verifies but names
 /// somebody else is exactly the mistake this prevents.
+/// Names the host for BOTH of the two jobs that need it, which are not the
+/// same job:
+///
+///   * SNI (`SSL_set_tlsext_host_name`) tells the SERVER which virtual host we
+///     want. Without it a multi-vhost server answers with its DEFAULT
+///     certificate — for some other name, or a self-signed placeholder — and
+///     verification then fails with "unable to get local issuer certificate"
+///     (code 20). Measured against a real PostgREST host: openssl s_client
+///     (which sends SNI via -servername) verified fine with a one-certificate
+///     bundle, while this client failed with every bundle, including the
+///     server's own root. A single-certificate test server cannot show the
+///     difference, which is why every gate here passed until a real host was
+///     tried.
+///   * host name verification (`SSL_set1_host`) checks the certificate we GET
+///     against the name we asked for.
+///
+/// Both, or the client is either talking to the wrong certificate or accepting
+/// any certificate the CA ever signed.
 void mf_tls_set_host(intptr_t ssl, const uint8_t *host) {
-  if (p_SSL_set1_host != NULL && host != NULL && host[0] != '\0') {
+  if (host == NULL || host[0] == '\0') {
+    return;
+  }
+  if (p_SSL_set1_host != NULL) {
     p_SSL_set1_host((SSL *)ssl, (const char *)host);
+  }
+  // SNI goes through SSL_ctrl, NOT dlsym("SSL_set_tlsext_host_name"):
+  // that name is a MACRO in OpenSSL (it expands to this very call), it is not
+  // an exported symbol, and dlsym therefore returns NULL — which is how the
+  // first version of this fix silently sent no SNI at all and changed nothing.
+  // SSL_CTRL_SET_TLSEXT_HOSTNAME = 55, TLSEXT_NAMETYPE_host_name = 0.
+  if (p_SSL_ctrl != NULL) {
+    p_SSL_ctrl((SSL *)ssl, 55, 0, (void *)host);
   }
 }
 

@@ -48,6 +48,7 @@
 | # | 项 | 优先级 | 说明 / 依据 |
 | :--- | :--- | :--- | :--- |
 | 0a | **P37-1 多任务地基（本地口径）** | ✅ 2026-10-13 | 决策 81：`topology.json` v2 集合 + 按名 upsert/`--set`/`delete`/`list` + **取数按 topic 选链** + v1 内存迁移 + `moonflux_tasks` 无标签 gauge；门禁 `e2e-p37-multi-task.sh` **10 腿**。顺带修：健康检查恒真、诊断走块缓冲 stdout、`--set` 吞参数（并加 `audit-flags.py` 门禁防这一类） |
+| 0l | **TLS 发 SNI** | ✅ 2026-10-13 | 决策 92：**真实端点直连成功**（根因＝shim 从不发 SNI ✗；`SSL_set_tlsext_host_name` 是宏、dlsym 拿 NULL 使第一版修复静默失效 ✗）；p45 增双向 SNI 腿；部署 spec 切直连、桥退休 |
 | 0k | **http 源 https/TLS** | ✅（本地夹具）· ⏳（真实端点） | 决策 91：scheme 分派 + `source.ca` + 缺 ca 校验期拒 + 无隐式信任库；门禁 **5 条**（含错锚与名字不匹配的拒绝路径）。**未解决**：真实端点 `verify failed (code 20)` ✗ 而 openssl 同 bundle 通过 ✓（服务器链完整 ✓） |
 | 0j | **http 源请求头** | ✅ 2026-10-13 | 决策 90：`spec.source.headers` + 注入守卫（CR/LF/NUL 拒）+ 排序确定；门禁 **5 条**断言**对端**收到的头（缺头 404 的夹具服务）。**https 待做** |
 | 0i | **时间戳解析放宽** | ✅ 2026-10-13 | 决策 89：微秒校验后截断、接受固定偏移（真实 feed 的 `+08:00`）；理由与 wbtest 见决策。**待办**：GuestTrap 错误文本里的中文不可读 ✗（数据链路正确） |

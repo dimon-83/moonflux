@@ -41,6 +41,7 @@ step "moon fmt --check" moon fmt --check
 # failure was invisible because stdout was redirected and `set -e` exited).
 # A platform-dependent death that says nothing is worth a five-line guard.
 step "audit-flags.py" scripts/audit-flags.py
+step "audit-shell-vars.py" python3 scripts/audit-shell-vars.py scripts
 step "audit-verbs.py" scripts/audit-verbs.py
 step "no gate routes data through the stdin device" bash -c '
   # COMMENT LINES ARE NOT USAGES. The first version of this guard matched the

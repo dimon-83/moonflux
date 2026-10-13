@@ -17,7 +17,7 @@
 | P37-4…6 | 每任务资产 / 生命周期与 Docker / 浏览器 playground | — | ⏳ 未开工 |
 | 部署 | **SDF 例子的 native 部署**（每用例一次部署 + 运行登记处） | `e2e-p41-deploy.sh` 7 腿 | ✅ 决策 86 |
 | 能力 | **http 源请求头**（决策 90） | `e2e-p44-http-headers.sh` 5 腿 | ✅ |
-| 能力 | **http 源 https/TLS**（决策 91） | `e2e-p45-http-tls.sh` 5 腿（本地夹具全绿，含拒绝路径） | ✅ 本地 / ⏳ 真实端点 |
+| 能力 | **http 源 https/TLS + SNI**（决策 91/92） | `e2e-p45-http-tls.sh` 6 腿（含拒绝路径与 SNI 双向） | ✅ 含真实端点 |
 | 部署 | **SDF 例子的 Docker 部署** | `e2e-p42-docker.sh`（套件内静态）+ CI `docker` 作业（动态：构建 + 冒烟 + 容器内真实用例对拍） | ✅ 决策 87 |
 
 ## 1. 阶段路线图（含门禁证据）

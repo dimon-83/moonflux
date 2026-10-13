@@ -88,6 +88,11 @@ def main() -> int:
                         help="NAME=VALUE that must appear or the answer is 404")
     parser.add_argument("--tls-cert", help="PEM certificate: serve https instead of http")
     parser.add_argument("--tls-key", help="PEM private key for --tls-cert")
+    parser.add_argument("--sni-name", help="name that selects --sni-cert instead of --tls-cert")
+    parser.add_argument("--sni-cert", help="the certificate served when SNI matches --sni-name")
+    parser.add_argument("--sni-key", help="key for --sni-cert")
+    parser.add_argument("--require-sni", metavar="NAME",
+                        help="refuse the handshake unless SNI carries NAME")
     args = parser.parse_args()
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
@@ -105,6 +110,48 @@ def main() -> int:
         import ssl
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(args.tls_cert, args.tls_key)
+        if args.require_sni:
+            # A client that does not send SNI (or sends the wrong name) is
+            # REFUSED at the handshake. That makes "the connection succeeded" a
+            # proof that the name really went out — the shape
+            # `openssl s_server -servername` would give, which LibreSSL's
+            # s_server does not support (measured: it printed usage for -cert2).
+            def require(_sock, server_name, _ctx):
+                with open(server.log_path or "/dev/null", "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"sni": server_name}, ensure_ascii=False) + "\n")
+                if server_name != args.require_sni:
+                    raise ValueError(f"SNI {server_name!r} is not {args.require_sni!r}")
+
+            context.sni_callback = require
+
+        if args.sni_name:
+            # The DEFAULT certificate stays args.tls_cert (deliberately the
+            # wrong one for this job): a client that does not send SNI is served
+            # it, and verification fails. Only a client that NAMES the host gets
+            # the certificate that can verify — which is the whole point of a
+            # multi-vhost server, and the reason a single-certificate fixture
+            # cannot see a client that never sends SNI.
+            def pick(_sock, server_name, ctx, _cert=args.sni_cert, _key=args.sni_key):
+                # Record what the peer actually named, so a gate can assert the
+                # SERVER's view rather than the client's intention, and swap the
+                # certificate IN PLACE. Returning an SSLContext from this
+                # callback is not supported by CPython's ssl module: it surfaces
+                # as "TypeError: 'SSLContext' object cannot be interpreted as an
+                # integer" during the handshake, i.e. a TLS alert internal error
+                # at the client (measured).
+                with open(server.log_path or "/dev/null", "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"sni": server_name}, ensure_ascii=False) + "\n")
+                # signature is (socket, name, context): the context is the
+                # THIRD argument, and swapping its certificate in place is the
+                # supported way to answer SNI (measured the hard way — using the
+                # first argument gives "'SSLSocket' object has no attribute
+                # 'load_cert_chain'", and returning a context gives a TypeError
+                # during the handshake)
+                if server_name == args.sni_name:
+                    ctx.load_cert_chain(_cert, _key)
+                return None
+
+            context.sni_callback = pick
         server.socket = context.wrap_socket(server.socket, server_side=True)
         scheme = "https"
     print(f"fixture server on {scheme}://127.0.0.1:{args.port} "
