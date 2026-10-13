@@ -26,14 +26,14 @@ test "url parsing: default port, explicit port, path" {
 ///|
 test "request building: GET and POST shapes" {
   let get = @utf8.decode_lossy(
-    parse_view(build_http_request("GET", "h.example", 80, "/x", b"")),
+    parse_view(build_http_request("GET", "h.example", 80, "/x", b"", [])),
   )
   assert_true(get.has_prefix("GET /x HTTP/1.1\r\n"))
   assert_true(get.contains("Host: h.example\r\n"))
   assert_true(get.has_suffix("\r\n\r\n"))
   let post = @utf8.decode_lossy(
     parse_view(
-      build_http_request("POST", "h.example", 8080, "/sink", b"a\nb\n"),
+      build_http_request("POST", "h.example", 8080, "/sink", b"a\nb\n", []),
     ),
   )
   assert_true(post.contains("Host: h.example:8080\r\n"))
@@ -438,4 +438,20 @@ test "the compression query param parses into the url" {
     Ok(url) => assert_true(!url.gzip)
     Err(e) => abort("parse failed: \{e}")
   }
+}
+
+///|
+/// Request headers land in the request head, before Connection, in the order
+/// they were given (the spec sorts them, so the wire bytes are deterministic).
+test "request headers are written into the head" {
+  let raw = build_http_request("GET", "h.example", 80, "/x", b"", [
+    ("Accept-Profile", "ia_csc"),
+    ("X-Trace", "abc"),
+  ])
+  let text = @utf8.decode_lossy(raw)
+  assert_true(text.has_prefix("GET /x HTTP/1.1\r\nHost: h.example\r\n"))
+  assert_true(text.contains("Accept-Profile: ia_csc\r\n"))
+  assert_true(text.contains("X-Trace: abc\r\n"))
+  // headers sit between Host and Connection, and the head ends with a blank line
+  assert_true(text.contains("X-Trace: abc\r\nConnection: close\r\n\r\n"))
 }

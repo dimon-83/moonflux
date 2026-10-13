@@ -50,14 +50,19 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
   })
   let (role, detail) = match spec.source {
     FileSource(path) => ("source-runner", "file source: \{path}")
-    HttpSource(url, interval_ms) =>
+    HttpSource(url, interval_ms, headers) =>
       (
         "source-runner",
-        if interval_ms > 0L {
+        (if interval_ms > 0L {
           "http poller: \{url} every \{interval_ms}ms"
         } else {
           "http source: \{url}"
-        },
+        }) +
+        (if headers.length() > 0 {
+          " (+\{headers.length()} request header(s))"
+        } else {
+          ""
+        }),
       )
     StdinSource => ("source-runner", "stdin source")
     MqttSource(url) => ("source-runner", "mqtt subscription: \{url}")

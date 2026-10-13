@@ -222,6 +222,7 @@ pub fn http_source(
   url : String,
   timestamp : Int64,
   interval_ms : Int64,
+  headers : Array[(String, String)],
 ) -> Source {
   let state = PollState::{ delivered: false, last_ms: timestamp, }
   let polling = interval_ms > 0L
@@ -247,7 +248,7 @@ pub fn http_source(
         }
         timestamp
       }
-      let body = match http_get(url) {
+      let body = match http_get(url, headers) {
         Ok(body) => body
         Err(e) => return Err("GET \{url}: \{e}")
       }
@@ -299,7 +300,7 @@ pub fn http_sink(url : String) -> Sink {
         body.write_bytes(@utf8.encode(line[0:line.length()]))
         body.write_byte(b'\n')
       }
-      match http_post(url, body.to_bytes()) {
+      match http_post(url, body.to_bytes(), []) {
         Ok(_) => Ok(())
         Err(e) => Err("POST \{url}: \{e}")
       }
@@ -343,6 +344,7 @@ pub fn build_http_request(
   port : Int32,
   path : String,
   body : Bytes,
+  headers : Array[(String, String)],
 ) -> Bytes {
   let sb = StringBuilder::new()
   sb.write_string("\{verb} \{path} HTTP/1.1\r\n")
@@ -350,6 +352,13 @@ pub fn build_http_request(
     sb.write_string("Host: \{host}\r\n")
   } else {
     sb.write_string("Host: \{host}:\{port}\r\n")
+  }
+  // NOTE: `for a, b in array` binds (index, element) in MoonBit, NOT a tuple
+  // destructuring — the first version of this loop wrote "0: (name, value)" into
+  // the request head. Destructure the element explicitly.
+  for header in headers {
+    let (name, value) = header
+    sb.write_string("\{name}: \{value}\r\n")
   }
   sb.write_string("Connection: close\r\n")
   if verb == "POST" {
@@ -404,6 +413,7 @@ fn http_exchange(
   verb : String,
   url : String,
   body : Bytes,
+  headers : Array[(String, String)],
 ) -> Result[(Int32, Bytes), String] {
   let (host, port, path) = match parse_http_url(url) {
     Ok(parts) => parts
@@ -413,7 +423,7 @@ fn http_exchange(
     Ok(stream) => stream
     Err(e) => return Err("connect \{host}:\{port}: \{e}")
   }
-  let request = build_http_request(verb, host, port, path, body)
+  let request = build_http_request(verb, host, port, path, body, headers)
   match stream.send_all(request) {
     Ok(_) => ()
     Err(e) => {
@@ -450,8 +460,11 @@ fn http_exchange(
 
 ///|
 /// HTTP GET returning the response body (2xx enforced).
-pub fn http_get(url : String) -> Result[Bytes, String] {
-  match http_exchange("GET", url, b"") {
+pub fn http_get(
+  url : String,
+  headers : Array[(String, String)],
+) -> Result[Bytes, String] {
+  match http_exchange("GET", url, b"", headers) {
     Ok((_, body)) => Ok(body)
     Err(e) => Err(e)
   }
@@ -459,8 +472,12 @@ pub fn http_get(url : String) -> Result[Bytes, String] {
 
 ///|
 /// HTTP POST returning the response body (2xx enforced).
-pub fn http_post(url : String, body : Bytes) -> Result[Bytes, String] {
-  match http_exchange("POST", url, body) {
+pub fn http_post(
+  url : String,
+  body : Bytes,
+  headers : Array[(String, String)],
+) -> Result[Bytes, String] {
+  match http_exchange("POST", url, body, headers) {
     Ok((_, response)) => Ok(response)
     Err(e) => Err(e)
   }

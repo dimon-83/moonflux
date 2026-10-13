@@ -32,7 +32,11 @@ pub(all) enum SourceSpec {
   /// The `Int64` is the poll interval in milliseconds: 0 keeps the
   /// original one-shot behavior (one body, then `Exhausted`), a positive
   /// value makes it a polling source that re-fetches (P30/T109).
-  HttpSource(String, Int64)
+  /// HTTP GET source (P1): url, poll interval (0 = one-shot), and request
+  /// headers. Headers are part of the source because some APIs select what they
+  /// return by header — PostgREST picks its schema with `Accept-Profile`, and
+  /// without it the same URL answers 404 (measured against a real feed).
+  HttpSource(String, Int64, Array[(String, String)])
   /// Read newline-delimited text from standard input (P1).
   StdinSource
   /// Subscribe to an MQTT broker topic (P19); messages become records.
@@ -368,6 +372,124 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
 }
 
 ///|
+/// Request headers for an HTTP source: an object of name -> value.
+///
+/// The guard that matters is injection: a header value carrying CR or LF ends
+/// the header block, and whatever follows is read by the peer as a REQUEST of
+/// the caller's choosing (response splitting). Those characters are refused
+/// outright rather than escaped — an escaped newline is still not a header, and
+/// a caller who meant to send one is asking for something this source cannot do.
+///
+/// The result is sorted by name: a JSON object's iteration order must not leak
+/// into the bytes on the wire, or two identical specs would send different
+/// requests (the kernel's determinism rule, applied at the edge).
+fn parse_http_headers(
+  src : Map[String, Json],
+  errors : Array[SpecError],
+) -> Array[(String, String)]? {
+  let obj = match src.get("headers") {
+    None => return Some([])
+    Some(Object(obj)) => obj
+    Some(_) => {
+      errors.push(SpecError::{
+        path: "$.spec.source.headers",
+        code: "bad-type",
+        message: "headers must be an object of name -> value strings",
+      })
+      return None
+    }
+  }
+  let out : Array[(String, String)] = []
+  for name, value in obj {
+    let text = match value {
+      String(text) => text
+      _ => {
+        errors.push(SpecError::{
+          path: "$.spec.source.headers.\{name}",
+          code: "bad-type",
+          message: "header values must be strings",
+        })
+        continue
+      }
+    }
+    match header_name_problem(name) {
+      Some(reason) =>
+        errors.push(SpecError::{
+          path: "$.spec.source.headers",
+          code: "bad-value",
+          message: "header name \{name} \{reason}",
+        })
+      None =>
+        match header_value_problem(text) {
+          Some(reason) =>
+            errors.push(SpecError::{
+              path: "$.spec.source.headers.\{name}",
+              code: "bad-value",
+              message: "header value \{reason}",
+            })
+          None => out.push((name, text))
+        }
+    }
+  }
+  // Deterministic order: the wire bytes must be a function of the spec alone,
+  // so the JSON object's iteration order must not reach the request.
+  //
+  // The comparator is written to produce ASCENDING order and the convention is
+  // pinned by a test in spec_wbtest ("headers parse, and injection is refused"):
+  // measured with this toolchain, `sort_by` puts the pair the comparator calls
+  // GREATER first, so "a before b" is expressed as +1 here. If a toolchain ever
+  // flips that, the test fails instead of the request bytes silently reversing.
+  out.sort_by(fn(a, b) {
+    if a.0 == b.0 {
+      0
+    } else if a.0 < b.0 {
+      1
+    } else {
+      -1
+    }
+  })
+  Some(out)
+}
+
+///|
+fn header_name_problem(name : String) -> String? {
+  if name.length() == 0 {
+    return Some("must not be empty")
+  }
+  for i = 0; i < name.length(); i = i + 1 {
+    let ch = name.unsafe_get(i)
+    let ok = (ch >= 'a' && ch <= 'z') ||
+      (ch >= 'A' && ch <= 'Z') ||
+      (ch >= '0' && ch <= '9') ||
+      ch == '-' ||
+      ch == '_' ||
+      ch == '.' ||
+      ch == '*'
+    if !ok {
+      return Some("may only contain letters, digits, '-', '_', '.' and '*'")
+    }
+  }
+  None
+}
+
+///|
+fn header_value_problem(value : String) -> String? {
+  for i = 0; i < value.length(); i = i + 1 {
+    let ch = value.unsafe_get(i)
+    if ch == '\r' {
+      return Some("must not contain a carriage return (header injection)")
+    }
+    if ch == '\n' {
+      return Some("must not contain a newline (header injection)")
+    }
+    if ch == '\u{0}' {
+      return Some("must not contain a NUL byte")
+    }
+  }
+  None
+}
+
+///|
 /// The HTTP source's optional poll interval: absent or 0 means "one
 /// body, then done" — the P1 behavior — and a positive number means
 /// "fetch again no sooner than that many milliseconds". Negative values
@@ -474,7 +596,7 @@ fn parse_body(
       reject_unknown_keys(
         "$.spec.source",
         src,
-        ["type", "path", "url", "interval_ms", "name", "from"],
+        ["type", "path", "url", "interval_ms", "name", "from", "headers"],
         errors,
       )
       match (src.get("type"), src.get("path"), src.get("url")) {
@@ -491,9 +613,14 @@ fn parse_body(
           }
         (Some(String("http")), _, Some(String(url))) =>
           if url.has_prefix("http://") && url.length() > 7 {
-            match parse_http_interval(src, errors) {
-              Some(interval) => Some(HttpSource(url, interval))
-              None => None
+            match
+              (
+                parse_http_interval(src, errors),
+                parse_http_headers(src, errors),
+              ) {
+              (Some(interval), Some(headers)) =>
+                Some(HttpSource(url, interval, headers))
+              _ => None
             }
           } else {
             errors.push(SpecError::{

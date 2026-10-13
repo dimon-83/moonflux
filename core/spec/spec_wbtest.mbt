@@ -194,12 +194,12 @@ test "an http source takes an optional poll interval" {
   // absent or 0 keeps the one-shot P1 behavior; positive makes a poller
   let one_shot = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"http://h/p\"},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
   match parse_spec(one_shot) {
-    Ok(spec) => assert_true(spec.source is HttpSource("http://h/p", 0L))
+    Ok(spec) => assert_true(spec.source is HttpSource("http://h/p", 0L, []))
     Err(errors) => abort("one-shot http source rejected: \{errors}")
   }
   let polled = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"http://h/p\",\"interval_ms\":250},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
   match parse_spec(polled) {
-    Ok(spec) => assert_true(spec.source is HttpSource("http://h/p", 250L))
+    Ok(spec) => assert_true(spec.source is HttpSource("http://h/p", 250L, []))
     Err(errors) => abort("polled http source rejected: \{errors}")
   }
   // a negative or non-numeric interval is a named rejection, not a clamp
@@ -267,5 +267,43 @@ test "a pipeline may declare where its state lives, and only sanely" {
   match parse_spec(base.replace(old="STATE", new=",\"state\":\"counters\"")) {
     Ok(_) => abort("a bare string was accepted as state")
     Err(errors) => assert_true(errors.any(fn(e) { e.path == "$.spec.state" }))
+  }
+}
+
+///|
+/// Request headers are part of the source, and the injection guard is the point
+/// of validating them at all: a value with CR or LF would end the header block
+/// and let the rest be read as a request of the caller's choosing.
+test "http source headers parse, and injection is refused" {
+  let doc = fn(headers : String) {
+    "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\"," +
+    "\"metadata\":{\"name\":\"h\"},\"spec\":{\"source\":{\"type\":\"http\"," +
+    "\"url\":\"http://h/p\",\"headers\":" +
+    headers +
+    "}," +
+    "\"topic\":{\"name\":\"t\"},\"transforms\":[],\"sink\":{\"type\":\"stdout\"}}}"
+  }
+  match parse_spec(doc("{\"Accept-Profile\":\"ia_csc\",\"X-Trace\":\"abc\"}")) {
+    Ok(spec) =>
+      match spec.source {
+        HttpSource(_, _, headers) => {
+          assert_eq(headers.length(), 2)
+          // sorted by name: an object's iteration order must not reach the wire
+          assert_eq(headers[0], ("Accept-Profile", "ia_csc"))
+          assert_eq(headers[1], ("X-Trace", "abc"))
+        }
+        _ => abort("expected an http source")
+      }
+    Err(errors) => abort("headers should have parsed: \{errors}")
+  }
+  for
+    bad in [
+      "{\"Accept-Profile\":\"a\\r\\nX-Evil: 1\"}", "{\"Accept-Profile\":\"a\\nb\"}",
+      "{\"Bad Name\":\"x\"}", "{\"\":\"x\"}", "{\"X\":1}",
+    ] {
+    match parse_spec(doc(bad)) {
+      Ok(_) => abort("headers \{bad} should have been refused")
+      Err(_) => ()
+    }
   }
 }

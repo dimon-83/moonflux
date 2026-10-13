@@ -46,7 +46,7 @@ pub(all) enum SinkSpec {
 
 pub(all) enum SourceSpec {
   FileSource(String)
-  HttpSource(String, Int64)
+  HttpSource(String, Int64, Array[(String, String)])
   StdinSource
   MqttSource(String)
   KafkaSource(String)

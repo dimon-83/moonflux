@@ -16,6 +16,8 @@
 | P37-3b | 任务清单 + 运行面板（按 request id 读应答；与 CLI 逐字段对拍） | `e2e-p40-panels.sh` 5 腿 | ✅ 决策 85 |
 | P37-4…6 | 每任务资产 / 生命周期与 Docker / 浏览器 playground | — | ⏳ 未开工 |
 | 部署 | **SDF 例子的 native 部署**（每用例一次部署 + 运行登记处） | `e2e-p41-deploy.sh` 7 腿 | ✅ 决策 86 |
+| 能力 | **http 源请求头**（决策 90） | `e2e-p44-http-headers.sh` 5 腿 | ✅ |
+| 能力 | **http 源 https/TLS**（同一目标的下一步） | 待写（本地 TLS 夹具 + 拒绝路径） | ⏳ |
 | 部署 | **SDF 例子的 Docker 部署** | `e2e-p42-docker.sh`（套件内静态）+ CI `docker` 作业（动态：构建 + 冒烟 + 容器内真实用例对拍） | ✅ 决策 87 |
 
 ## 1. 阶段路线图（含门禁证据）
