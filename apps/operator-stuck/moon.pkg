@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: Apache-2.0
+// apps/operator-stuck: 点位恒值（卡值）检测作为键控状态（wasm guest，ABI v1 + v3）。
+// 每个点位一条状态：当前段的值与起点、告警闩锁、以及已完成段的计数
+// （用于按本点位自己的历史标定告警线）。判据完全由记录自带的事件时间驱动——
+// guest 不读时钟，同输入同输出。
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+  "moonflux/apps/operator-sdk" @sdk,
+  "moonflux/core/operator",
+  "moonflux/core/protocol",
+}
+
+pkgtype(kind: "executable")
+
+options(
+  link: {
+    "wasm": {
+      "exports": [
+        "mf_op_abi_version",
+        "mf_op_alloc_input",
+        "mf_op_init",
+        "mf_op_process",
+        "mf_op_output_len",
+        "mf_op_last_status",
+        "mf_op_last_error",
+        "mf_op_state_abi_version",
+        "mf_op_state_apply",
+      ],
+    },
+  },
+)

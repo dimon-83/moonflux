@@ -61,12 +61,12 @@ fn digits_at(text : String, at : Int32, count : Int32) -> Int32? {
 }
 
 ///|
-/// `YYYY-MM-DDTHH:MM:SS[.fff]Z` -> epoch milliseconds. A trailing `Z` is
+/// `YYYY-MM-DDTHH:MM:SS[.fff](Z|±HH:MM)` -> epoch milliseconds. An offset is
 /// required: we have no timezone database and inventing an offset for a
 /// bare timestamp is exactly the kind of guess a window should refuse.
-/// Fractional seconds accept 1..3 digits; more precision than a millisecond
-/// is truncated only when the caller wrote it in a form we can round, and
-/// we refuse instead of silently dropping digits.
+/// Fractional seconds accept any number of digits; beyond milliseconds the
+/// extra digits are validated and then truncated (a real feed's microseconds
+/// must not make its timestamps unreadable — see the note at the truncation).
 pub fn parse_iso8601_ms(text : String) -> Result[Int64, String] {
   if text.length() < 20 {
     return Err("iso8601 timestamps look like 2024-03-14T16:12:10.493Z")
@@ -137,18 +137,55 @@ pub fn parse_iso8601_ms(text : String) -> Result[Int64, String] {
       millis = millis * 10L
       digits = digits + 1
     }
-    if at < text.length() && is_digit_u(char_u(text, at)) {
-      return Err(
-        "iso8601 fractional seconds beyond milliseconds are refused, not truncated",
-      )
+    // Beyond milliseconds we TRUNCATE — after checking that the rest really are
+    // digits. This reverses an earlier "refuse, not truncate" rule on purpose:
+    // a real plant feed (PostgREST on ia_csc.inlet_node_value) emits
+    // `...04:16:00.520788+08:00`, so refusing made the platform unable to read
+    // the feed at all, while its time resolution is milliseconds and every
+    // consumer measures DURATIONS, where dropping sub-millisecond digits cannot
+    // change an answer. Non-digit junk is still refused, so a malformed
+    // timestamp cannot sneak in through this door.
+    while at < text.length() && is_digit_u(char_u(text, at)) {
+      at = at + 1
     }
   }
-  if at >= text.length() || char_u(text, at) != 'Z'.to_uint() {
-    return Err(
-      "iso8601 timestamps must end in Z (UTC); we have no timezone data",
-    )
+  // A FIXED offset (`Z`, `+08:00`, `-0530`) is pure arithmetic and needs no
+  // timezone database, so it is accepted. A bare local timestamp is still
+  // refused, and so is a named zone — those DO need data we do not carry.
+  // (Measured: a real PostgREST feed emits `2026-10-14T04:16:00.520788+08:00`,
+  // so refusing offsets made the feed unreadable.)
+  let mut offset_ms = 0L
+  if at < text.length() && char_u(text, at) == 'Z'.to_uint() {
+    at = at + 1
+  } else if at < text.length() &&
+    (char_u(text, at) == '+'.to_uint() || char_u(text, at) == '-'.to_uint()) {
+    let sign = if char_u(text, at) == '-'.to_uint() { -1L } else { 1L }
+    at = at + 1
+    let off_hour = match digits_at(text, at, 2) {
+      Some(v) => v
+      None => return Err("iso8601 offset needs two hour digits")
+    }
+    at = at + 2
+    let mut off_min = 0
+    if at < text.length() && char_u(text, at) == ':'.to_uint() {
+      at = at + 1
+    }
+    if at < text.length() && is_digit_u(char_u(text, at)) {
+      off_min = match digits_at(text, at, 2) {
+        Some(v) => v
+        None => return Err("iso8601 offset needs two minute digits")
+      }
+      at = at + 2
+    }
+    if off_hour > 23 || off_min > 59 {
+      return Err("iso8601 offset is out of range")
+    }
+    offset_ms = sign *
+      (off_hour.to_int64() * 3600000L + off_min.to_int64() * 60000L)
+  } else {
+    return Err("iso8601 timestamps need Z or a fixed +HH:MM offset")
   }
-  if at + 1 != text.length() {
+  if at != text.length() {
     return Err("trailing characters after the iso8601 timestamp")
   }
   let days = days_from_civil(year, month, day)
@@ -157,6 +194,7 @@ pub fn parse_iso8601_ms(text : String) -> Result[Int64, String] {
     hour.to_int64() * 3600000L +
     minute.to_int64() * 60000L +
     second.to_int64() * 1000L +
-    millis,
+    millis -
+    offset_ms,
   )
 }

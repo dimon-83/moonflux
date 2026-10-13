@@ -22,7 +22,7 @@ echo "[1/3] building operator modules (wasm target)"
 #     while it KEEPS an existing .wasm — so the binary build goes first and the
 #     WAT pass second. The probe reads the compiler-emitted WAT as ground truth
 #     for the import section; the artifact under test is the .wasm.
-OPS="operator-identity operator-upper operator-fixture operator-scalar operator-filter operator-flatmap operator-counter operator-wordkeys operator-tumble operator-probe operator-bankevents operator-balance operator-predicate operator-keyfield operator-loadtable operator-stolenplates operator-average operator-modelreq operator-subscribe operator-notify operator-keyconst operator-topwords operator-dedupe"
+OPS="operator-identity operator-upper operator-fixture operator-scalar operator-filter operator-flatmap operator-counter operator-wordkeys operator-tumble operator-probe operator-bankevents operator-balance operator-predicate operator-keyfield operator-loadtable operator-stolenplates operator-average operator-modelreq operator-subscribe operator-notify operator-keyconst operator-topwords operator-dedupe operator-stuck"
 PKGS=""
 for op in $OPS; do
   PKGS="$PKGS apps/$op"
