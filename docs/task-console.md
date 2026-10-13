@@ -90,7 +90,9 @@
 > **run id = `<task>@<revision>#<run-start 偏移>`**（不读时钟）；`/metrics` 只出无标签的
 > `moonflux_runs`/`moonflux_runs_offline`。门禁 `scripts/e2e-p38-run-registration.sh` **7 腿**，
 > 其中第 2/3 腿正是"优雅停止 vs 被杀"：优雅停止在回收窗口之后**仍是 stopped**，
-> 被杀的在窗口内变成 **offline**。边界：没有 `--control` 的运行不登记也不写 run-log。
+> 被杀的在窗口内变成 **offline**。**边界**：没有 `--control` 的运行不登记也不写 run-log；
+> 集群上 `<task>.run-log` **必须先声明**（主题声明是操作员动作，P3/P18），写不了时运行
+> **不登记但继续处理数据**——数据面不依赖被观察，也绝不编一个没有日志支撑的 id。
 
 ## 5. 控制台（P37-3，T1 与之后）
 

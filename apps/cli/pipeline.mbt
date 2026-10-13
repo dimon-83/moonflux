@@ -693,29 +693,47 @@ fn pipeline_run(argv : Array[String]) -> Unit {
       detail["source"] = Json::string(source_kind_text(applied.spec.source))
       // the run-start record's OFFSET is the run's id: derived from the log,
       // never from a clock (two runs in the same millisecond stay distinct,
-      // and the id can be recomputed from the record of the run)
-      let base = match run_log.event("run-start", detail) {
-        Ok(base) => base
-        Err(e) => fail("run log: \{e}")
+      // and the id can be recomputed from the record of the run).
+      //
+      // A run log that cannot be written means NO registration (rather than a
+      // failed run): the data plane does not depend on being watched, and an id
+      // invented without a log would be a number with nothing behind it. On a
+      // cluster this is the ordinary case until the operator declares
+      // `<task>.run-log` — a run-log topic is a topic, and declarations are
+      // operator actions here (P3/P18), not something a runner does to a
+      // cluster behind the operator's back.
+      let started : Int64? = match run_log.event("run-start", detail) {
+        Ok(base) => Some(base)
+        Err(e) => {
+          warn(
+            "warning: cannot write the run log (\{e}); this run will not register. On a cluster, declare \{run_log_topic(applied.pipeline)} first.\n",
+          )
+          None
+        }
       }
-      let record = @client.RunRecord::{
-        id: run_id_of(applied.pipeline, revision, base),
-        task: applied.pipeline,
-        revision,
-        address: runner_host(),
-        pid: runner_pid(),
-        data_dir,
-        progress: -1L,
-        stopped: false,
-        state: "",
+      match started {
+        None => ()
+        Some(base) => {
+          let record = @client.RunRecord::{
+            id: run_id_of(applied.pipeline, revision, base),
+            task: applied.pipeline,
+            revision,
+            address: runner_host(),
+            pid: runner_pid(),
+            data_dir,
+            progress: -1L,
+            stopped: false,
+            state: "",
+          }
+          let reporter = RunReporter::new(record, control, link)
+          let run = RunSession::{ log: run_log, reporter, }
+          run.reporter.report_now(-1L, false)
+          warn(
+            "run \{record.id} registered with \{addr}; the run log is \{run_log_topic(applied.pipeline)}\n",
+          )
+          session = Some(run)
+        }
       }
-      let reporter = RunReporter::new(record, control, link)
-      let run = RunSession::{ log: run_log, reporter, }
-      run.reporter.report_now(-1L, false)
-      warn(
-        "run \{record.id} registered with \{addr}; the run log is \{run_log_topic(applied.pipeline)}\n",
-      )
-      session = Some(run)
     }
   }
   let now = @env.now().reinterpret_as_int64()

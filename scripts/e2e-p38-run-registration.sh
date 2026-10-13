@@ -174,4 +174,41 @@ if [ -d "$D2/topics/one-shot.run-log" ]; then
 fi
 pass "7. a run without --control registers nowhere and writes no run log"
 
+# ---- 8. on a cluster, an undeclared run log means "no registration, keep working"
+# A run-log topic is a TOPIC: on a cluster, declarations are operator actions
+# (P3/P18), so a runner may not find one. It must then say so and keep
+# processing — the data plane does not depend on being watched — and the
+# platform must know nothing rather than something invented.
+"$EXE" topic create --name boundary-in --partitions 1 --replication-factor 1 \
+  --remote "127.0.0.1:$SC_PORT" > /dev/null 2>&1 ||
+  fail "8: could not declare the boundary topic"
+cat > "$WORK/boundary.json" <<'JSONEOF'
+{"apiVersion":"moonflux.io/v1alpha1","kind":"Pipeline","metadata":{"name":"boundary-task"},
+ "spec":{"source":{"type":"topic","name":"boundary-in","from":"beginning"},"topic":{"name":"boundary-in"},
+ "transforms":[],"sink":{"type":"stdout"}}}
+JSONEOF
+"$EXE" pipeline apply --replace -f "$WORK/boundary.json" --remote "127.0.0.1:$SC_PORT" > /dev/null 2>&1 ||
+  fail "8: could not apply the boundary task"
+D3="$WORK/d3"
+mkdir -p "$D3"
+# --state-remote names the cluster this data dir's writes go through, so the run
+# log goes through it too — and boundary-task.run-log is NOT declared
+"$EXE" pipeline run --data-dir "$D3" --spec "$WORK/boundary.json" \
+  --state-remote "127.0.0.1:$SC_PORT" > "$WORK/boundary.out" 2> "$WORK/boundary.err" &
+BOUNDARY_PID=$!
+PIDS="$PIDS $BOUNDARY_PID"
+for _ in $(seq 1 60); do
+  grep -q "will not register" "$WORK/boundary.err" && break
+  sleep 0.1
+done
+grep -q "cannot write the run log" "$WORK/boundary.err" ||
+  { cat "$WORK/boundary.err"; fail "8: an unwritable run log was not reported"; }
+grep -q "will not register" "$WORK/boundary.err" ||
+  { cat "$WORK/boundary.err"; fail "8: the run did not say it will not register"; }
+kill -0 "$BOUNDARY_PID" 2>/dev/null ||
+  { cat "$WORK/boundary.err"; fail "8: the run DIED instead of continuing unwatched"; }
+runs | grep -q "boundary-task" &&
+  { runs; fail "8: an unregistered run appeared in the run table"; }
+pass "8. on a cluster an undeclared run log means no registration, and the run keeps working"
+
 echo "E2E-P38-RUN-REGISTRATION: $PASS passed, 0 failed"
