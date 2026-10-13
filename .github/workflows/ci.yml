@@ -17,12 +17,15 @@
 # rather than relying on the platform default baked into the shim.
 #
 # Known drift (open item, not a silent one): the MoonBit toolchain is
-# installed as `latest`, while the dev loop runs moon 0.1.20260629. The
-# installer cannot pin today — the CDN answers 403 for versioned binary
-# URLs (checked 2026-09-26, both with and without the build hash) — so
-# this records a real divergence instead of pretending it does not
-# exist. Pin it here as soon as a version string the CDN accepts is
-# confirmed from a green run.
+# installed as `latest`. The installer cannot pin — the CDN answers 403
+# for versioned binary URLs (re-checked 2026-10-13 for two versions) —
+# and the drift is real: between the 2026-10-11 green run and the
+# 2026-10-13 one, `latest` started normalising C FFI boundaries to
+# Int32, which failed `moon fmt --check` on 95 files. The dev loop is
+# now on the same generation (moon 0.1.20261012) and the migration is
+# in-tree (README decision 80), so the divergence is closed by moving
+# the dev loop forward rather than by pinning. Pin it here as soon as a
+# version string the CDN accepts is confirmed from a green run.
 name: ci
 
 on:
