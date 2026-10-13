@@ -106,7 +106,9 @@ fn is_data_read(cmd : Int32) -> Bool {
   cmd == @client.CMD_FETCH_PARTITION ||
   cmd == @client.CMD_OFFSET_INFO ||
   cmd == @client.CMD_SEGMENTS ||
-  cmd == @client.CMD_LEADER
+  cmd == @client.CMD_LEADER ||
+  // the run table is observability, not control: watching what runs is a read
+  cmd == @client.CMD_RUN_LIST
 }
 
 ///|
@@ -128,6 +130,10 @@ fn is_group_member_command(cmd : Int32) -> Bool {
 /// watermark.
 pub fn is_node_command(cmd : Int32) -> Bool {
   cmd == @client.CMD_REGISTER ||
+  // a run report is a liveness claim about a process, exactly like a node
+  // heartbeat: a read-only client must not be able to write the platform's
+  // answer to "what is running" (P37-2)
+  cmd == @client.CMD_RUN_REPORT ||
   cmd == @client.CMD_HEARTBEAT ||
   cmd == @client.CMD_SYNC_FETCH ||
   cmd == @client.CMD_SYNC_ACK ||

@@ -73,7 +73,8 @@ fn usage() -> Unit {
   println("  group    list|describe|commit --remote host:port ...")
   println("  function-set create|get|list|delete ...")
   println("  operator verify|describe|list ...")
-  println("  pipeline plan|apply|run -f spec.json ...")
+  println("  pipeline apply|plan|run|list|delete -f spec.json ...")
+  println("  run      list --remote host:port")
   println("  profile  add|list|use|remove ...")
   println("  partition list --topic T --remote host:port")
   println(
@@ -191,6 +192,7 @@ fn main {
     text == "consume" ||
     text == "serve" ||
     text == "pipeline" ||
+    text == "run" ||
     text == "spu" ||
     text == "sc" ||
     text == "cluster" ||
@@ -226,6 +228,7 @@ fn main {
     "consume" => cmd_consume(rest)
     "serve" => cmd_serve(rest)
     "pipeline" => cmd_pipeline(rest)
+    "run" => cmd_run(rest)
     "spu" => cmd_spu(rest)
     "sc" => cmd_sc(rest)
     "cluster" => cmd_cluster(rest)

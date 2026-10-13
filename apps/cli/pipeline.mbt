@@ -482,6 +482,7 @@ fn topic_source_loop(
   data_dir : String,
   from : String,
   resume : Bool,
+  session : RunSession?,
 ) -> Unit {
   let name = applied.spec.topic.name
   let mut log = match open_topic_log_shared(data_dir, name) {
@@ -571,6 +572,11 @@ fn topic_source_loop(
       Err(e) => fail("sink \{sink.name}: \{e}")
     }
     cursor = next_cursor
+    // the batch is the run's own record, and the report rides it (P37-2)
+    match session {
+      Some(run) => run.batch(next_cursor, now_ms())
+      None => ()
+    }
   }
 }
 
@@ -655,6 +661,63 @@ fn pipeline_run(argv : Array[String]) -> Unit {
         )
     }
   }
+  // ---------------------------------------------------------------
+  // The run's own record (P37-2). A run registers only when it was TOLD where
+  // to report (`--control`, or the cluster its state already goes through):
+  // adding a run-log topic to someone's data dir unasked is the mistake the
+  // state progress marker made in P36, and the example gate caught it then.
+  let control : String? = match flags.get("control") {
+    Some(addr) => Some(addr)
+    None => flags.get("state-remote")
+  }
+  let revision = match load_task_set(data_dir).revision {
+    Some(revision) => revision
+    None => 0L
+  }
+  let mut session : RunSession? = None
+  match control {
+    None => ()
+    Some(addr) => {
+      let sc_addr = flags.get("state-remote")
+      let link = peer_link(flags)
+      let run_log = RunLog::open(applied.pipeline, fn(topic, records) {
+        match sc_addr {
+          // with a cluster, writes go through it (see append_to_cluster)
+          Some(sc) => append_to_cluster(sc, topic, records, link)
+          None => append_local(data_dir, topic, records)
+        }
+      })
+      let detail : Map[String, Json] = {}
+      detail["revision"] = Json::number(revision.to_double())
+      detail["data_dir"] = Json::string(data_dir)
+      detail["source"] = Json::string(source_kind_text(applied.spec.source))
+      // the run-start record's OFFSET is the run's id: derived from the log,
+      // never from a clock (two runs in the same millisecond stay distinct,
+      // and the id can be recomputed from the record of the run)
+      let base = match run_log.event("run-start", detail) {
+        Ok(base) => base
+        Err(e) => fail("run log: \{e}")
+      }
+      let record = @client.RunRecord::{
+        id: run_id_of(applied.pipeline, revision, base),
+        task: applied.pipeline,
+        revision,
+        address: runner_host(),
+        pid: runner_pid(),
+        data_dir,
+        progress: -1L,
+        stopped: false,
+        state: "",
+      }
+      let reporter = RunReporter::new(record, control, link)
+      let run = RunSession::{ log: run_log, reporter, }
+      run.reporter.report_now(-1L, false)
+      warn(
+        "run \{record.id} registered with \{addr}; the run log is \{run_log_topic(applied.pipeline)}\n",
+      )
+      session = Some(run)
+    }
+  }
   let now = @env.now().reinterpret_as_int64()
   // A topic source is not a connector: the records already live in this
   // node's log, so there is nothing to pull from the outside world and
@@ -736,7 +799,9 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   }
   match topic_source {
     Some(from) =>
-      topic_source_loop(applied, sink, chain, state, data_dir, from, resume)
+      topic_source_loop(
+        applied, sink, chain, state, data_dir, from, resume, session,
+      )
     None => ()
   }
   let source = match source {
@@ -784,10 +849,37 @@ fn pipeline_run(argv : Array[String]) -> Unit {
             Ok(_) => ()
             Err(e) => fail("sink \{sink.name}: \{e}")
           }
+          // a source without offsets reports -1 as progress: the run table
+          // says "no offsets" rather than inventing a position
+          match session {
+            Some(run) => run.batch(-1L, now_ms())
+            None => ()
+          }
         }
     }
   }
+  // the graceful ending: the loop ran out of records (a one-shot source), so
+  // the run says it stopped on purpose — a killed run never gets here, which
+  // is how the platform tells the two apart (P37-2)
+  match session {
+    Some(run) => run.stop("exhausted", -1L)
+    None => ()
+  }
   cli_exit(0)
+}
+
+///|
+/// The source kind, for the run log's `run-start` record (a run's record
+/// should say what it was pulling from without anyone parsing the spec).
+fn source_kind_text(source : @spec.SourceSpec) -> String {
+  match source {
+    TopicSource(_, _) => "topic"
+    FileSource(_) => "file"
+    HttpSource(_, _) => "http"
+    StdinSource => "stdin"
+    MqttSource(_) => "mqtt"
+    KafkaSource(_) => "kafka"
+  }
 }
 
 ///|
@@ -814,8 +906,30 @@ fn write_state_to_cluster(
   records : Array[@protocol.Record],
   link : PeerLink,
 ) -> Result[Unit, String] {
+  match append_to_cluster(sc, topic, records, link) {
+    Ok(_) => Ok(())
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// Appends records to a topic of the CLUSTER: resolve the topic's leader
+/// through the control plane, then produce there, returning the offset the
+/// batch landed at.
+///
+/// Shared by the two writes a runner must not make into a node's data dir —
+/// state (P36) and the run log (P37-2) — because a node's data dir has one
+/// writer per partition, and a runner writing the same log the node
+/// replicates leaves that node's cached end stale (measured in P36: five
+/// entries on the leader, the follower reporting "caught up to 0").
+fn append_to_cluster(
+  sc : String,
+  topic : String,
+  records : Array[@protocol.Record],
+  link : PeerLink,
+) -> Result[Int64, String] {
   if topic.length() == 0 {
-    return Err("--state-remote without a state topic")
+    return Err("a cluster append needs a topic name")
   }
   let payload = match
     control_call_secure(
@@ -828,27 +942,45 @@ fn write_state_to_cluster(
       link,
     ) {
     Ok(payload) => payload
-    Err(e) => return Err("state leader lookup: \{e}")
+    Err(e) => return Err("leader lookup for \{topic}: \{e}")
   }
   let view = match @client.decode_partition_view(payload) {
     Ok(view) => view
-    Err(e) => return Err("state leader lookup: \{e}")
+    Err(e) => return Err("leader lookup for \{topic}: \{e}")
   }
   if view.leader.length() == 0 {
-    return Err(
-      "the state topic \{topic}[0] has no leader yet; refusing to write state nowhere",
-    )
+    return Err("\{topic}[0] has no leader yet; refusing to write nowhere")
   }
   let (host, port) = parse_listen_addr(view.leader)
   let producer = match
     connect_producer_transport(host, port, link.token, link.tls) {
     Ok(producer) => producer
-    Err(e) => return Err("state produce connect \{view.leader}: \{e}")
+    Err(e) => return Err("produce connect \{view.leader}: \{e}")
   }
   let sent = producer.send(topic, records)
   producer.close()
   match sent {
-    Ok(_) => Ok(())
-    Err(e) => Err("state produce: \{e}")
+    Ok((base, _count)) => Ok(base)
+    Err(e) => Err("produce to \{topic}: \{e}")
+  }
+}
+
+///|
+/// Appends records to a topic in this process's own data dir, returning the
+/// offset the batch landed at. Safe when this process is the only writer of
+/// that log (a standalone run); a cluster-attached run uses
+/// `append_to_cluster` instead, for the reason written there.
+fn append_local(
+  data_dir : String,
+  topic : String,
+  records : Array[@protocol.Record],
+) -> Result[Int64, String] {
+  let log = match open_topic_log(data_dir, topic) {
+    Ok(log) => log
+    Err(e) => return Err(e)
+  }
+  match log.append(records) {
+    Ok(base) => Ok(base)
+    Err(e) => Err("append \{topic}: \{e}")
   }
 }

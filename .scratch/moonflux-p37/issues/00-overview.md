@@ -7,7 +7,7 @@
 | 期 | 内容 | 门禁（可证伪） | 状态 |
 | :--- | :--- | :--- | :--- |
 | P37-1 | **多任务地基（本地口径）** | ✅ 2026-10-13（决策 81）：文档 v2 集合 + 一个文档级修订；按名 upsert / `--set` / `delete` / `list`；**取数按 topic 选链**；同主题冲突按名拒绝；v1 内存迁移；`moonflux_tasks` gauge。门禁 `e2e-p37-multi-task.sh` **10 腿** | ✅ **1b 完成 2026-10-13（决策 82）**：控制面集合文档 + 一个文档级修订、`apply --remote` 三形状 + `delete --remote`、节点整份采纳、坏文档拒收保留；门禁 `e2e-p37b-cluster-tasks.sh` **6 腿** |
-| P37-2 | **运行登记（T0）**：`CMD_RUN_REGISTER/HEARTBEAT/LIST`（Node 类 / 只读）+ 静默回收 + run-log 主题 + run id 由日志推导 + 两个无标签 gauge | 活着可见、杀掉后有界离线且与优雅停止可区分；run-log 与源/汇偏移逐字节可对；run id 可重算；`/metrics` 无任务名 | ⏳ |
+| P37-2 | **运行登记（T0）** | ✅ 2026-10-13（决策 83）：`CMD_RUN_REPORT`（Node 类；设计稿的 register/heartbeat 合并成一条）+ `CMD_RUN_LIST`（只读）+ `run list`；`sc`/`serve` 同一张表、同一静默窗口；**stopped vs offline 可区分**、回收不碰 stopped；`<task>.run-log` + **run id 由起始偏移推导**；无标签 `moonflux_runs`/`moonflux_runs_offline`。门禁 `e2e-p38-run-registration.sh` **7 腿** | ✅ |
 | P37-3 | **只读拓扑 + 任务清单（T1）**：内核导出视图模型；页面渲染任务清单/节点边/执行记录 | 视图模型 == 编译输出；数值与 CLI 逐分区一致；无像素门禁 | ⏳ |
 | P37-4 | **每任务资产**：`tasks/<name>/spec.json`、`fns/*.json` + 修订绑定 + 漂移 | 往返一致、绑定修订、漂移可复现 | ⏳ |
 | P37-5 | **生命周期 + Docker**：runner（start/stop/status，优雅停止）+ Dockerfile/compose + `/healthz` healthcheck | start→登记→记录→汇输出；stop→消失且标记 stopped；真死报 offline | ⏳ |

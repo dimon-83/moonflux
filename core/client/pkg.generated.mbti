@@ -68,6 +68,10 @@ pub const CMD_PRODUCE_PARTITION : Int = 20
 
 pub const CMD_REGISTER : Int = 7
 
+pub const CMD_RUN_LIST : Int = 39
+
+pub const CMD_RUN_REPORT : Int = 38
+
 pub const CMD_SEGMENTS : Int = 26
 
 pub const CMD_SYNC_ACK : Int = 12
@@ -152,6 +156,10 @@ pub fn decode_partitioned_fetch(Bytes) -> Result[(String, Int, Int64, Int), Stri
 
 pub fn decode_partitioned_produce(Bytes) -> Result[(String, Int, Bytes), String]
 
+pub fn decode_run(Bytes) -> Result[RunRecord, String]
+
+pub fn decode_runs(Bytes) -> Result[Array[RunRecord], String]
+
 pub fn decode_sync_ack(Bytes) -> Result[SyncAck, String]
 
 pub fn decode_sync_request(Bytes) -> Result[SyncRequest, String]
@@ -209,6 +217,10 @@ pub fn encode_partition_view(PartitionView) -> Bytes
 pub fn encode_partitioned_fetch(String, Int, Int64, Int) -> Bytes
 
 pub fn encode_partitioned_produce(String, Int, Bytes) -> Bytes
+
+pub fn encode_run(RunRecord) -> Bytes
+
+pub fn encode_runs(Array[RunRecord]) -> Bytes
 
 pub fn encode_sync_ack(SyncAck) -> Bytes
 
@@ -381,6 +393,18 @@ pub fn Producer::from_conn_with(Conn, String?) -> Result[Self, ClientError]
 pub fn Producer::send(Self, String, Array[@protocol.Record]) -> Result[(Int64, Int), ClientError]
 pub fn Producer::send_partition(Self, String, Int, Array[@protocol.Record]) -> Result[(Int64, Int), ClientError]
 pub fn Producer::session_version(Self) -> (Int, Int)
+
+pub(all) struct RunRecord {
+  id : String
+  task : String
+  revision : Int64
+  address : String
+  pid : Int
+  data_dir : String
+  progress : Int64
+  stopped : Bool
+  state : String
+} derive(Eq, Show, @debug.Debug)
 
 pub(all) struct SyncAck {
   partition : PartitionRef

@@ -64,6 +64,9 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   // liveness clock is the node clock (a "silent member" and a "silent
   // node" mean the same amount of time everywhere)
   let groups = GroupRegistry::new(data_dir, NODE_TIMEOUT_MS.to_int64())
+  // a standalone broker coordinates runs too (P37-2): the same table, the same
+  // liveness window, the same "silence means offline" rule as the control plane
+  let runs = RunTable::new(NODE_TIMEOUT_MS.to_int64())
   // gauges are closures read at scrape time: they cannot drift from the
   // state they describe (P35)
   // P37: how many tasks this data dir holds. A COUNT, never a label — task
@@ -74,6 +77,12 @@ fn cmd_serve(argv : Array[String]) -> Unit {
   })
   metrics.gauge("moonflux_partitions_declared", fn() {
     declared_partitions(data_dir).to_double()
+  })
+  metrics.gauge("moonflux_runs", fn() {
+    runs.count(RunState::Running).to_double()
+  })
+  metrics.gauge("moonflux_runs_offline", fn() {
+    runs.count(RunState::Offline).to_double()
   })
   metrics.gauge("moonflux_consumer_members", fn() {
     groups.member_count().to_double()
@@ -99,7 +108,7 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     on_frame: fn(frame, identity) {
       metrics.inc(command_counter(frame.cmd))
       let reply = dispatch_session_frame(
-        frame, data_dir, rules, ws, groups, self_addr, identity,
+        frame, data_dir, rules, ws, groups, runs, self_addr, identity,
       )
       // The reply shape here is CMD_OK or CMD_ERR-with-the-code-in-the-payload
       // (see reply_frame). Counting "anything that is not OK" as an error was
@@ -139,6 +148,9 @@ fn cmd_serve(argv : Array[String]) -> Unit {
     // consumer-group members go silent on the node clock, the same
     // sweep the control plane runs: a departure moves the generation,
     // and the survivors learn it in their heartbeat reply
+    for run in runs.sweep(now) {
+      note("run \{run} is offline (no report within \{NODE_TIMEOUT_MS}ms)")
+    }
     for pair in groups.sweep(now) {
       let (group, member) = pair
       note(
@@ -284,6 +296,7 @@ fn dispatch_session_frame(
   rules : RuleState,
   ws_enabled : Bool,
   groups : GroupRegistry,
+  runs : RunTable,
   self_addr : String,
   identity : @auth.Identity?,
 ) -> @client.Frame {
@@ -329,6 +342,24 @@ fn dispatch_session_frame(
         payload: @client.encode_hello(1, 0),
       }
     }
+    @client.CMD_RUN_REPORT =>
+      match @client.decode_run(frame.payload) {
+        Err(e) => err_frame(frame.rid, @client.ERR_BAD_PAYLOAD, e)
+        Ok(record) => {
+          let is_new = runs.observe(record, now_ms())
+          if is_new {
+            note(
+              "run \{record.id} registered (task \{record.task}, pid \{record.pid}, revision \{record.revision})",
+            )
+          }
+          if record.stopped {
+            note("run \{record.id} stopped on purpose")
+          }
+          reply_frame(frame.rid, @client.CMD_OK, @client.encode_run(record))
+        }
+      }
+    @client.CMD_RUN_LIST =>
+      reply_frame(frame.rid, @client.CMD_OK, @client.encode_runs(runs.rows()))
     @client.CMD_PRODUCE => {
       let (code, payload) = dispatch_produce(frame.payload, data_dir, identity)
       reply_frame(frame.rid, code, payload)

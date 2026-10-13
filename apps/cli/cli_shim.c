@@ -69,3 +69,27 @@ int64_t mf_cli_now_us(void) {
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
 }
+
+/*
+ * The host name of a RUNNER (P37-2). The platform's run table answers "what is
+ * running, where" — and pid plus host are the parts of "where" a run can
+ * honestly supply: a run is not a node, it accepts no connections, so it has no
+ * address of its own. `mf_cli_hostname` writes into a caller buffer and returns
+ * the length it wrote (0 when it could not find out), so the caller decides what
+ * an unknown host looks like. (`mf_cli_pid` already existed above.)
+ */
+int mf_cli_hostname(uint8_t *buf, int len) {
+  if (len <= 0) {
+    return 0;
+  }
+  if (gethostname((char *)buf, (size_t)len) != 0) {
+    return 0;
+  }
+  /* gethostname does not promise NUL termination when it truncates */
+  buf[len - 1] = 0;
+  int n = 0;
+  while (n < len && buf[n] != 0) {
+    n++;
+  }
+  return n;
+}

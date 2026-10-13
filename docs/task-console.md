@@ -84,6 +84,14 @@
 
 - **metrics 的标签纪律**：控制台想要"每任务进度"，但**任务名是用户输入**——把它做成指标标签会开出无界基数。因此 `/metrics` 只暴露 `moonflux_runs`（总数）、`moonflux_runs_offline`（被判离线的数量）两个**无标签** gauge，每任务细节走命令（`cluster runs` / `run describe`）。这条要在门禁里钉住（任务名不得出现在 `/metrics` 输出里）。
 
+> **落地实录 2026-10-13（P37-2，决策 83）**：运行登记已落地——`run list`（只读）
+> 与 `CMD_RUN_REPORT`（Node 类，设计稿的 register/heartbeat 合并为一条：第一次即登记、
+> 后续即心跳、最后一次带 `stopped`）；`<task>.run-log` 主题持有结构化事件，
+> **run id = `<task>@<revision>#<run-start 偏移>`**（不读时钟）；`/metrics` 只出无标签的
+> `moonflux_runs`/`moonflux_runs_offline`。门禁 `scripts/e2e-p38-run-registration.sh` **7 腿**，
+> 其中第 2/3 腿正是"优雅停止 vs 被杀"：优雅停止在回收窗口之后**仍是 stopped**，
+> 被杀的在窗口内变成 **offline**。边界：没有 `--control` 的运行不登记也不写 run-log。
+
 ## 5. 控制台（P37-3，T1 与之后）
 
 - **形状**：**客户端**，不是第二个控制面。静态页 + `apps/editor-kernel`（js）+ WS 到 `serve`。图上/列表里的每个事实都必须能追到内核或 CLI 的真相来源（P4 纪律：页面不解析协议字节、不自己推导拓扑）。

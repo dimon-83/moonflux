@@ -576,6 +576,9 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     "moonflux sc listening on \{host}:\{actual} (data dir \{data_dir}, liveness timeout \{NODE_TIMEOUT_MS}ms)",
   )
   let table = NodeTable::new(NODE_TIMEOUT_MS)
+  // runs are aged out by the SAME window and the same beat as nodes (P37-2):
+  // one liveness clock for the cluster, so "silent" means one thing
+  let runs = RunTable::new(NODE_TIMEOUT_MS.to_int64())
   // consumer groups: the control plane coordinates them with the same
   // liveness timeout it uses for nodes, so "a member went silent" and
   // "a node went silent" mean the same amount of time (P9)
@@ -657,7 +660,7 @@ fn cmd_sc(argv : Array[String]) -> Unit {
       }
       metrics.inc(command_counter(frame.cmd))
       let reply = dispatch_control_frame(
-        frame, data_dir, table, placement, store, groups, asset, identity,
+        frame, data_dir, table, placement, store, groups, asset, runs, identity,
       )
       // the control plane puts the CODE in the reply's cmd field (P12's
       // shape), so anything that is not CMD_OK is an error code here
@@ -674,6 +677,14 @@ fn cmd_sc(argv : Array[String]) -> Unit {
   // report 503, which is exactly what a load balancer in front of two
   // control planes needs to see (P35)
   metrics.gauge("moonflux_tasks", fn() { task_count(data_dir).to_double() })
+  // the run table, as COUNTS: task names are user input and a metric label
+  // must not be (decision 79), so per-run detail goes through `run list`
+  metrics.gauge("moonflux_runs", fn() {
+    runs.count(RunState::Running).to_double()
+  })
+  metrics.gauge("moonflux_runs_offline", fn() {
+    runs.count(RunState::Offline).to_double()
+  })
   metrics.gauge("moonflux_nodes_online", fn() {
     table.online_count().to_double()
   })
@@ -754,6 +765,10 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     let swept = table.sweep(now_ms())
     for node in swept {
       note("node \{node} is offline (no heartbeat within \{NODE_TIMEOUT_MS}ms)")
+    }
+    let reaped = runs.sweep(now_ms())
+    for run in reaped {
+      note("run \{run} is offline (no report within \{NODE_TIMEOUT_MS}ms)")
     }
     placement.tick(table)
   }
@@ -1014,6 +1029,7 @@ fn dispatch_control_frame(
   store : MetadataStore,
   groups : GroupRegistry,
   asset : ClusterAsset,
+  runs : RunTable,
   identity : @auth.Identity?,
 ) -> (Int32, Bytes) {
   // one permission check for every control command (P12), before the
@@ -1214,6 +1230,26 @@ fn dispatch_control_frame(
         Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
       }
     }
+    // runs (P37-2): a runner's report, and the table it produces. Both live on
+    // the control plane because that is where "what is running" is asked, and
+    // the sweep that ages them out rides the same beat as the node sweep.
+    @client.CMD_RUN_REPORT =>
+      match @client.decode_run(frame.payload) {
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        Ok(record) => {
+          let is_new = runs.observe(record, now_ms())
+          if is_new {
+            note(
+              "run \{record.id} registered (task \{record.task}, pid \{record.pid}, revision \{record.revision})",
+            )
+          }
+          if record.stopped {
+            note("run \{record.id} stopped on purpose")
+          }
+          Ok(@client.encode_run(record))
+        }
+      }
+    @client.CMD_RUN_LIST => Ok(@client.encode_runs(runs.rows()))
     @client.CMD_CLUSTER_PIPELINE_FETCH =>
       // the empty payload asks "which revision?"; anything else asks
       // for the document. The revision rides every heartbeat; the

@@ -48,6 +48,7 @@
 | # | 项 | 优先级 | 说明 / 依据 |
 | :--- | :--- | :--- | :--- |
 | 0a | **P37-1 多任务地基（本地口径）** | ✅ 2026-10-13 | 决策 81：`topology.json` v2 集合 + 按名 upsert/`--set`/`delete`/`list` + **取数按 topic 选链** + v1 内存迁移 + `moonflux_tasks` 无标签 gauge；门禁 `e2e-p37-multi-task.sh` **10 腿**。顺带修：健康检查恒真、诊断走块缓冲 stdout、`--set` 吞参数（并加 `audit-flags.py` 门禁防这一类） |
+| 0c | **P37-2 运行登记** | ✅ 2026-10-13 | 决策 83：`run list` + `CMD_RUN_REPORT`（Node）/`CMD_RUN_LIST`（只读）；**stopped vs offline 可区分**且回收不碰 stopped；run-log 主题 + **run id 由偏移推导**；无标签 metrics。门禁 **7 腿**。顺带修：负数 uleb 往返（-1 读成 127）、CLI 动词白名单（新增 `audit-verbs.py`） |
 | 0b | **P37-1b 集群多任务** | ✅ 2026-10-13 | 决策 82：控制面持集合文档 + 一个文档级修订；`apply --remote` 三形状（信封）+ `delete --remote`；节点**整份采纳**；被拒发布不动修订；坏文档拒收保留。门禁 `e2e-p37b-cluster-tasks.sh` **6 腿** |
 | 0 | **P37 任务控制台**（2026-10-11 立项） | **高** | 决策 79 + 设计稿 [`task-console.md`](task-console.md) + ticket [`.scratch/moonflux-p37/issues/00-overview.md`](../.scratch/moonflux-p37/issues/00-overview.md)。用户裁定：**多任务改平台侧**（`topology.json` → 多管道集合 + 一个文档级修订、取数按 topic 选链）、**执行记录以 run-log 主题为准**、**首期 = 运行登记 + 只读拓扑/任务清单**。已证实的动因：`pipeline run` 对平台完全不可见（进程里 REGISTER/HEARTBEAT 出现 0 次） |
 | 1 | **远端仓库** | **已达成** | 94 笔提交全历史推送到 `github.com/dimon-83/moonflux`（本地 `main` 与 `origin/main` 同步） |

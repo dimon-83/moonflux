@@ -918,6 +918,173 @@ pub fn encode_nodes(records : Array[NodeRecord]) -> Bytes {
 }
 
 ///|
+/// One RUN as the platform sees it (P37-2). A run is a process executing one
+/// applied task: the platform does not start or stop it (that is the runner's
+/// job), but it can know it exists, where it is, and how far it has come.
+///
+/// The design in docs/task-console.md named two verbs (register + heartbeat).
+/// They are ONE verb here — the first report registers, every later one is a
+/// heartbeat, and the last one carries `stopped` — because two verbs would mean
+/// two permission checks and two state machines for one fact: "this run, now".
+pub(all) struct RunRecord {
+  id : String
+  task : String
+  /// The cluster revision the task came from (0 = locally applied).
+  revision : Int64
+  address : String
+  pid : Int32
+  data_dir : String
+  /// The input offset this run has consumed, or -1 when its source has no
+  /// offsets (a file source).
+  ///
+  /// On the WIRE it travels as `progress + 1`, because the codec's varints are
+  /// unsigned while the writer emits signed LEB128: sending -1 verbatim came
+  /// back as 127 (measured — the run listing said a file source had consumed
+  /// offset 127). Reserving 0 for "no offsets" makes every value
+  /// non-negative, and offset 0 still round-trips as 1.
+  progress : Int64
+  /// The runner's last word: false while it works, true when it stopped on
+  /// purpose. SILENCE is neither — the platform derives "offline" from it,
+  /// which is exactly how a killed run is told apart from a finished one.
+  stopped : Bool
+  /// The PLATFORM's word, not the runner's: "running", "stopped" or "offline",
+  /// filled in by the table when it serves the list. A reporter leaves it
+  /// empty — a run does not get to declare itself offline.
+  state : String
+} derive(Debug, Eq, Show)
+
+///|
+
+///|
+/// Encodes one run record. Deterministic: same record, same bytes.
+pub fn encode_run(record : RunRecord) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, record.id)
+  write_field(buf, record.task)
+  buf.write_leb128(record.revision)
+  write_field(buf, record.address)
+  buf.write_leb128(record.pid)
+  write_field(buf, record.data_dir)
+  // see the field's comment: 0 on the wire means "the source has no offsets"
+  let wire_progress = if record.progress < 0L {
+    0L
+  } else {
+    record.progress + 1L
+  }
+  buf.write_leb128(wire_progress)
+  buf.write_byte(if record.stopped { b'\x01' } else { b'\x00' })
+  write_field(buf, record.state)
+  buf.to_bytes()
+}
+
+///|
+/// Decodes one run record; malformed input is a structured error, never a
+/// partially-filled record.
+pub fn decode_run(payload : Bytes) -> Result[RunRecord, String] {
+  let reader = @codec.Reader::new(payload)
+  let id = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if id.length() == 0 || id.length() > 200 {
+    return Err("run id must be 1..200 chars")
+  }
+  let task = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if task.length() == 0 || task.length() > 128 {
+    return Err("run task must be 1..128 chars")
+  }
+  let revision = match reader.read_uleb128() {
+    Ok(v) => v.reinterpret_as_int64()
+    Err(_) => return Err("truncated run revision")
+  }
+  let address = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let pid = match reader.read_uleb128() {
+    Ok(v) => v.reinterpret_as_int64().to_int()
+    Err(_) => return Err("truncated run pid")
+  }
+  let data_dir = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let progress = match reader.read_uleb128() {
+    Ok(v) => {
+      let wire = v.reinterpret_as_int64()
+      if wire == 0L {
+        -1L
+      } else {
+        wire - 1L
+      }
+    }
+    Err(_) => return Err("truncated run progress")
+  }
+  let stopped = match reader.read_byte() {
+    Ok(b) => b == b'\x01'
+    Err(_) => return Err("truncated run state")
+  }
+  let state = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  Ok(RunRecord::{
+    id,
+    task,
+    revision,
+    address,
+    pid,
+    data_dir,
+    progress,
+    stopped,
+    state,
+  })
+}
+
+///|
+/// Encodes a run table reply.
+pub fn encode_runs(records : Array[RunRecord]) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_leb128(records.length())
+  for record in records {
+    let bytes = encode_run(record)
+    buf.write_leb128(bytes.length())
+    buf.write_bytes(bytes[0:bytes.length()])
+  }
+  buf.to_bytes()
+}
+
+///|
+/// Decodes a run table reply.
+pub fn decode_runs(payload : Bytes) -> Result[Array[RunRecord], String] {
+  let reader = @codec.Reader::new(payload)
+  let count = match reader.read_uleb128() {
+    Ok(count) => count.reinterpret_as_int64().to_int()
+    Err(_) => return Err("truncated run count")
+  }
+  let out : Array[RunRecord] = []
+  for i = 0; i < count; i = i + 1 {
+    let _ = i
+    let len = match reader.read_uleb128_len() {
+      Ok(len) => len
+      Err(_) => return Err("truncated run record length")
+    }
+    let bytes = match reader.read_bytes(len) {
+      Ok(bytes) => bytes
+      Err(_) => return Err("truncated run record")
+    }
+    match decode_run(bytes) {
+      Ok(record) => out.push(record)
+      Err(e) => return Err(e)
+    }
+  }
+  Ok(out)
+}
+
+///|
 /// Decodes the node table reply.
 pub fn decode_nodes(payload : Bytes) -> Result[Array[NodeRecord], String] {
   let reader = @codec.Reader::new(payload)
@@ -1222,6 +1389,17 @@ pub const CMD_CLUSTER_PIPELINE_APPLY = 32
 /// commands and node commands, and everything else falls through to
 /// "Root only" — which is where changing a cluster's desired state belongs.
 pub const CMD_CLUSTER_PIPELINE_DELETE = 37
+
+///|
+/// A runner reporting itself (P37-2). A NODE command in the role table: a
+/// forged run report is a claimed liveness, and the platform's answer to
+/// "what is running" must not be writable by a read-only client.
+pub const CMD_RUN_REPORT = 38
+
+///|
+/// The run table (P37-2). A data READ in the role table: an operator watching
+/// what runs is not a change to the cluster's state.
+pub const CMD_RUN_LIST = 39
 
 ///|
 /// The control plane's task-set document (a node pulls it when the revision
