@@ -56,7 +56,7 @@
 | :--- | :--- | :--- | :--- |
 | 文档形状 | `{pipeline, spec, cluster_revision?}` | `{pipelines: [{pipeline, spec}, ...], cluster_revision?}` | **读旧文档 = 单任务集合**（内存迁移）；写永远写 v2。旧数据目录与既有门禁不受影响 |
 | 修订语义 | 一份文档一个修订 | **仍是一个文档级修订**：集合里任何一个任务变 ⇒ 修订 +1；节点整份采纳（绝不采纳"半套"） | P11 的"失败保留在跑的、每修订只报一次"原样成立 |
-| 命令面 | `pipeline apply -f spec.json` | `apply` = **按 `metadata.name` upsert**；`pipeline delete --name X`；`pipeline list`；`apply --set` = "这就是全集"（替换语义） | 不带 `--set` 的旧用法行为不变（单任务集合里 upsert 一只等于替换） |
+| 命令面 | `pipeline apply -f spec.json` | `apply` = **按 `metadata.name` upsert**；`apply --replace` = "这一个 spec 就是全集"；`apply --set` = "这份集合文档就是全集"；`delete --name X`；`list` | 旧用法从"替换"变成"upsert"：**这是行为变化**，所以 `--replace` 显式提供旧含义（p26 门禁当场证明：它往同一目录先后 apply 两个 spec，本意是替换） |
 | 取数路径 | `rules.chain`（唯一链） | **每 topic 一条链**：fetch(T) 用"声明 T 为 topic 的那个任务"的链；没有则不变换（今天的行为） | `serve` 的客户端视角完全不变 |
 | 节点兼容字段 | `applied_topic(data_dir)` | 明确为**名字序第一个任务**的主题（`leo` 兼容字段用），文档写明 | p3/p7 门禁不变 |
 | 热采纳成本 | 重编译一条链 | 只重编译**变了**的任务（文档级修订 + 逐任务 spec 比对）；未变的任务不重编译 | P13"别让一圈变长" |

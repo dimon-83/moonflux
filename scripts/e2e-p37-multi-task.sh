@@ -33,7 +33,7 @@ fail() { echo "E2E-P37-MULTI-TASK FAIL: $*" >&2; exit 1; }
 pass() { echo "E2E-P37-MULTI-TASK PASS: $*"; PASS=$((PASS + 1)); }
 
 cleanup() {
-  for pid in $PIDS; do kill "$pid" 2>/dev/null; done
+  for pid in $PIDS; do kill -9 "$pid" 2>/dev/null; done
   wait 2>/dev/null
   rm -rf "$WORK"
 }
@@ -56,6 +56,27 @@ wait_listen() { # port tenths
 
 D="$WORK/d"
 mkdir -p "$D"
+
+# Runs `pipeline run` with a bound. A refusal exits immediately; a pipeline that
+# actually STARTS is a follower loop that never exits, so a bare command
+# substitution around it hangs the gate forever (measured — it cost a whole
+# run). Everything that might start a pipeline goes through here.
+run_bounded() { # <data-dir> [flags...]
+  local dir="$1"
+  shift
+  "$EXE" pipeline run --data-dir "$dir" "$@" > "$WORK/run.out" 2> "$WORK/run.err" &
+  local pid=$!
+  PIDS="$PIDS $pid"
+  local i=0
+  while [ "$i" -lt 50 ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill -9 "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  return 0
+}
 
 # fixtures are generated, not hand written: a "bare spec" in a --set document is
 # a whole PipelineSpec document, and a stored task object's "spec" is that same
@@ -250,19 +271,27 @@ PY
 pass "12. a v1 document loads as one task, and the next write is v2 with the sibling intact"
 
 # ---- 13. `pipeline run` refuses an ambiguous set, --name selects ---------
-OUT=$("$EXE" pipeline run --data-dir "$D" 2>&1)
-echo "$OUT" | grep -q "the applied set has 2 tasks (task-a, task-b); pass --name <task>" ||
-  { echo "$OUT"; fail "13: an ambiguous run was not refused with the task list"; }
-"$EXE" pipeline run --data-dir "$D" --name task-b > "$WORK/run-b.out" 2> "$WORK/run-b.err" &
-RUNPID=$!
-PIDS="$PIDS $RUNPID"
-for _ in $(seq 1 40); do
-  grep -q "opened pb" "$WORK/run-b.err" && break
-  sleep 0.1
-done
-kill "$RUNPID" 2>/dev/null
-grep -q "opened pb" "$WORK/run-b.err" ||
-  { cat "$WORK/run-b.err"; fail "13: --name task-b did not run that task"; }
+"$EXE" pipeline apply -f "$WORK/task-b.json" --data-dir "$D" > /dev/null 2>&1 ||
+  fail "13: could not re-add task-b"
+run_bounded "$D"
+grep -q "the applied set has 2 tasks (task-a, task-b); pass --name <task>" "$WORK/run.err" ||
+  { cat "$WORK/run.err"; fail "13: an ambiguous run was not refused with the task list"; }
+run_bounded "$D" --name task-b
+grep -q "opened pb" "$WORK/run.err" ||
+  { cat "$WORK/run.err"; fail "13: --name task-b did not run that task"; }
 pass "13. an ambiguous set is refused by name, and --name runs the selected task"
+
+# ---- 14. apply --replace: one spec IS the whole set ---------------------
+# The meaning `apply` had before P37 stays available, explicitly: upsert one
+# task and "this is the entire set" are different actions, and a tool that
+# cannot say which it means will eventually do the wrong one.
+"$EXE" pipeline apply --replace -f "$WORK/task-a.json" --data-dir "$D" > /dev/null 2>&1 ||
+  fail "14: apply --replace failed"
+NAMES=$("$EXE" pipeline list --data-dir "$D" | cut -f1 | tr '\n' ' ' | sed 's/ $//')
+[ "$NAMES" = "task-a" ] ||
+  fail "14: --replace should leave exactly task-a, got '$NAMES'"
+"$EXE" pipeline list --data-dir "$D" | grep -q "transforms=1" ||
+  fail "14: --replace stored the wrong task-a (the one with the transform was expected)"
+pass "14. apply --replace makes the set exactly that one task, dropping the sibling"
 
 echo "E2E-P37-MULTI-TASK: $PASS passed, 0 failed"

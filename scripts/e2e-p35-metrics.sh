@@ -121,7 +121,7 @@ pass "2. /metrics answers 200 with the documented names (uptime reported, never 
 HEALTH=$(scrape "http://127.0.0.1:$M/healthz")
 HSTATUS=$(http_status "http://127.0.0.1:$M/healthz")
 [ "$HSTATUS" = "200" ] || fail "3: /healthz returned $HSTATUS"
-for check in metadata applied_pipeline metrics; do
+for check in metadata applied_task_set metrics; do
   echo "$HEALTH" | grep -q "\"$check\":\"ok\"" ||
     { echo "$HEALTH"; fail "3: /healthz does not report $check ok"; }
 done

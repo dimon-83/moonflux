@@ -197,24 +197,35 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
       spec_json,
       now,
     )
-    let merged : Array[TaskDoc] = []
-    let mut replaced = false
-    for t in existing.tasks {
-      if t.name == task.name {
-        merged.push(task)
-        replaced = true
-      } else {
-        merged.push(t)
+    // --replace: this one spec IS the whole set. That was the meaning of
+    // `apply` before P37, so it stays available — explicitly, because
+    // "upsert one task" and "this is the entire set" are different actions
+    // and a tool that cannot say which it means will do the wrong one.
+    if flags.get("replace") is Some(_) {
+      (
+        [task],
+        "replaced the set with task \{topology.pipeline}: \{topology.processes.length()} processes",
+      )
+    } else {
+      let merged : Array[TaskDoc] = []
+      let mut replaced = false
+      for t in existing.tasks {
+        if t.name == task.name {
+          merged.push(task)
+          replaced = true
+        } else {
+          merged.push(t)
+        }
       }
+      if !replaced {
+        merged.push(task)
+      }
+      let verb = if replaced { "updated" } else { "added" }
+      (
+        merged,
+        "\{verb} task \{topology.pipeline}: \{topology.processes.length()} processes, \{merged.length()} task(s) in the set",
+      )
     }
-    if !replaced {
-      merged.push(task)
-    }
-    let verb = if replaced { "updated" } else { "added" }
-    (
-      merged,
-      "\{verb} task \{topology.pipeline}: \{topology.processes.length()} processes, \{merged.length()} task(s) in the set",
-    )
   }
   match validate_tasks(tasks, data_dir) {
     Ok(_) => ()

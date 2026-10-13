@@ -84,7 +84,7 @@ pass "1: the sandboxed scalar function ran per record through ABI v2"
 # ---- 2. crosscheck: mbel upper() vs the guest ---------------------------
 write_spec "$WORK/mbel.json" p26-mbel \
   '{"type":"expr","expr":"upper(value)"}' '{"type":"stdout"}'
-"$EXE" pipeline apply --data-dir "$WORK/data" --file "$WORK/mbel.json" > /dev/null \
+"$EXE" pipeline apply --replace --data-dir "$WORK/data" --file "$WORK/mbel.json" > /dev/null \
   || fail "apply of the mbel spec failed"
 "$EXE" pipeline run --data-dir "$WORK/data" > "$WORK/mbel.out" 2>"$WORK/mbel.err" \
   || { cat "$WORK/mbel.err"; fail "the mbel reference run failed"; }
@@ -119,7 +119,7 @@ pass "4: a v1-only module registered as scalar is refused at apply (the pair che
 # record's value as a string, so the guest's kind check must refuse it
 write_spec "$WORK/double.json" p26-double \
   '{"type":"scalar","function":"double"}' '{"type":"stdout"}'
-"$EXE" pipeline apply --data-dir "$WORK/data" --file "$WORK/double.json" > /dev/null \
+"$EXE" pipeline apply --replace --data-dir "$WORK/data" --file "$WORK/double.json" > /dev/null \
   || fail "apply of the double spec failed (binding is legal; only the DATA is wrong)"
 if "$EXE" pipeline run --data-dir "$WORK/data" > "$WORK/double.out" 2> "$WORK/double.err"; then
   fail "a string reaching a number parameter was accepted"
@@ -135,7 +135,7 @@ pass "5: a type mismatch fails structured, with no output (fail-closed)"
 write_registry 2
 write_spec "$WORK/ceil.json" p26-ceiling \
   '{"type":"scalar","function":"shout"}' '{"type":"stdout"}'
-"$EXE" pipeline apply --data-dir "$WORK/data" --file "$WORK/ceil.json" > /dev/null \
+"$EXE" pipeline apply --replace --data-dir "$WORK/data" --file "$WORK/ceil.json" > /dev/null \
   || fail "apply of the ceiling spec failed"
 if "$EXE" pipeline run --data-dir "$WORK/data" > "$WORK/ceil.out" 2> "$WORK/ceil.err"; then
   fail "a batch over the registered call ceiling was accepted"

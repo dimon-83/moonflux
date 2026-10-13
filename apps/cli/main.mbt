@@ -128,6 +128,7 @@ fn flag_is_boolean(name : String) -> Bool {
   // dropped the address (the P18 lesson, which this list exists to keep)
   name == "resume" ||
   name == "set" ||
+  name == "replace" ||
   name == "ha" ||
   name == "force" ||
   name == "json"
