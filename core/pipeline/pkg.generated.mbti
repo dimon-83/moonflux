@@ -7,6 +7,8 @@ import {
 }
 
 // Values
+pub const VIEW_MODEL_VERSION : Int = 1
+
 pub fn capability_runnable(String) -> Bool
 
 pub fn compile(@spec.PipelineSpec) -> Topology
@@ -16,6 +18,10 @@ pub fn diff(Topology?, Topology) -> Array[DiffOp]
 pub fn render_diff(Array[DiffOp]) -> String
 
 pub fn runnable(Topology) -> Bool
+
+pub fn view_model(@spec.PipelineSpec, Topology) -> Json
+
+pub fn view_model_text(@spec.PipelineSpec, Topology) -> String
 
 // Errors
 

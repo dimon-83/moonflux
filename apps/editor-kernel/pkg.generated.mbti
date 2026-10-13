@@ -28,6 +28,8 @@ pub fn mf_editor_session_reset() -> Unit
 
 pub fn mf_editor_validate(String) -> String
 
+pub fn mf_editor_view(String) -> String
+
 // Errors
 
 // Types and methods

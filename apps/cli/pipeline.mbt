@@ -15,6 +15,7 @@ fn cmd_pipeline(argv : Array[String]) -> Unit {
   }
   match argv[0] {
     "plan" => pipeline_plan(argv[1:argv.length()].to_owned())
+    "view" => pipeline_view(argv[1:argv.length()].to_owned())
     "apply" => pipeline_apply(argv[1:argv.length()].to_owned())
     "delete" => pipeline_delete(argv[1:argv.length()].to_owned())
     "list" => pipeline_list(argv[1:argv.length()].to_owned())
@@ -134,6 +135,21 @@ fn pipeline_plan(argv : Array[String]) -> Unit {
     Some(t) => println("applied state: \{t.pipeline}")
   }
   println(@pipeline.render_diff(ops))
+  cli_exit(0)
+}
+
+///|
+/// `pipeline view -f spec.json`: the compiled topology as the console's view
+/// model (nodes + edges), printed as JSON.
+///
+/// It exists so the model has a SECOND reader beside the browser: the gate
+/// compares this output with the editor kernel's, which is the P37-3 claim
+/// ("the page and the CLI show the same graph") turned into a byte comparison.
+fn pipeline_view(argv : Array[String]) -> Unit {
+  let flags = parse_flags(argv)
+  let spec_path = flags.require("file")
+  let (spec, _) = load_spec_doc(spec_path)
+  println(@pipeline.view_model_text(spec, @pipeline.compile(spec)))
   cli_exit(0)
 }
 

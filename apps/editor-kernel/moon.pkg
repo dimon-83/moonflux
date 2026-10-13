@@ -31,6 +31,7 @@ options(
         "mf_editor_build_spec",
         "mf_editor_build_function_set",
         "mf_editor_validate",
+        "mf_editor_view",
         "mf_editor_session_reset",
         "mf_editor_hello",
         "mf_editor_apply",

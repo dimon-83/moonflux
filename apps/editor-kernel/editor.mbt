@@ -23,7 +23,10 @@
 /// leave the panel silently missing, so the page asserts the version
 /// instead of discovering that by absence.
 pub fn mf_editor_abi_version() -> Int32 {
-  2
+  // 3: the topology view model (mf_editor_view) joined the surface. The page
+  // asserts this number, so a page that cannot render the model refuses
+  // instead of guessing.
+  3
 }
 
 // ---------------------------------------------------------------------
@@ -669,4 +672,32 @@ fn json_bytes(map : Map[String, Json]) -> String {
 /// exports; main only proves the ABI answers.
 fn main {
   let _ = mf_editor_abi_version()
+}
+
+///|
+/// The compiled topology as the console's view model (P37-3), for a spec
+/// document the page already holds — no broker round trip, no second
+/// derivation: this calls the same `core/pipeline` projection the CLI's
+/// `pipeline view` prints, so the page and the CLI cannot disagree.
+///
+/// A spec that does not parse returns a JSON error object, like the other
+/// editor entry points (the page shows it; a refusal is not a crash).
+pub fn mf_editor_view(spec_json : String) -> String {
+  let spec = match @spec.parse_spec(spec_json) {
+    Ok(spec) => spec
+    Err(errors) => {
+      let items : Array[Json] = []
+      for error in errors {
+        let item : Map[String, Json] = {}
+        item["path"] = Json::string(error.path)
+        item["code"] = Json::string(error.code)
+        item["message"] = Json::string(error.message)
+        items.push(Json::object(item))
+      }
+      let out : Map[String, Json] = {}
+      out["error"] = Json::array(items)
+      return Json::object(out).stringify()
+    }
+  }
+  @pipeline.view_model_text(spec, @pipeline.compile(spec))
 }

@@ -105,3 +105,98 @@ test "render_diff prints stable human-readable output" {
   )
   assert_true(text.contains("diff: 0 to add, 1 to update, 0 to remove"))
 }
+
+///|
+const SPEC_TOPIC_SOURCE : String = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"relay\"},\"spec\":{\"source\":{\"type\":\"topic\",\"name\":\"events\",\"from\":\"beginning\"},\"transforms\":[],\"topic\":{\"name\":\"events\"},\"sink\":{\"type\":\"stdout\"}}}"
+
+///|
+fn nodes_of(model : Json) -> Array[String] {
+  let out : Array[String] = []
+  match model.value("nodes") {
+    Some(Array(items)) =>
+      for item in items {
+        match item.value("id") {
+          Some(String(id)) => out.push(id)
+          _ => ()
+        }
+      }
+    _ => ()
+  }
+  out
+}
+
+///|
+fn edges_of(model : Json) -> Array[String] {
+  let out : Array[String] = []
+  match model.value("edges") {
+    Some(Array(items)) =>
+      for item in items {
+        let from = match item.value("from") {
+          Some(String(v)) => v
+          _ => "?"
+        }
+        let to = match item.value("to") {
+          Some(String(v)) => v
+          _ => "?"
+        }
+        let kind = match item.value("kind") {
+          Some(String(v)) => v
+          _ => "?"
+        }
+        out.push("\{from}->\{to}:\{kind}")
+      }
+    _ => ()
+  }
+  out
+}
+
+///|
+/// The nodes ARE the compiler's processes, in the compiler's order — the
+/// view model may not reorder, drop or invent one (that is the whole claim the
+/// console rests on).
+test "the view model's nodes are the topology's processes" {
+  for text in [SPEC_A, SPEC_T, SPEC_TOPIC_SOURCE] {
+    let parsed = spec(text)
+    let topology = compile(parsed)
+    let model = view_model(parsed, topology)
+    let ids = nodes_of(model)
+    assert_eq(ids.length(), topology.processes.length())
+    for i, process in topology.processes {
+      assert_eq(ids[i], process.name)
+    }
+    assert_eq(model.value("model").unwrap(), Json::number(1))
+    assert_eq(model.value("pipeline").unwrap(), Json::string(topology.pipeline))
+  }
+}
+
+///|
+/// The edges follow the documented rule: a connector source appends; a topic
+/// source reads and appends (the relay); the read path runs broker -> chain ->
+/// sink, and an empty chain is broker -> sink.
+test "the view model's edges follow the source shape and the chain" {
+  let connector = spec(SPEC_A)
+  assert_eq(edges_of(view_model(connector, compile(connector))), [
+    "source-runner->broker:append", "broker->sink-runner:consume",
+  ])
+  let with_transform = spec(SPEC_T)
+  assert_eq(edges_of(view_model(with_transform, compile(with_transform))), [
+    "source-runner->broker:append", "broker->transform-0:consume", "transform-0->sink-runner:consume",
+  ])
+  let relay = spec(SPEC_TOPIC_SOURCE)
+  assert_eq(edges_of(view_model(relay, compile(relay))), [
+    "broker->source-runner:read", "source-runner->broker:append", "broker->sink-runner:consume",
+  ])
+}
+
+///|
+/// Determinism, and the text form every host shares.
+test "the view model is deterministic and stringifiable" {
+  let parsed = spec(SPEC_T)
+  let topology = compile(parsed)
+  let a = view_model_text(parsed, topology)
+  let b = view_model_text(parsed, topology)
+  assert_eq(a, b)
+  // the text form is `stringify(indent=2)`, so the separator carries a space
+  assert_true(a.contains("\"model\": 1"))
+  assert_true(a.contains("\"nodes\": ["))
+}

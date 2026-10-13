@@ -3,4 +3,5 @@
 
 import {
   "moonflux/core/spec",
+  "moonbitlang/core/json",
 }

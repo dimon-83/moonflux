@@ -76,6 +76,17 @@
                       border:1px solid var(--line); border-radius:4px; padding:4px 6px;
                       min-height:44px; }
   .hintline { font-size:11px; color:var(--dim); margin:6px 0 0; }
+  .graph { display:flex; flex-direction:column; gap:4px; margin:6px 0 2px; }
+  .node { border:1px solid var(--line); border-radius:6px; padding:4px 8px; max-width:560px; }
+  .node.topic { border-left:4px solid #6cf; }
+  .node.source { border-left:4px solid #6f9; }
+  .node.transform { border-left:4px solid #fc6; }
+  .node.sink { border-left:4px solid #f9c; }
+  .node.notrunnable { border-style:dashed; opacity:0.7; }
+  .node-id { font-weight:600; }
+  .node-kind { font-size:11px; color:var(--dim); }
+  .edge { font-size:11px; color:var(--dim); padding-left:12px; }
+  .edge.read { font-style:italic; }
 </style>
 </head>
 <body>
@@ -147,8 +158,12 @@
   <section id="inspector">
     <h2>spec (built by the kernel)</h2>
     <pre id="spec">…</pre>
-    <h2>validation &amp; topology</h2>
+    <h2>validation</h2>
     <pre id="report">…</pre>
+    <h2>topology (the compiler's view, rendered)</h2>
+    <div id="graph" class="graph"></div>
+    <p class="hintline">every node and edge here comes from <code>mf_editor_view</code>;
+      the page renders the model and never derives the topology itself.</p>
     <h2>records</h2>
     <table><thead><tr><th>offset</th><th>key</th><th>value</th></tr></thead>
            <tbody id="rows"></tbody></table>
@@ -183,7 +198,7 @@ let graph = {
 // editor-kernel.js next to this page would leave the function-set
 // surface silently missing, so the mismatch is announced, not guessed
 const abi = kernel.mf_editor_abi_version();
-if (abi !== 2) say(`kernel ABI ${abi} — this page expects 2; rebuild apps/editor-kernel (js)`);
+if (abi !== 3) say(`kernel ABI ${abi} — this page expects 3; rebuild apps/editor-kernel (js)`);
 $("kernel").textContent = "kernel ABI " + abi;
 
 // ---- rendering --------------------------------------------------------
@@ -358,13 +373,65 @@ function refresh() {
     const lines = [`ok — pipeline "${report.pipeline}", runnable=${report.runnable}`];
     for (const p of report.processes) lines.push(`  ${p.name}\t${p.role}\t${p.capability}\t${p.detail}`);
     $("report").textContent = lines.join("\n");
+    renderGraph(JSON.parse(kernel.mf_editor_view(built)));
   } else {
+    $("graph").textContent = "";
     $("report").textContent = report.errors
       .map((e) => `${e.path}: ${e.message} (${e.code})`).join("\n");
   }
   // availability follows the graph, not the page load order
   updateButtons();
   renderSets();
+}
+
+// Renders the kernel's view model. The walk is derived from the model's EDGES
+// (start at the node nothing feeds on the read path, then follow it), so a
+// model that changes shape changes the drawing — the page keeps no second
+// opinion about what follows what. The relay's `read` edge is not part of that
+// walk (it points back into the log), so it is stated under the chain rather
+// than dropped.
+function renderGraph(model) {
+  const host = $("graph");
+  host.textContent = "";
+  if (!model || model.error || !Array.isArray(model.nodes)) return;
+  const byId = new Map(model.nodes.map((n) => [n.id, n]));
+  const forward = model.edges.filter((e) => e.kind !== "read");
+  const fed = new Set(forward.map((e) => e.to));
+  const next = new Map(forward.map((e) => [e.from, e]));
+  let cursor = model.nodes.find((n) => !fed.has(n.id)) || model.nodes[0];
+  const seen = new Set();
+  while (cursor && !seen.has(cursor.id)) {
+    seen.add(cursor.id);
+    host.append(nodeBox(cursor));
+    const edge = next.get(cursor.id);
+    if (!edge) break;
+    const label = document.createElement("div");
+    label.className = "edge";
+    label.textContent = `${edge.kind} → ${edge.to}`;
+    host.append(label);
+    cursor = byId.get(edge.to);
+  }
+  for (const node of model.nodes) if (!seen.has(node.id)) host.append(nodeBox(node));
+  for (const edge of model.edges.filter((e) => e.kind === "read")) {
+    const back = document.createElement("div");
+    back.className = "edge read";
+    back.textContent = `${edge.kind} → ${edge.to} (the relay reads this node's own log)`;
+    host.append(back);
+  }
+}
+
+function nodeBox(node) {
+  const box = document.createElement("div");
+  box.className = "node " + node.kind + (node.runnable ? "" : " notrunnable");
+  box.title = node.detail;
+  const id = document.createElement("div");
+  id.className = "node-id";
+  id.textContent = node.id;
+  const kind = document.createElement("div");
+  kind.className = "node-kind";
+  kind.textContent = `${node.kind} · ${node.capability}${node.runnable ? "" : " · not runnable here"}`;
+  box.append(id, kind);
+  return box;
 }
 
 $("name").addEventListener("input", (ev) => { graph.name = ev.target.value; refresh(); });
