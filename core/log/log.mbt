@@ -41,16 +41,16 @@ pub impl Show for LogError with fn output(self, logger) {
 /// files and tests supply memory.
 pub(all) struct SegmentFile {
   /// Reads `length` bytes at absolute `position`.
-  read : (Int, Int) -> Result[Bytes, LogError]
+  read : (Int32, Int32) -> Result[Bytes, LogError]
   /// Appends bytes; returns the new total size.
-  append : (Bytes) -> Result[Int, LogError]
+  append : (Bytes) -> Result[Int32, LogError]
   /// Current file size in bytes.
-  size : () -> Result[Int, LogError]
+  size : () -> Result[Int32, LogError]
   /// Durably persists appended bytes (may be a no-op for memory).
   flush : () -> Result[Unit, LogError]
   /// Cuts the file to `new_size` bytes (crash recovery truncates
   /// torn tails).
-  truncate : (Int) -> Result[Unit, LogError]
+  truncate : (Int32) -> Result[Unit, LogError]
 } derive(Debug)
 
 ///|
@@ -115,7 +115,7 @@ pub fn MemorySegment::handle(self : MemorySegment) -> SegmentFile {
 /// itself (AGENTS §5).
 pub(all) struct SegmentInfo {
   base : Int64
-  size : Int
+  size : Int32
   created_ms : Int64
 } derive(Debug, Eq, Show)
 
@@ -233,7 +233,7 @@ pub fn MemorySegmentStore::store(self : MemorySegmentStore) -> SegmentStore {
 fn MemorySegmentStore::index_of(
   self : MemorySegmentStore,
   base : Int64,
-) -> Int? {
+) -> Int32? {
   for i, existing in self.bases {
     if existing == base {
       return Some(i)
@@ -293,7 +293,7 @@ pub fn MemorySegmentStore::set_created_ms(
 pub(all) struct SegmentSummary {
   base : Int64
   records : Int64
-  bytes : Int
+  bytes : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -322,9 +322,9 @@ pub(all) enum RecoveryReason {
 pub(all) struct RecoveryReport {
   reason : RecoveryReason
   /// Bytes kept: the end of the last complete, valid frame.
-  valid_size : Int
+  valid_size : Int32
   /// Bytes removed from the tail by recovery.
-  discarded_bytes : Int
+  discarded_bytes : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -334,7 +334,7 @@ pub(all) struct RecoveryReport {
 /// resynchronising.
 pub(all) struct IndexAnchor {
   offset : Int64
-  position : Int
+  position : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -342,10 +342,10 @@ pub(all) struct IndexAnchor {
 /// The two bounds together keep both the index small and the scan
 /// short; the values are policy, so they are configuration, not
 /// constants of the format.
-const DEFAULT_INDEX_EVERY_RECORDS : Int = 64
+const DEFAULT_INDEX_EVERY_RECORDS : Int32 = 64
 
 ///|
-const INDEX_EVERY_BYTES : Int = 4096
+const INDEX_EVERY_BYTES : Int32 = 4096
 
 ///|
 /// The index file format, version 1:
@@ -381,7 +381,7 @@ fn encode_index(base : Int64, anchors : Array[IndexAnchor]) -> Bytes {
 fn decode_index(
   bytes : Bytes,
   base : Int64,
-  segment_size : Int,
+  segment_size : Int32,
 ) -> Array[IndexAnchor]? {
   if bytes.length() < 20 {
     return None
@@ -440,7 +440,7 @@ fn decode_index(
 }
 
 ///|
-fn read_i64_be(bytes : Bytes, at : Int) -> Int64 {
+fn read_i64_be(bytes : Bytes, at : Int32) -> Int64 {
   let mut value : Int64 = 0L
   for i = 0; i < 8; i = i + 1 {
     value = (value << 8) | bytes[at + i].to_int64()
@@ -472,10 +472,10 @@ pub struct SegmentedLog {
   mut next_offset : Int64
   recovery : RecoveryReport
   /// 0 disables rolling (the pre-P8 single-segment behavior)
-  roll_bytes : Int
+  roll_bytes : Int32
   /// how many records may pass between index anchors (size bounds the
   /// scan, record count bounds the index)
-  index_every_records : Int
+  index_every_records : Int32
 } derive(Debug)
 
 ///|
@@ -486,7 +486,7 @@ struct LogSegment {
   /// the handle to the segment's bytes; compaction swaps it when it
   /// replaces the file
   mut file : SegmentFile
-  mut size : Int
+  mut size : Int32
   mut created_ms : Int64
   /// sparse anchors, ascending; [0] is always (base, 0)
   mut anchors : Array[IndexAnchor]
@@ -530,7 +530,7 @@ pub fn SegmentedLog::open(file : SegmentFile) -> Result[SegmentedLog, LogError] 
 /// segment.
 pub fn SegmentedLog::open_store(
   store : SegmentStore,
-  roll_bytes : Int,
+  roll_bytes : Int32,
 ) -> Result[SegmentedLog, LogError] {
   SegmentedLog::open_store_configured(
     store,
@@ -546,8 +546,8 @@ pub fn SegmentedLog::open_store(
 /// records produce several anchors.
 pub fn SegmentedLog::open_store_configured(
   store : SegmentStore,
-  roll_bytes : Int,
-  index_every_records : Int,
+  roll_bytes : Int32,
+  index_every_records : Int32,
 ) -> Result[SegmentedLog, LogError] {
   if roll_bytes < 0 {
     return Err(Storage("roll_bytes must not be negative"))
@@ -800,8 +800,11 @@ fn SegmentedLog::active(self : SegmentedLog) -> LogSegment {
 /// The index of the segment that contains `offset` (the last segment
 /// whose base is at or below it), or None when the offset is below the
 /// oldest surviving segment.
-fn SegmentedLog::segment_index_for(self : SegmentedLog, offset : Int64) -> Int? {
-  let mut found : Int? = None
+fn SegmentedLog::segment_index_for(
+  self : SegmentedLog,
+  offset : Int64,
+) -> Int32? {
+  let mut found : Int32? = None
   for i, seg in self.segments {
     if seg.base <= offset {
       found = Some(i)
@@ -878,7 +881,7 @@ fn self_index_or_none(
 /// uses, before the log object exists).
 fn rebuild_index_static(
   seg : LogSegment,
-  index_every_records : Int,
+  index_every_records : Int32,
 ) -> Result[Unit, LogError] {
   let anchors : Array[IndexAnchor] = [
     IndexAnchor::{ offset: seg.base, position: 0, },
@@ -1089,7 +1092,7 @@ pub fn SegmentedLog::append(
 pub fn SegmentedLog::read(
   self : SegmentedLog,
   from : Int64,
-  max_records : Int,
+  max_records : Int32,
 ) -> Result[Array[LogEntry], LogError] {
   self.read_bounded(from, max_records, 0)
 }
@@ -1109,8 +1112,8 @@ pub fn SegmentedLog::read(
 pub fn SegmentedLog::read_bounded(
   self : SegmentedLog,
   from : Int64,
-  max_records : Int,
-  max_bytes : Int,
+  max_records : Int32,
+  max_bytes : Int32,
 ) -> Result[Array[LogEntry], LogError] {
   if from < 0L || from > self.next_offset || max_records < 0 {
     return Err(OffsetOutOfRange)
@@ -1193,7 +1196,12 @@ pub fn SegmentedLog::read_bounded(
 /// The batch budget as a predicate: does one more record of `size`
 /// bytes fit? The first record always does (see `read_bounded`), and
 /// `max_bytes <= 0` means no budget.
-fn fits_one_more(taken : Int, used : Int, size : Int, max_bytes : Int) -> Bool {
+fn fits_one_more(
+  taken : Int32,
+  used : Int32,
+  size : Int32,
+  max_bytes : Int32,
+) -> Bool {
   if max_bytes <= 0 || taken == 0 {
     return true
   }
@@ -1206,9 +1214,9 @@ fn fits_one_more(taken : Int, used : Int, size : Int, max_bytes : Int) -> Bool {
 /// a test) must be able to see how much was dropped and why.
 pub(all) struct TruncateReport {
   /// Records removed from the log end.
-  dropped_records : Int
+  dropped_records : Int32
   /// Bytes removed from the segment.
-  dropped_bytes : Int
+  dropped_bytes : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -1217,7 +1225,7 @@ pub(all) struct RawWindow {
   /// Offset of the first record in the window.
   base_offset : Int64
   /// Records the bytes carry (whole frames only).
-  record_count : Int
+  record_count : Int32
   /// Concatenated frames, byte-identical to what the leader stored.
   bytes : Bytes
 } derive(Debug, Eq, Show)
@@ -1243,7 +1251,7 @@ pub(all) struct RawWindow {
 pub fn SegmentedLog::read_raw(
   self : SegmentedLog,
   from : Int64,
-  max_records : Int,
+  max_records : Int32,
 ) -> Result[RawWindow, LogError] {
   self.read_raw_bounded(from, max_records, 0)
 }
@@ -1262,8 +1270,8 @@ pub fn SegmentedLog::read_raw(
 pub fn SegmentedLog::read_raw_bounded(
   self : SegmentedLog,
   from : Int64,
-  max_records : Int,
-  max_bytes : Int,
+  max_records : Int32,
+  max_bytes : Int32,
 ) -> Result[RawWindow, LogError] {
   if from < 0L || from > self.next_offset || max_records < 0 {
     return Err(OffsetOutOfRange)
@@ -1304,7 +1312,7 @@ pub fn SegmentedLog::read_raw_bounded(
     let mut expected = anchor.offset
     // a later segment contributes from its very first frame: `started`
     // was decided in an earlier one
-    let mut start_byte : Int? = if started { Some(0) } else { None }
+    let mut start_byte : Int32? = if started { Some(0) } else { None }
     let mut end_byte = 0
     while reader.remaining() > 0 {
       let before = reader.position()
@@ -1382,7 +1390,7 @@ pub fn SegmentedLog::read_raw_bounded(
 pub fn SegmentedLog::append_raw(
   self : SegmentedLog,
   bytes : Bytes,
-  record_count : Int,
+  record_count : Int32,
 ) -> Result[Unit, LogError] {
   if record_count <= 0 {
     return Ok(())
@@ -1463,8 +1471,8 @@ pub fn SegmentedLog::skip_to(
 /// segment removes the later ones entirely.
 fn SegmentedLog::drop_segments_after(
   self : SegmentedLog,
-  keep_index : Int,
-) -> Result[Int, LogError] {
+  keep_index : Int32,
+) -> Result[Int32, LogError] {
   let mut dropped_bytes = 0
   while self.segments.length() > keep_index + 1 {
     let last = self.segments[self.segments.length() - 1]
@@ -1491,7 +1499,7 @@ fn SegmentedLog::drop_segments_after(
 /// kernel never reads one (AGENTS §5).
 pub(all) struct RetentionPolicy {
   /// Keep at most this many bytes of segments. 0 = unbounded.
-  max_bytes : Int
+  max_bytes : Int32
   /// Drop segments older than this. 0 = unbounded.
   max_age_ms : Int64
 } derive(Debug, Eq, Show)
@@ -1503,7 +1511,7 @@ pub(all) struct RetentionPolicy {
 pub(all) struct RetainReport {
   removed : Array[SegmentSummary]
   removed_records : Int64
-  removed_bytes : Int
+  removed_bytes : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -1591,18 +1599,18 @@ pub fn SegmentedLog::apply_retention(
 /// a segment holding nothing superseded must never be touched — that
 /// is also what makes a second pass a no-op.
 pub(all) struct CompactionPolicy {
-  min_dirty_bytes : Int
+  min_dirty_bytes : Int32
 } derive(Debug, Eq, Show)
 
 ///|
 /// One rewritten segment, before and after.
 pub(all) struct SegmentCompaction {
   base : Int64
-  frames_before : Int
-  frames_after : Int
-  dropped_records : Int
-  bytes_before : Int
-  bytes_after : Int
+  frames_before : Int32
+  frames_after : Int32
+  dropped_records : Int32
+  bytes_before : Int32
+  bytes_after : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -1615,7 +1623,7 @@ pub(all) struct CompactionReport {
 
 ///|
 /// Records dropped across all rewritten segments.
-pub fn CompactionReport::dropped_records(self : CompactionReport) -> Int {
+pub fn CompactionReport::dropped_records(self : CompactionReport) -> Int32 {
   let mut total = 0
   for seg in self.rewritten {
     total += seg.dropped_records
@@ -1625,7 +1633,7 @@ pub fn CompactionReport::dropped_records(self : CompactionReport) -> Int {
 
 ///|
 /// Bytes freed across all rewritten segments.
-pub fn CompactionReport::freed_bytes(self : CompactionReport) -> Int {
+pub fn CompactionReport::freed_bytes(self : CompactionReport) -> Int32 {
   let mut total = 0
   for seg in self.rewritten {
     total += seg.bytes_before - seg.bytes_after
@@ -2023,7 +2031,7 @@ fn SegmentedLog::drop_segments_after_checked(
   // compacted segment holds holes, and counting would put the cut in
   // the wrong place
   let mut next = seg.base
-  let mut cut : Int? = None
+  let mut cut : Int32? = None
   while reader.remaining() > 0 {
     let before = reader.position()
     match @protocol.decode_frame(reader) {

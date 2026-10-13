@@ -49,7 +49,7 @@ pub(all) suberror ProtocolError {
   /// Frame does not start with the "MFB" magic.
   BadMagic
   /// Magic matches but the version byte is not 0x01.
-  UnsupportedVersion(Int)
+  UnsupportedVersion(Int32)
   /// Stored CRC-32 does not match the computed one.
   CrcMismatch
   /// Length fields are mutually inconsistent or the blob did not
@@ -146,12 +146,12 @@ pub fn encode_frame(base_offset : Int64, records : Array[Record]) -> Bytes {
 /// a caller that budgets a *frame* (a reader capping a window, a
 /// producer sizing a chunk) has to include it, and a second copy of
 /// "28" is a second answer waiting to disagree.
-pub const FRAME_OVERHEAD_BYTES : Int = 28
+pub const FRAME_OVERHEAD_BYTES : Int32 = 28
 
 ///|
 /// How many bytes `value` needs as a LEB128 varint (the length prefix
 /// `encode_record_into` writes in front of each record body).
-fn uleb128_size(value : Int) -> Int {
+fn uleb128_size(value : Int32) -> Int32 {
   let mut remaining = value
   let mut size = 1
   while remaining >= 128 {
@@ -168,7 +168,7 @@ fn uleb128_size(value : Int) -> Int {
 /// file are checked by the decoder, and a producer that only learns
 /// them from a rejection has already put an unshippable frame on the
 /// wire (P15).
-pub fn record_wire_size(record : Record) -> Int {
+pub fn record_wire_size(record : Record) -> Int32 {
   let body = @buffer.Buffer::Buffer()
   body.write_int64_be(record.timestamp)
   write_len_bytes(body, record.key)
@@ -187,7 +187,7 @@ pub fn record_wire_size(record : Record) -> Int {
 /// the *whole* frame, so a caller can compare it against
 /// `MAX_BATCH_BYTES` (which bounds `batch_length`, i.e. everything
 /// after the length field) without doing the arithmetic twice.
-pub fn batch_wire_size(records : Array[Record]) -> Int {
+pub fn batch_wire_size(records : Array[Record]) -> Int32 {
   let mut total = FRAME_OVERHEAD_BYTES
   for record in records {
     total += record_wire_size(record)
@@ -206,7 +206,7 @@ pub fn batch_wire_size(records : Array[Record]) -> Int {
 /// - `max_bytes <= 0` means "no budget": every record fits, which is
 ///   what callers that are not sizing a wire frame (tests, whole-log
 ///   tooling) mean.
-pub fn batch_fit(records : Array[Record], max_bytes : Int) -> Int {
+pub fn batch_fit(records : Array[Record], max_bytes : Int32) -> Int32 {
   if records.length() == 0 {
     return 0
   }
@@ -235,7 +235,7 @@ pub fn batch_fit(records : Array[Record], max_bytes : Int) -> Int {
 /// case it.
 pub fn split_batches(
   records : Array[Record],
-  max_bytes : Int,
+  max_bytes : Int32,
 ) -> Array[Array[Record]] {
   if records.length() == 0 {
     return [records]

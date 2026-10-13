@@ -39,7 +39,7 @@ priv enum Node {
   Cat(Array[Node])
   Alt(Array[Node])
   /// min, max; max < 0 means unbounded
-  Rep(Node, Int, Int)
+  Rep(Node, Int32, Int32)
 }
 
 ///|
@@ -50,13 +50,13 @@ priv enum Node {
 /// the compiled program, not an author-facing API, and its constructors
 /// stay private to this package.
 pub enum Inst {
-  Byte(UInt16, Int)
-  AnyByte(Int)
-  ClassByte(Array[(UInt16, UInt16)], Bool, Int)
-  Split(Int, Int)
-  Jmp(Int)
-  AnchorStart(Int)
-  AnchorEnd(Int)
+  Byte(UInt16, Int32)
+  AnyByte(Int32)
+  ClassByte(Array[(UInt16, UInt16)], Bool, Int32)
+  Split(Int32, Int32)
+  Jmp(Int32)
+  AnchorStart(Int32)
+  AnchorEnd(Int32)
   Match
 }
 
@@ -65,14 +65,14 @@ pub enum Inst {
 /// do not reach into it.
 pub struct Regex {
   insts : Array[Inst]
-  start : Int
+  start : Int32
 }
 
 ///|
 /// The parser's cursor over the pattern source.
 priv struct Parser {
   src : String
-  mut pos : Int
+  mut pos : Int32
 }
 
 ///|
@@ -96,13 +96,13 @@ pub fn compile(pattern : String) -> Result[Regex, String] {
 pub fn is_match(re : Regex, text : String) -> Bool {
   let insts = re.insts
   let len = text.length()
-  let mark : Array[Int] = []
+  let mark : Array[Int32] = []
   for _ in 0..<insts.length() {
     mark.push(0)
   }
   let mut gen = 1
   let mut pos = 0
-  let mut clist : Array[Int] = []
+  let mut clist : Array[Int32] = []
   add_state(insts, re.start, 0, len, clist, mark, gen)
   while true {
     let mut hit = false
@@ -119,7 +119,7 @@ pub fn is_match(re : Regex, text : String) -> Bool {
     }
     let b = text[pos]
     gen = gen + 1
-    let nlist : Array[Int] = []
+    let nlist : Array[Int32] = []
     for pc in clist {
       match insts[pc] {
         Byte(c, nx) =>
@@ -154,12 +154,12 @@ pub fn is_match(re : Regex, text : String) -> Bool {
 /// `mark`/`gen` deduplicate without clearing arrays between positions.
 fn add_state(
   insts : Array[Inst],
-  pc : Int,
-  pos : Int,
-  len : Int,
-  list : Array[Int],
-  mark : Array[Int],
-  gen : Int,
+  pc : Int32,
+  pos : Int32,
+  len : Int32,
+  list : Array[Int32],
+  mark : Array[Int32],
+  gen : Int32,
 ) -> Unit {
   if mark[pc] == gen {
     return
@@ -201,7 +201,7 @@ fn class_has(ranges : Array[(UInt16, UInt16)], neg : Bool, b : UInt16) -> Bool {
 ///|
 /// Emits `node` so that it continues at `next`, returning its entry index.
 /// Backwards emission is what makes `Cat` a plain right-to-left fold.
-fn emit(prog : Array[Inst], node : Node, next : Int) -> Int {
+fn emit(prog : Array[Inst], node : Node, next : Int32) -> Int32 {
   match node {
     Empty => next
     Lit(c) => {
@@ -310,7 +310,7 @@ fn clone_node(n : Node) -> Node {
 
 ///|
 /// The current byte as an Int (-1 at end of pattern).
-fn peek(p : Parser) -> Int {
+fn peek(p : Parser) -> Int32 {
   if p.pos >= p.src.length() {
     -1
   } else {
@@ -480,7 +480,7 @@ fn expand_braces(p : Parser, atom : Node) -> Result[Node, String] {
 ///|
 /// A decimal count inside `{…}`; bounded so a hostile pattern cannot ask
 /// for a million instructions.
-fn parse_number(p : Parser) -> Result[Int, String] {
+fn parse_number(p : Parser) -> Result[Int32, String] {
   let mut n = 0
   let mut digits = 0
   while true {
@@ -708,7 +708,7 @@ fn parse_escape(p : Parser) -> Result[Node, String] {
 
 ///|
 /// The bytes a backslash may quote into a literal.
-fn escaped_literal(e : Int) -> UInt16? {
+fn escaped_literal(e : Int32) -> UInt16? {
   if e == 46 ||
     e == 42 ||
     e == 43 ||

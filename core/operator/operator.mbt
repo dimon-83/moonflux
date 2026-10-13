@@ -50,7 +50,7 @@ pub(all) enum BudgetTier {
 
 ///|
 /// Max records per process call, by tier.
-pub fn max_records_per_call(tier : BudgetTier) -> Int {
+pub fn max_records_per_call(tier : BudgetTier) -> Int32 {
   match tier {
     Internal => 100000
     User => 10000
@@ -73,7 +73,7 @@ pub fn max_records_per_call(tier : BudgetTier) -> Int {
 /// So this number is what an operator's *observation* is compared
 /// against (`over_time_hint`), and the adapter measures the call. A
 /// call that exceeds it is reported, not killed.
-pub fn call_timeout_hint_ms(tier : BudgetTier) -> Int {
+pub fn call_timeout_hint_ms(tier : BudgetTier) -> Int32 {
   match tier {
     Internal => 1000
     User => 500
@@ -86,7 +86,7 @@ pub fn call_timeout_hint_ms(tier : BudgetTier) -> Int {
 /// its tier's hint. The honest shape of the wall-clock rule: it decides
 /// what to say, not what to do — the call has already returned its
 /// result by the time anyone can ask.
-pub fn over_time_hint(tier : BudgetTier, elapsed_ms : Int) -> Bool {
+pub fn over_time_hint(tier : BudgetTier, elapsed_ms : Int32) -> Bool {
   elapsed_ms > call_timeout_hint_ms(tier)
 }
 
@@ -110,7 +110,7 @@ pub(all) suberror OperatorError {
   /// The spec or payload was rejected before execution.
   InvalidSpec(String)
   /// The guest reported an ABI version this host does not speak.
-  AbiVersionMismatch(Int)
+  AbiVersionMismatch(Int32)
   /// The call exceeded its tier's record count (host-side wall-clock
   /// overruns are also reported here by the adapter).
   BudgetExceeded(String)
@@ -165,7 +165,7 @@ pub fn OperatorSpec::validate(
 
 ///|
 /// Validates the guest-reported ABI version.
-pub fn validate_abi_version(version : Int) -> Result[Unit, OperatorError] {
+pub fn validate_abi_version(version : Int32) -> Result[Unit, OperatorError] {
   if version != ABI_VERSION {
     return Err(AbiVersionMismatch(version))
   }
@@ -176,7 +176,7 @@ pub fn validate_abi_version(version : Int) -> Result[Unit, OperatorError] {
 /// Validates the record count against the tier before a call.
 pub fn check_budget(
   tier : BudgetTier,
-  record_count : Int,
+  record_count : Int32,
 ) -> Result[Unit, OperatorError] {
   let max = max_records_per_call(tier)
   if record_count > max {
@@ -288,7 +288,7 @@ fn write_len_bytes(buf : @buffer.Buffer, data : Bytes) -> Unit {
 
 ///|
 /// Reads one uleb128 at `pos`, returning the value and the next offset.
-fn read_uleb_at(data : Bytes, pos : Int) -> Result[(Int, Int), String] {
+fn read_uleb_at(data : Bytes, pos : Int32) -> Result[(Int32, Int32), String] {
   let mut value = 0
   let mut shift = 0
   let mut at = pos
@@ -312,7 +312,10 @@ fn read_uleb_at(data : Bytes, pos : Int) -> Result[(Int, Int), String] {
 
 ///|
 /// Reads one length-prefixed byte string at `pos`.
-fn read_len_bytes_at(data : Bytes, pos : Int) -> Result[(Bytes, Int), String] {
+fn read_len_bytes_at(
+  data : Bytes,
+  pos : Int32,
+) -> Result[(Bytes, Int32), String] {
   let len = match read_uleb_at(data, pos) {
     Ok(pair) => pair
     Err(e) => return Err(e)
@@ -364,7 +367,7 @@ pub(all) struct OperatorEngine {
 /// A live operator instance: one loaded module, ready for calls.
 pub(all) struct OperatorInstance {
   /// The ABI version the guest reported (already validated).
-  abi_version : Int
+  abi_version : Int32
   /// Transforms one batch positionally; offsets are reattached by
   /// the host, the guest never sees them.
   process : (Array[@protocol.Record]) -> Result[
@@ -375,7 +378,7 @@ pub(all) struct OperatorInstance {
   /// it (None when the adapter cannot measure — the in-kernel reference
   /// engine has no clock and no need for one). The kernel only reports
   /// this; it never gates on it (README 决策 33).
-  last_call_ms : () -> Int?
+  last_call_ms : () -> Int32?
   /// The v2 scalar entry (P26): present only when the module exports
   /// `mf_op_scalar_abi_version` + `mf_op_eval`. A v1-only module keeps
   /// None — its absence is a fact about the module, not an error.

@@ -21,7 +21,7 @@ fn scalar_registry_path(data_dir : String) -> String {
 struct ScalarBinding {
   module_path : String
   tier : @operator.BudgetTier
-  max_calls_per_batch : Int
+  max_calls_per_batch : Int32
 }
 
 ///|

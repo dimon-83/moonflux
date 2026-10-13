@@ -12,7 +12,7 @@ priv enum CompiledNode {
   Wasm(@operator.OperatorInstance)
   /// A v2 scalar binding (P26): the resolved function name, the live
   /// module instance, and the per-batch call ceiling from the registry.
-  Scalar(String, @operator.OperatorInstance, Int)
+  Scalar(String, @operator.OperatorInstance, Int32)
   /// A compiled pattern from the kernel's own engine (P30/T111) and
   /// whether the filter keeps the records that do *not* match. The
   /// program is compiled at apply time, so an unsupported construct
@@ -221,7 +221,7 @@ fn compile_node(
 /// a whole pull arrives in one call: a file read already arrives as one
 /// batch and an HTTP poll as smaller ones, so a batch boundary inside a pull
 /// is the same kind of boundary the platform has everywhere else.
-fn op_batch_records() -> Int {
+fn op_batch_records() -> Int32 {
   match @env.get_env_var("MOONFLUX_OP_BATCH_RECORDS") {
     Some(text) =>
       match (try? @string.parse_int(text[0:text.length()])) {
@@ -262,7 +262,7 @@ fn op_batches(
 }
 
 ///|
-const DEFAULT_OP_BATCH_RECORDS : Int = 128
+const DEFAULT_OP_BATCH_RECORDS : Int32 = 128
 
 ///|
 fn apply_nodes(

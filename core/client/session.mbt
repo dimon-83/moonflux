@@ -6,16 +6,16 @@
 /// A connected producer session.
 pub struct Producer {
   conn : Conn
-  mut next_rid : Int
-  session : (Int, Int)
+  mut next_rid : Int32
+  session : (Int32, Int32)
 }
 
 ///|
 /// A connected consumer session.
 pub struct Consumer {
   conn : Conn
-  mut next_rid : Int
-  session : (Int, Int)
+  mut next_rid : Int32
+  session : (Int32, Int32)
 }
 
 ///|
@@ -25,7 +25,7 @@ pub(all) suberror ClientError {
   Transport(String)
   /// The server rejected the handshake or a command: stable code +
   /// message as sent by the server.
-  Server(Int, String)
+  Server(Int32, String)
   /// The reply frame did not match the request (id or command kind).
   Protocol(String)
 } derive(Debug, Eq)
@@ -50,7 +50,7 @@ pub impl Show for ClientError with fn output(self, logger) {
 pub fn handshake_with(
   conn : Conn,
   token : String?,
-) -> Result[(Int, Int), ClientError] {
+) -> Result[(Int32, Int32), ClientError] {
   let session = match handshake(conn) {
     Ok(session) => session
     Err(e) => return Err(e)
@@ -86,7 +86,7 @@ pub fn handshake_with(
 
 ///|
 /// Performs the HELLO/WELCOME handshake on a fresh connection.
-fn handshake(conn : Conn) -> Result[(Int, Int), ClientError] {
+fn handshake(conn : Conn) -> Result[(Int32, Int32), ClientError] {
   match
     conn.send_frame(Frame::{
       cmd: CMD_HELLO,
@@ -119,8 +119,8 @@ fn handshake(conn : Conn) -> Result[(Int, Int), ClientError] {
 /// Sends one request and validates the echoed request id.
 fn request(
   conn : Conn,
-  rid : Int,
-  cmd : Int,
+  rid : Int32,
+  cmd : Int32,
   payload : Bytes,
 ) -> Result[Frame, ClientError] {
   match conn.send_frame(Frame::{ cmd, rid, payload, }) {
@@ -164,7 +164,7 @@ pub fn Producer::from_conn(conn : Conn) -> Result[Producer, ClientError] {
 
 ///|
 /// The server's advertised protocol version.
-pub fn Producer::session_version(self : Producer) -> (Int, Int) {
+pub fn Producer::session_version(self : Producer) -> (Int32, Int32) {
   self.session
 }
 
@@ -193,7 +193,7 @@ pub fn Producer::send(
   self : Producer,
   topic : String,
   records : Array[@protocol.Record],
-) -> Result[(Int64, Int), ClientError] {
+) -> Result[(Int64, Int32), ClientError] {
   self.send_batches(topic, None, records)
 }
 
@@ -204,9 +204,9 @@ pub fn Producer::send(
 fn Producer::send_batches(
   self : Producer,
   topic : String,
-  partition : Int?,
+  partition : Int32?,
   records : Array[@protocol.Record],
-) -> Result[(Int64, Int), ClientError] {
+) -> Result[(Int64, Int32), ClientError] {
   for record in records {
     match @protocol.record_size_violation(record) {
       Some(reason) => return Err(Protocol(reason))
@@ -234,9 +234,9 @@ fn Producer::send_batches(
 fn Producer::send_one(
   self : Producer,
   topic : String,
-  partition : Int?,
+  partition : Int32?,
   records : Array[@protocol.Record],
-) -> Result[(Int64, Int), ClientError] {
+) -> Result[(Int64, Int32), ClientError] {
   let payload = Buffer::Buffer()
   let topic_bytes = @utf8.encode(topic[0:topic.length()])
   payload.write_leb128(topic_bytes.length())
@@ -311,7 +311,7 @@ pub fn Consumer::from_conn(conn : Conn) -> Result[Consumer, ClientError] {
 
 ///|
 /// The server's advertised protocol version.
-pub fn Consumer::session_version(self : Consumer) -> (Int, Int) {
+pub fn Consumer::session_version(self : Consumer) -> (Int32, Int32) {
   self.session
 }
 
@@ -321,7 +321,7 @@ pub fn Consumer::fetch(
   self : Consumer,
   topic : String,
   from : Int64,
-  max : Int,
+  max : Int32,
 ) -> Result[Array[@log.LogEntry], ClientError] {
   match self.fetch_window(topic, from, max) {
     Ok(window) => Ok(window.entries)
@@ -338,7 +338,7 @@ pub fn Consumer::fetch_window(
   self : Consumer,
   topic : String,
   from : Int64,
-  max : Int,
+  max : Int32,
 ) -> Result[FetchWindow, ClientError] {
   let payload = Buffer::Buffer()
   let topic_bytes = @utf8.encode(topic[0:topic.length()])
@@ -372,7 +372,7 @@ pub fn Consumer::fetch_committed(
   self : Consumer,
   topic : String,
   from : Int64,
-  max : Int,
+  max : Int32,
 ) -> Result[(Array[@log.LogEntry], Int64, Int64), ClientError] {
   let payload = Buffer::Buffer()
   let topic_bytes = @utf8.encode(topic[0:topic.length()])
@@ -506,9 +506,9 @@ fn decode_fetch_reply(
 pub fn Consumer::fetch_partition(
   self : Consumer,
   topic : String,
-  partition : Int,
+  partition : Int32,
   from : Int64,
-  max : Int,
+  max : Int32,
 ) -> Result[Array[@log.LogEntry], ClientError] {
   match self.fetch_partition_window(topic, partition, from, max) {
     Ok(window) => Ok(window.entries)
@@ -522,9 +522,9 @@ pub fn Consumer::fetch_partition(
 pub fn Consumer::fetch_partition_window(
   self : Consumer,
   topic : String,
-  partition : Int,
+  partition : Int32,
   from : Int64,
-  max : Int,
+  max : Int32,
 ) -> Result[FetchWindow, ClientError] {
   let payload = Buffer::Buffer()
   let topic_bytes = @utf8.encode(topic[0:topic.length()])
@@ -557,8 +557,8 @@ pub fn Consumer::fetch_partition_window(
 pub fn Producer::send_partition(
   self : Producer,
   topic : String,
-  partition : Int,
+  partition : Int32,
   records : Array[@protocol.Record],
-) -> Result[(Int64, Int), ClientError] {
+) -> Result[(Int64, Int32), ClientError] {
   self.send_batches(topic, Some(partition), records)
 }

@@ -11,8 +11,8 @@
 /// The state ABI version, or None when the module offers no state exports.
 /// The shim answers 1 for "absent" — a fact, not an error — mirroring the
 /// scalar probe's contract.
-fn state_version(session : Session, err : FixedArray[Byte]) -> Int? {
-  let out : FixedArray[Int] = FixedArray::make(1, 0)
+fn state_version(session : Session, err : FixedArray[Byte]) -> Int32? {
+  let out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_state_version(session.handle, out, err, err.length()) != 0 {
     return None
   }
@@ -68,7 +68,7 @@ fn state_apply_call(
     0 {
     return Err(call_err(err))
   }
-  let out : FixedArray[Int] = FixedArray::make(1, 0)
+  let out : FixedArray[Int32] = FixedArray::make(1, 0)
   let rc = we_state_apply(session.handle, ptr, out, err, err.length())
   if rc != 0 {
     if rc == -3 {
@@ -86,14 +86,14 @@ fn state_apply_call(
     return Err(call_err(err))
   }
   let out_ptr = out[0]
-  let status_out : FixedArray[Int] = FixedArray::make(1, 0)
+  let status_out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_last_status(session.handle, status_out, err, err.length()) != 0 {
     return Err(call_err(err))
   }
   if status_out[0] != 0 {
     return Err(@operator.GuestTrap(guest_error_text(session, err)))
   }
-  let len_out : FixedArray[Int] = FixedArray::make(1, 0)
+  let len_out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_output_len(session.handle, len_out, err, err.length()) != 0 {
     return Err(call_err(err))
   }

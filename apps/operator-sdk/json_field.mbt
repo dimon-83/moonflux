@@ -34,7 +34,7 @@ fn jf_is_ws(b : Byte) -> Bool {
 }
 
 ///|
-fn jf_skip_ws(data : Bytes, start : Int) -> Int {
+fn jf_skip_ws(data : Bytes, start : Int32) -> Int32 {
   let mut i = start
   while i < data.length() && jf_is_ws(data[i]) {
     i = i + 1
@@ -47,7 +47,7 @@ fn jf_skip_ws(data : Bytes, start : Int) -> Int {
 /// past the closing quote. Unknown escapes are skipped as two bytes: the
 /// caller that *reads* a string validates them, a skipper only needs to know
 /// where the string ends.
-fn jf_skip_string(data : Bytes, start : Int) -> Result[Int, String] {
+fn jf_skip_string(data : Bytes, start : Int32) -> Result[Int32, String] {
   let n = data.length()
   let mut i = start + 1
   while i < n {
@@ -62,7 +62,7 @@ fn jf_skip_string(data : Bytes, start : Int) -> Result[Int, String] {
 
 ///|
 /// Appends one code point to a UTF-8 buffer.
-fn jf_push_codepoint(out : @buffer.Buffer, cp : Int) -> Unit {
+fn jf_push_codepoint(out : @buffer.Buffer, cp : Int32) -> Unit {
   if cp < 0x80 {
     out.write_byte(cp.to_byte())
   } else if cp < 0x800 {
@@ -81,7 +81,7 @@ fn jf_push_codepoint(out : @buffer.Buffer, cp : Int) -> Unit {
 }
 
 ///|
-fn jf_hex_digit(b : Byte) -> Int? {
+fn jf_hex_digit(b : Byte) -> Int32? {
   if b >= b'0' && b <= b'9' {
     Some((b - b'0').to_int())
   } else if b >= b'a' && b <= b'f' {
@@ -95,7 +95,10 @@ fn jf_hex_digit(b : Byte) -> Int? {
 
 ///|
 /// Reads (and unescapes) a JSON string starting at the opening quote.
-fn jf_read_string(data : Bytes, start : Int) -> Result[(String, Int), String] {
+fn jf_read_string(
+  data : Bytes,
+  start : Int32,
+) -> Result[(String, Int32), String] {
   let n = data.length()
   let out = @buffer.Buffer::Buffer()
   let mut i = start + 1
@@ -171,7 +174,7 @@ fn jf_read_string(data : Bytes, start : Int) -> Result[(String, Int), String] {
 }
 
 ///|
-fn jf_match_token(data : Bytes, start : Int, token : String) -> Bool {
+fn jf_match_token(data : Bytes, start : Int32, token : String) -> Bool {
   if start + token.length() > data.length() {
     return false
   }
@@ -185,7 +188,7 @@ fn jf_match_token(data : Bytes, start : Int, token : String) -> Bool {
 
 ///|
 /// Skips one JSON value starting at `start`; returns the offset after it.
-fn jf_skip_value(data : Bytes, start : Int) -> Result[Int, String] {
+fn jf_skip_value(data : Bytes, start : Int32) -> Result[Int32, String] {
   let n = data.length()
   if start >= n {
     return Err("truncated JSON value")

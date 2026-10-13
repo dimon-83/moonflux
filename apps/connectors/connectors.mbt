@@ -67,7 +67,7 @@ pub(all) enum KeyMode {
 /// `SplitAt` mode skipped because they carried no separator.
 pub(all) struct ShapedText {
   records : Array[@protocol.Record]
-  skipped : Int
+  skipped : Int32
 } derive(Debug)
 
 ///|
@@ -312,7 +312,7 @@ pub fn http_sink(url : String) -> Sink {
 
 ///|
 /// Parses "http://host[:port][/path]" into (host, port, path).
-pub fn parse_http_url(url : String) -> Result[(String, Int, String), String] {
+pub fn parse_http_url(url : String) -> Result[(String, Int32, String), String] {
   if !url.has_prefix("http://") {
     return Err("only http:// URLs are supported")
   }
@@ -340,7 +340,7 @@ pub fn parse_http_url(url : String) -> Result[(String, Int, String), String] {
 pub fn build_http_request(
   verb : String,
   host : String,
-  port : Int,
+  port : Int32,
   path : String,
   body : Bytes,
 ) -> Bytes {
@@ -371,7 +371,7 @@ pub fn build_http_request(
 /// Splits a complete HTTP response into (status, body). Response
 /// headers are discarded; the status line and the CRLFCRLF boundary
 /// are validated.
-pub fn parse_http_response(bytes : Bytes) -> Result[(Int, Bytes), String] {
+pub fn parse_http_response(bytes : Bytes) -> Result[(Int32, Bytes), String] {
   let text = @utf8.decode_lossy(bytes[0:bytes.length()])
   let boundary = match text.find("\r\n\r\n") {
     Some(idx) => idx
@@ -404,7 +404,7 @@ fn http_exchange(
   verb : String,
   url : String,
   body : Bytes,
-) -> Result[(Int, Bytes), String] {
+) -> Result[(Int32, Bytes), String] {
   let (host, port, path) = match parse_http_url(url) {
     Ok(parts) => parts
     Err(e) => return Err(e)

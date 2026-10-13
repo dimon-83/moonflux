@@ -256,14 +256,14 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
 /// How many records one read window of a topic source hands the chain. The
 /// chain may split this further (the operator batch cap), and a window that
 /// is too large would simply be a longer pause between sinks.
-let topic_source_window : Int = 256
+let topic_source_window : Int32 = 256
 
 ///|
 /// How long a caught-up topic source waits before re-opening the log to look
 /// for another process's appends. A follower's idle poll costs one tail scan
 /// (recovery), so this is the knob that trades latency for CPU; 100ms is the
 /// same order as the connectors' quiet poll.
-fn topic_source_poll_ms() -> Int {
+fn topic_source_poll_ms() -> Int32 {
   match @env.get_env_var("MOONFLUX_TOPIC_POLL_MS") {
     Some(text) =>
       match (try? @string.parse_int(text[0:text.length()])) {
@@ -275,7 +275,7 @@ fn topic_source_poll_ms() -> Int {
 }
 
 ///|
-const DEFAULT_TOPIC_POLL_MS : Int = 100
+const DEFAULT_TOPIC_POLL_MS : Int32 = 100
 
 ///|
 /// Runs the consumption loop for a topic source: read from the pipeline's own

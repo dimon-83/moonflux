@@ -84,7 +84,7 @@ test "checksums match Python's reference values" {
 }
 
 ///|
-fn parse_hex_int(hex : String) -> Result[Int, String] {
+fn parse_hex_int(hex : String) -> Result[Int32, String] {
   let mut value = 0
   for i = 0; i < hex.length(); i = i + 1 {
     let c = hex[i].to_int()
@@ -140,7 +140,7 @@ test "corrupt containers are refused by what they violate" {
 }
 
 ///|
-fn corrupt_byte(data : Bytes, index : Int) -> Bytes {
+fn corrupt_byte(data : Bytes, index : Int32) -> Bytes {
   let bytes : Array[Byte] = []
   for i = 0; i < data.length(); i = i + 1 {
     if i == index {

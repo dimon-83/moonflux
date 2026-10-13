@@ -2,12 +2,12 @@
 // ABI v1 surface of the uppercase operator.
 
 ///|
-pub fn mf_op_abi_version() -> Int {
+pub fn mf_op_abi_version() -> Int32 {
   @sdk.abi_version()
 }
 
 ///|
-pub fn mf_op_init(config : Bytes) -> Int {
+pub fn mf_op_init(config : Bytes) -> Int32 {
   match @sdk.parse_config(config) {
     Ok(_) => 0
     Err(_) => -1
@@ -15,7 +15,7 @@ pub fn mf_op_init(config : Bytes) -> Int {
 }
 
 ///|
-pub fn mf_op_alloc_input(len : Int) -> Bytes {
+pub fn mf_op_alloc_input(len : Int32) -> Bytes {
   @sdk.alloc_input(len)
 }
 
@@ -26,12 +26,12 @@ pub fn mf_op_process(input : Bytes) -> Bytes {
 }
 
 ///|
-pub fn mf_op_output_len() -> Int {
+pub fn mf_op_output_len() -> Int32 {
   @sdk.output_len()
 }
 
 ///|
-pub fn mf_op_last_status() -> Int {
+pub fn mf_op_last_status() -> Int32 {
   @sdk.last_status()
 }
 

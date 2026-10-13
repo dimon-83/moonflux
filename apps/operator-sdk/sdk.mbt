@@ -33,7 +33,7 @@ pub(all) struct GuestStatefulOperator {
 ///|
 /// ABI entry: the state ABI this SDK implements (drives
 /// mf_op_state_abi_version).
-pub fn state_abi_version() -> Int {
+pub fn state_abi_version() -> Int32 {
   @operator.STATE_ABI_VERSION
 }
 
@@ -42,7 +42,7 @@ pub fn state_abi_version() -> Int {
 /// in the same buffered slot the batch path uses, so
 /// mf_op_state_apply / mf_op_output_len / mf_op_last_status are the same
 /// three lines every other operator has.
-pub fn run_stateful(op : GuestStatefulOperator, input : Bytes) -> Int {
+pub fn run_stateful(op : GuestStatefulOperator, input : Bytes) -> Int32 {
   let (state_in, records) = match @operator.decode_state_payload(input) {
     Ok(pair) => pair
     Err(e) => {
@@ -68,7 +68,7 @@ pub fn run_stateful(op : GuestStatefulOperator, input : Bytes) -> Int {
 
 ///|
 /// ABI entry: the version this SDK implements (drives mf_op_abi_version).
-pub fn abi_version() -> Int {
+pub fn abi_version() -> Int32 {
   @operator.ABI_VERSION
 }
 
@@ -98,7 +98,7 @@ pub fn encode_output(records : Array[@protocol.Record]) -> Bytes {
 priv struct CallState {
   mut input_buf : Bytes
   mut output_buf : Bytes
-  mut last_status : Int
+  mut last_status : Int32
   mut last_error : String
 }
 
@@ -115,7 +115,7 @@ let call_state : CallState = CallState::{
 /// payload into linear memory at the returned data pointer. The
 /// buffer stays alive in the call-state global until the next
 /// allocation.
-pub fn alloc_input(len : Int) -> Bytes {
+pub fn alloc_input(len : Int32) -> Bytes {
   call_state.input_buf = Bytes::make(len, b'\x00')
   call_state.input_buf
 }
@@ -125,7 +125,7 @@ pub fn alloc_input(len : Int) -> Bytes {
 /// the host received from mf_op_alloc_input, passed back here as a
 /// guest Bytes). Output lands in the slot; returns the status code
 /// (0 = ok).
-pub fn run_buffered(op : GuestOperator, input : Bytes) -> Int {
+pub fn run_buffered(op : GuestOperator, input : Bytes) -> Int32 {
   match run_call(op, input) {
     Ok(output) => {
       call_state.output_buf = output
@@ -151,13 +151,13 @@ pub fn buffered_output() -> Bytes {
 ///|
 /// The length of the buffered output (host reads the bytes from the
 /// pointer that mf_op_process returned).
-pub fn output_len() -> Int {
+pub fn output_len() -> Int32 {
   call_state.output_buf.length()
 }
 
 ///|
 /// The status of the last buffered call (0 = ok).
-pub fn last_status() -> Int {
+pub fn last_status() -> Int32 {
   call_state.last_status
 }
 
@@ -219,7 +219,7 @@ pub fn config_string(config : Map[String, Json], key : String) -> String? {
 /// `{"min_len": 10}` becomes a typed Int — and the only place a
 /// fractional value could be rounded, which is why it is refused
 /// instead: a config that says 10.5 must not silently mean 10.
-pub fn config_int(config : Map[String, Json], key : String) -> Int? {
+pub fn config_int(config : Map[String, Json], key : String) -> Int32? {
   match config.get(key) {
     Some(Number(n)) => {
       let i = n.to_int()
@@ -287,7 +287,7 @@ pub fn uppercase_str(text : String) -> String {
 ///|
 /// ABI entry: the scalar ABI version this SDK implements (drives
 /// mf_op_scalar_abi_version).
-pub fn scalar_abi_version() -> Int {
+pub fn scalar_abi_version() -> Int32 {
   @operator.SCALAR_ABI_VERSION
 }
 

@@ -295,7 +295,7 @@ pub(all) struct GroupCommit {
   member : String
   epoch : Int64
   topic : String
-  partition : Int
+  partition : Int32
   offset : Int64
 } derive(Debug, Eq, Show)
 
@@ -351,13 +351,13 @@ pub(all) struct GroupView {
   epoch : Int64
   timeout_ms : Int64
   partitions : Array[WireGroupPartition]
-  members : Int
+  members : Int32
 } derive(Debug, Eq, Show)
 
 ///|
 pub(all) struct WireGroupPartition {
   topic : String
-  partition : Int
+  partition : Int32
   /// the offset this member should resume from
   committed : Int64
 } derive(Debug, Eq, Show)
@@ -506,7 +506,7 @@ pub fn decode_group_description(
 pub(all) struct WireSegment {
   base : Int64
   records : Int64
-  bytes : Int
+  bytes : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -554,11 +554,11 @@ pub fn decode_wire_segments(
 /// operator reads to decide whether the pass was worth its IO.
 pub(all) struct WireCompaction {
   base : Int64
-  frames_before : Int
-  frames_after : Int
-  dropped_records : Int
-  bytes_before : Int
-  bytes_after : Int
+  frames_before : Int32
+  frames_after : Int32
+  dropped_records : Int32
+  bytes_before : Int32
+  bytes_after : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -682,19 +682,19 @@ pub const MAX_FRAME_PAYLOAD = 33554432
 /// memory on both sides, an answer per chunk, and failure that names
 /// the chunk. The broker assigns offsets in arrival order, so the
 /// chunks stay contiguous and a caller can report one range.
-pub const PRODUCE_CHUNK_BYTES : Int = 4194304
+pub const PRODUCE_CHUNK_BYTES : Int32 = 4194304
 
 ///|
 /// How much a fetch reply may carry: the protocol's own batch budget,
 /// which is the largest frame a peer's decoder accepts. A reply built
 /// to this is one the transport can always move; a reply that ignores
 /// it is data loss with a successful-looking status (P15).
-pub const FETCH_WINDOW_BYTES : Int = @protocol.MAX_BATCH_BYTES
+pub const FETCH_WINDOW_BYTES : Int32 = @protocol.MAX_BATCH_BYTES
 
 ///|
 pub(all) struct Frame {
-  cmd : Int
-  rid : Int
+  cmd : Int32
+  rid : Int32
   payload : Bytes
 } derive(Debug, Eq, Show)
 
@@ -737,7 +737,7 @@ pub fn encode_fetch_reply(batches : Array[Bytes], scan_end : Int64) -> Bytes {
 ///|
 /// Parses a frame header (13 bytes). The payload length is validated
 /// against the frame limit but the payload bytes are NOT included.
-pub fn decode_header(header : Bytes) -> Result[(Int, Int, Int), String] {
+pub fn decode_header(header : Bytes) -> Result[(Int32, Int32, Int32), String] {
   if header.length() != 13 {
     return Err("short frame header")
   }
@@ -767,7 +767,7 @@ pub fn decode_header(header : Bytes) -> Result[(Int, Int, Int), String] {
 
 ///|
 /// HELLO/WELCOME payload: major + minor version.
-pub fn encode_hello(major : Int, minor : Int) -> Bytes {
+pub fn encode_hello(major : Int32, minor : Int32) -> Bytes {
   let out = @buffer.Buffer::Buffer()
   out.write_uint_be(major.reinterpret_as_uint())
   out.write_uint_be(minor.reinterpret_as_uint())
@@ -775,7 +775,7 @@ pub fn encode_hello(major : Int, minor : Int) -> Bytes {
 }
 
 ///|
-pub fn decode_hello(payload : Bytes) -> Result[(Int, Int), String] {
+pub fn decode_hello(payload : Bytes) -> Result[(Int32, Int32), String] {
   let reader = @codec.Reader::new(payload)
   let major = match reader.read_u32_be() {
     Ok(v) => v.reinterpret_as_int()
@@ -790,7 +790,7 @@ pub fn decode_hello(payload : Bytes) -> Result[(Int, Int), String] {
 
 ///|
 /// Error payload: u16 code + message.
-pub fn encode_error(code : Int, message : String) -> Bytes {
+pub fn encode_error(code : Int32, message : String) -> Bytes {
   let out = @buffer.Buffer::Buffer()
   out.write_uint_be(code.reinterpret_as_uint())
   let msg = @utf8.encode(message[0:message.length()])
@@ -799,7 +799,7 @@ pub fn encode_error(code : Int, message : String) -> Bytes {
 }
 
 ///|
-pub fn decode_error(payload : Bytes) -> (Int, String) {
+pub fn decode_error(payload : Bytes) -> (Int32, String) {
   let reader = @codec.Reader::new(payload)
   let code = match reader.read_u32_be() {
     Ok(code) => code.reinterpret_as_int()
@@ -955,7 +955,7 @@ pub fn decode_nodes(payload : Bytes) -> Result[Array[NodeRecord], String] {
 /// nodes (T24).
 pub(all) struct PartitionRef {
   topic : String
-  partition : Int
+  partition : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -963,7 +963,7 @@ pub(all) struct PartitionRef {
 pub(all) struct SyncRequest {
   partition : PartitionRef
   from : Int64
-  max_records : Int
+  max_records : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -1014,7 +1014,7 @@ pub fn decode_sync_request(payload : Bytes) -> Result[SyncRequest, String] {
 /// start, so the follower can check it is not being handed a hole.
 pub(all) struct SyncResponse {
   base_offset : Int64
-  record_count : Int
+  record_count : Int32
   high_watermark : Int64
   log_end_offset : Int64
   /// concatenated frames, byte-identical to the leader's segment
@@ -1132,7 +1132,7 @@ pub fn decode_sync_ack(payload : Bytes) -> Result[SyncAck, String] {
 /// travels in the leader reply (README 决策 20).
 pub(all) struct AssignmentView {
   topic : String
-  partition : Int
+  partition : Int32
   leader : String
   replicas : Array[String]
   nominated : String
@@ -1266,7 +1266,7 @@ pub fn decode_cluster_pipeline(
 /// the other, and only the coordinator knows the second.
 pub(all) struct GroupFloor {
   topic : String
-  partition : Int
+  partition : Int32
   /// the oldest offset any group still needs. Deliberately *not*
   /// "absent means zero": absence means no group is consuming this
   /// partition, which is a different fact from "a group is at zero".
@@ -1380,7 +1380,7 @@ pub fn decode_assignments_full(
 /// one node-level number (P7).
 pub(all) struct PartitionReport {
   topic : String
-  partition : Int
+  partition : Int32
   leo : Int64
 } derive(Debug, Eq, Show)
 
@@ -1621,8 +1621,8 @@ pub fn decode_confirmation(payload : Bytes) -> Result[Confirmation, String] {
 /// store's, encoded with the protocol's conventions.
 pub(all) struct WireTopic {
   name : String
-  partitions : Int
-  replication_factor : Int
+  partitions : Int32
+  replication_factor : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -1697,7 +1697,7 @@ pub fn decode_wire_topics(payload : Bytes) -> Result[Array[WireTopic], String] {
 /// A partitioned produce: topic + partition + one batch frame.
 pub fn encode_partitioned_produce(
   topic : String,
-  partition : Int,
+  partition : Int32,
   batch : Bytes,
 ) -> Bytes {
   let buf = @buffer.Buffer::Buffer()
@@ -1711,7 +1711,7 @@ pub fn encode_partitioned_produce(
 /// Decodes the partitioned produce request (topic, partition, frame).
 pub fn decode_partitioned_produce(
   payload : Bytes,
-) -> Result[(String, Int, Bytes), String] {
+) -> Result[(String, Int32, Bytes), String] {
   let reader = @codec.Reader::new(payload)
   let topic = match read_field(reader) {
     Ok(topic) => topic
@@ -1738,9 +1738,9 @@ pub fn decode_partitioned_produce(
 /// A partitioned fetch: topic + partition + from + max.
 pub fn encode_partitioned_fetch(
   topic : String,
-  partition : Int,
+  partition : Int32,
   from : Int64,
-  max : Int,
+  max : Int32,
 ) -> Bytes {
   let buf = @buffer.Buffer::Buffer()
   write_field(buf, topic)
@@ -1753,7 +1753,7 @@ pub fn encode_partitioned_fetch(
 ///|
 pub fn decode_partitioned_fetch(
   payload : Bytes,
-) -> Result[(String, Int, Int64, Int), String] {
+) -> Result[(String, Int32, Int64, Int32), String] {
   let reader = @codec.Reader::new(payload)
   let topic = match read_field(reader) {
     Ok(topic) => topic

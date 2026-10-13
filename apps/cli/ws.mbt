@@ -17,11 +17,11 @@
 /// boundary — RFC 6455 says so explicitly), and the project does not
 /// take third-party dependencies.
 pub fn sha1(data : Bytes) -> Bytes {
-  let mut h0 : UInt = 0x67452301U
-  let mut h1 : UInt = 0xEFCDAB89U
-  let mut h2 : UInt = 0x98BADCFEU
-  let mut h3 : UInt = 0x10325476U
-  let mut h4 : UInt = 0xC3D2E1F0U
+  let mut h0 : UInt32 = 0x67452301U
+  let mut h1 : UInt32 = 0xEFCDAB89U
+  let mut h2 : UInt32 = 0x98BADCFEU
+  let mut h3 : UInt32 = 0x10325476U
+  let mut h4 : UInt32 = 0xC3D2E1F0U
   // message + 0x80 + zero padding + 64-bit big-endian bit length
   let msg_len = data.length()
   let padded_len = ((msg_len + 8) / 64 + 1) * 64
@@ -35,7 +35,7 @@ pub fn sha1(data : Bytes) -> Bytes {
     let shift = (7 - i) * 8
     padded[padded_len - 8 + i] = ((bit_len >> shift) & 0xFFL).to_byte()
   }
-  let w : FixedArray[UInt] = FixedArray::make(80, 0U)
+  let w : FixedArray[UInt32] = FixedArray::make(80, 0U)
   let mut block = 0
   while block < padded_len {
     for i in 0..<16 {
@@ -121,7 +121,7 @@ pub fn base64_encode(data : Bytes) -> String {
 ///|
 /// The Base64 alphabet by index, as a code point (the same technique
 /// core/codec uses for hex digits).
-fn base64_char(index : Int) -> Char {
+fn base64_char(index : Int32) -> Char {
   if index < 26 {
     (index + 65).unsafe_to_char() // 'A'..
   } else if index < 52 {
@@ -237,28 +237,28 @@ pub fn ws_handshake(conn : @client.Conn) -> Result[Unit, String] {
 ///|
 /// One inbound WebSocket frame.
 pub(all) struct WsFrame {
-  opcode : Int
+  opcode : Int32
   payload : Bytes
 } derive(Debug, Eq, Show)
 
 ///|
 /// Opcodes this transport cares about.
-pub const WS_CONTINUATION : Int = 0
+pub const WS_CONTINUATION : Int32 = 0
 
 ///|
-pub const WS_TEXT : Int = 1
+pub const WS_TEXT : Int32 = 1
 
 ///|
-pub const WS_BINARY : Int = 2
+pub const WS_BINARY : Int32 = 2
 
 ///|
-pub const WS_CLOSE : Int = 8
+pub const WS_CLOSE : Int32 = 8
 
 ///|
-pub const WS_PING : Int = 9
+pub const WS_PING : Int32 = 9
 
 ///|
-pub const WS_PONG : Int = 10
+pub const WS_PONG : Int32 = 10
 
 ///|
 /// Reads one frame. Client frames MUST be masked (RFC 6455 §5.1) and
@@ -271,7 +271,7 @@ pub fn ws_read_frame(conn : @client.Conn) -> Result[WsFrame, String] {
   }
   let opcode = (header[0] & 0x0F).to_int()
   let masked = (header[1] & 0x80) != b'\x00'
-  let mut len : Int = (header[1] & 0x7F).to_int()
+  let mut len : Int32 = (header[1] & 0x7F).to_int()
   if len == 126 {
     let ext = match (conn.recv_exact)(2) {
       Ok(ext) => ext
@@ -322,7 +322,7 @@ pub fn ws_read_frame(conn : @client.Conn) -> Result[WsFrame, String] {
 ///|
 /// Encodes one unmasked frame (servers must not mask). Pure bytes, so
 /// the event loop can queue a reply without holding a Conn.
-pub fn ws_encode_frame(opcode : Int, payload : Bytes) -> Bytes {
+pub fn ws_encode_frame(opcode : Int32, payload : Bytes) -> Bytes {
   let out = @buffer.Buffer::Buffer()
   out.write_byte((0x80 | opcode).to_byte())
   let len = payload.length()
@@ -347,7 +347,7 @@ pub fn ws_encode_frame(opcode : Int, payload : Bytes) -> Bytes {
 /// Writes one frame to a blocking connection.
 pub fn ws_write_frame(
   conn : @client.Conn,
-  opcode : Int,
+  opcode : Int32,
   payload : Bytes,
 ) -> Result[Unit, String] {
   (conn.send)(ws_encode_frame(opcode, payload))

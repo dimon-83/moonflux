@@ -7,9 +7,9 @@
 #borrow(wasm, err)
 pub extern "C" fn we_session_new(
   wasm : Bytes,
-  len : Int,
+  len : Int32,
   err : FixedArray[Byte],
-  err_len : Int,
+  err_len : Int32,
 ) -> Int64 = "mf_we_session_new"
 
 ///|
@@ -19,99 +19,99 @@ pub extern "C" fn we_session_free(session : Int64) -> Unit = "mf_we_session_free
 #borrow(out, err)
 pub extern "C" fn we_abi_version(
   session : Int64,
-  out : FixedArray[Int],
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_abi_version"
+  err_len : Int32,
+) -> Int32 = "mf_we_abi_version"
 
 ///|
 #borrow(out, err)
 pub extern "C" fn we_alloc_input(
   session : Int64,
-  len : Int,
-  out : FixedArray[Int],
+  len : Int32,
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_alloc_input"
+  err_len : Int32,
+) -> Int32 = "mf_we_alloc_input"
 
 ///|
 #borrow(out, err)
 pub extern "C" fn we_init(
   session : Int64,
-  config_ptr : Int,
-  out : FixedArray[Int],
+  config_ptr : Int32,
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_init"
+  err_len : Int32,
+) -> Int32 = "mf_we_init"
 
 ///|
 #borrow(out, err)
 pub extern "C" fn we_process(
   session : Int64,
-  input_ptr : Int,
-  out : FixedArray[Int],
+  input_ptr : Int32,
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_process"
+  err_len : Int32,
+) -> Int32 = "mf_we_process"
 
 ///|
 #borrow(out, err)
 pub extern "C" fn we_output_len(
   session : Int64,
-  out : FixedArray[Int],
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_output_len"
+  err_len : Int32,
+) -> Int32 = "mf_we_output_len"
 
 ///|
 #borrow(out, err)
 pub extern "C" fn we_last_status(
   session : Int64,
-  out : FixedArray[Int],
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_last_status"
+  err_len : Int32,
+) -> Int32 = "mf_we_last_status"
 
 ///|
 #borrow(data, err)
 pub extern "C" fn we_mem_write(
   session : Int64,
-  ptr : Int,
+  ptr : Int32,
   data : Bytes,
-  len : Int,
+  len : Int32,
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_mem_write"
+  err_len : Int32,
+) -> Int32 = "mf_we_mem_write"
 
 ///|
 #borrow(out, err)
 pub extern "C" fn we_mem_read(
   session : Int64,
-  ptr : Int,
+  ptr : Int32,
   out : FixedArray[Byte],
-  len : Int,
+  len : Int32,
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_mem_read"
+  err_len : Int32,
+) -> Int32 = "mf_we_mem_read"
 
 ///|
 #borrow(out, err)
 pub extern "C" fn we_boxed_len(
   session : Int64,
-  ptr : Int,
-  out : FixedArray[Int],
+  ptr : Int32,
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_boxed_len"
+  err_len : Int32,
+) -> Int32 = "mf_we_boxed_len"
 
 ///|
 #borrow(out, err)
 pub extern "C" fn we_last_error(
   session : Int64,
-  out : FixedArray[Int],
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_last_error"
+  err_len : Int32,
+) -> Int32 = "mf_we_last_error"
 
 ///|
 #borrow(err)
@@ -119,8 +119,8 @@ pub extern "C" fn we_set_fuel(
   session : Int64,
   fuel : Int64,
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_set_fuel"
+  err_len : Int32,
+) -> Int32 = "mf_we_set_fuel"
 
 ///|
 #borrow(out, err)
@@ -128,8 +128,8 @@ pub extern "C" fn we_fuel_left(
   session : Int64,
   out : FixedArray[Int64],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_fuel_left"
+  err_len : Int32,
+) -> Int32 = "mf_we_fuel_left"
 
 ///|
 /// ABI v2 (P26): probes the guest's scalar ABI version. Returns 1 when
@@ -138,10 +138,10 @@ pub extern "C" fn we_fuel_left(
 #borrow(out, err)
 pub extern "C" fn we_scalar_version(
   session : Int64,
-  out : FixedArray[Int],
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_scalar_version"
+  err_len : Int32,
+) -> Int32 = "mf_we_scalar_version"
 
 ///|
 /// ABI v3 (T114): the guest's state ABI version, or 1 when the module
@@ -149,10 +149,10 @@ pub extern "C" fn we_scalar_version(
 #borrow(out, err)
 pub extern "C" fn we_state_version(
   session : Int64,
-  out : FixedArray[Int],
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_state_version"
+  err_len : Int32,
+) -> Int32 = "mf_we_state_version"
 
 ///|
 /// ABI v3 (T114): one stateful call over the payload already written at
@@ -161,11 +161,11 @@ pub extern "C" fn we_state_version(
 #borrow(out, err)
 pub extern "C" fn we_state_apply(
   session : Int64,
-  input_ptr : Int,
-  out : FixedArray[Int],
+  input_ptr : Int32,
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_state_apply"
+  err_len : Int32,
+) -> Int32 = "mf_we_state_apply"
 
 ///|
 /// ABI v2 (P26): one scalar evaluation over the request already
@@ -174,9 +174,9 @@ pub extern "C" fn we_state_apply(
 #borrow(out, err)
 pub extern "C" fn we_scalar_eval(
   session : Int64,
-  ptr : Int,
-  len : Int,
-  out : FixedArray[Int],
+  ptr : Int32,
+  len : Int32,
+  out : FixedArray[Int32],
   err : FixedArray[Byte],
-  err_len : Int,
-) -> Int = "mf_we_scalar_eval"
+  err_len : Int32,
+) -> Int32 = "mf_we_scalar_eval"

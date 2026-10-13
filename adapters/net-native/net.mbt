@@ -8,7 +8,7 @@ pub(all) suberror NetError {
   /// Host or address rejected before any syscall.
   BadAddress(String)
   /// Underlying syscall failed; `code` is errno.
-  Io(Int, String)
+  Io(Int32, String)
   /// Peer closed the connection mid-exchange.
   ConnectionClosed
   /// The socket's timeout (see `TcpStream::set_recv_timeout_ms`)
@@ -36,20 +36,20 @@ pub impl Show for NetError with fn output(self, logger) {
 ///|
 /// The shim's dedicated timeout code (see net_shim.c): a socket
 /// deadline that expired, not a failure.
-const NET_TIMEOUT_CODE : Int = 9999
+const NET_TIMEOUT_CODE : Int32 = 9999
 
 ///|
 /// The shim's "nothing to read right now" code: the socket is
 /// non-blocking and would block. Distinct from an error and from a
 /// clean EOF, which is what lets an event loop make progress on other
 /// connections instead of waiting.
-const NET_WOULD_BLOCK_CODE : Int = 9998
+const NET_WOULD_BLOCK_CODE : Int32 = 9998
 
 ///|
 /// The text of an errno ("connection reset by peer"). A number alone
 /// sends the reader off to look it up; the errno was surfaced so that it
 /// could be read.
-fn errno_text(code : Int) -> String {
+fn errno_text(code : Int32) -> String {
   let buf : FixedArray[Byte] = FixedArray::make(128, b'\x00')
   net_strerror(code, buf, buf.length())
   let mut end = 0
@@ -62,7 +62,7 @@ fn errno_text(code : Int) -> String {
 ///|
 /// Wraps a raw FFI result: negative means -errno, except the shim's
 /// timeout sentinel, which becomes `TimedOut`.
-fn io_result(code : Int, op : String) -> Result[Int, NetError] {
+fn io_result(code : Int32, op : String) -> Result[Int32, NetError] {
   if code < 0 {
     if -code == NET_TIMEOUT_CODE {
       Err(TimedOut)
@@ -88,7 +88,7 @@ fn host_bytes(host : String) -> Result[Bytes, NetError] {
 ///|
 /// A connected TCP socket. Blocking IO; not thread-safe by design.
 pub struct TcpStream {
-  fd : Int
+  fd : Int32
 } derive(Debug)
 
 ///|
@@ -98,15 +98,15 @@ pub struct TcpStream {
 /// the listener holds the deadline and `accept` passes it down to a
 /// poll()-based shim call.
 pub struct TcpListener {
-  fd : Int
-  mut accept_timeout_ms : Int
+  fd : Int32
+  mut accept_timeout_ms : Int32
 } derive(Debug)
 
 ///|
 /// Connects to `host:port` (host may be a name or numeric address).
 pub fn TcpStream::connect(
   host : String,
-  port : Int,
+  port : Int32,
 ) -> Result[TcpStream, NetError] {
   if port <= 0 || port > 65535 {
     return Err(BadAddress("port must be 1..65535"))
@@ -123,13 +123,13 @@ pub fn TcpStream::connect(
 
 ///|
 /// Wraps a raw fd (from `accept` or `socketpair`) as a stream.
-pub fn TcpStream::from_fd(fd : Int) -> TcpStream {
+pub fn TcpStream::from_fd(fd : Int32) -> TcpStream {
   TcpStream::{ fd, }
 }
 
 ///|
 /// The raw descriptor (escape hatch for tests).
-pub fn TcpStream::raw_fd(self : TcpStream) -> Int {
+pub fn TcpStream::raw_fd(self : TcpStream) -> Int32 {
   self.fd
 }
 
@@ -139,7 +139,7 @@ pub fn TcpStream::raw_fd(self : TcpStream) -> Int {
 pub fn TcpStream::send_all(
   self : TcpStream,
   data : Bytes,
-) -> Result[Int, NetError] {
+) -> Result[Int32, NetError] {
   let total = data.length()
   let mut sent = 0
   while sent < total {
@@ -162,8 +162,8 @@ pub fn TcpStream::send_all(
 pub fn TcpStream::recv(
   self : TcpStream,
   buf : FixedArray[Byte],
-  len : Int,
-) -> Result[Int, NetError] {
+  len : Int32,
+) -> Result[Int32, NetError] {
   if len < 0 || len > buf.length() {
     return Err(BadAddress("recv bounds"))
   }
@@ -189,7 +189,7 @@ pub fn TcpStream::recv(
 /// sweeps, reconcile ticks) that must not be starved by an idle socket.
 pub fn TcpStream::set_recv_timeout_ms(
   self : TcpStream,
-  ms : Int,
+  ms : Int32,
 ) -> Result[Unit, NetError] {
   if ms < 0 {
     return Err(BadAddress("timeout must not be negative"))
@@ -207,7 +207,7 @@ pub fn TcpStream::set_recv_timeout_ms(
 /// poll()-based shim call.
 pub fn TcpListener::set_accept_timeout_ms(
   self : TcpListener,
-  ms : Int,
+  ms : Int32,
 ) -> Result[Unit, NetError] {
   if ms < 0 {
     return Err(BadAddress("timeout must not be negative"))
@@ -221,7 +221,7 @@ pub fn TcpListener::set_accept_timeout_ms(
 /// the connections it will produce — one poll set for everything the
 /// loop serves (the hub's shape since P17: waiting on the listener
 /// *before* the connections taxed every request a whole tick).
-pub fn TcpListener::raw_fd(self : TcpListener) -> Int {
+pub fn TcpListener::raw_fd(self : TcpListener) -> Int32 {
   self.fd
 }
 
@@ -239,7 +239,7 @@ pub fn TcpStream::close(self : TcpStream) -> Result[Unit, NetError] {
 /// to let the OS assign one; combine with `local_port`.
 pub fn TcpListener::bind_listen(
   host : String,
-  port : Int,
+  port : Int32,
 ) -> Result[TcpListener, NetError] {
   if port < 0 || port > 65535 {
     return Err(BadAddress("port must be 0..65535"))
@@ -256,7 +256,7 @@ pub fn TcpListener::bind_listen(
 
 ///|
 /// The actual bound port (after an OS-assigned bind).
-pub fn TcpListener::local_port(self : TcpListener) -> Result[Int, NetError] {
+pub fn TcpListener::local_port(self : TcpListener) -> Result[Int32, NetError] {
   match io_result(net_getsockport(self.fd), "getsockname") {
     Ok(port) => Ok(port)
     Err(e) => Err(e)
@@ -289,7 +289,7 @@ pub fn TcpListener::close(self : TcpListener) -> Result[Unit, NetError] {
 /// Creates a connected AF_UNIX socket pair for in-process tests.
 /// Both ends behave like streams: send on one, recv on the other.
 pub fn socketpair() -> Result[(TcpStream, TcpStream), NetError] {
-  let pair : FixedArray[Int] = FixedArray::make(2, 0)
+  let pair : FixedArray[Int32] = FixedArray::make(2, 0)
   match io_result(net_socketpair(pair), "socketpair") {
     Ok(_) => Ok((TcpStream::{ fd: pair[0], }, TcpStream::{ fd: pair[1], }))
     Err(e) => Err(e)
@@ -322,8 +322,8 @@ pub fn TcpStream::set_nonblocking(
 pub fn TcpStream::recv_some(
   self : TcpStream,
   buf : FixedArray[Byte],
-  len : Int,
-) -> Result[Int, NetError] {
+  len : Int32,
+) -> Result[Int32, NetError] {
   if len < 0 || len > buf.length() {
     return Err(BadAddress("recv bounds"))
   }
@@ -347,8 +347,8 @@ pub fn TcpStream::recv_some(
 /// discovers EOF by reading rather than by missing it forever.
 pub fn poll_readable(
   streams : Array[TcpStream],
-  timeout_ms : Int,
-) -> Result[Array[Int], NetError] {
+  timeout_ms : Int32,
+) -> Result[Array[Int32], NetError] {
   let count = streams.length()
   if count == 0 {
     return Ok([])
@@ -356,11 +356,11 @@ pub fn poll_readable(
   if count > 128 {
     return Err(BadAddress("poll supports at most 128 sockets"))
   }
-  let fds : FixedArray[Int] = FixedArray::make(count, 0)
+  let fds : FixedArray[Int32] = FixedArray::make(count, 0)
   for i in 0..<count {
     fds[i] = streams[i].raw_fd()
   }
-  let ready : FixedArray[Int] = FixedArray::make(count, 0)
+  let ready : FixedArray[Int32] = FixedArray::make(count, 0)
   let hits = net_poll_readable(fds, count, timeout_ms, ready)
   if hits < 0 {
     return Err(Io(-hits, "poll"))
@@ -372,7 +372,7 @@ pub fn poll_readable(
   // than a wrong answer. (This sat here since P5: survivable because it
   // only mis-served connections, fatal once TLS made a single-connection
   // poll the common case.)
-  let out : Array[Int] = []
+  let out : Array[Int32] = []
   for i = 0; i < count; i = i + 1 {
     if ready[i] == 1 {
       out.push(i)
@@ -388,7 +388,7 @@ pub fn poll_readable(
 pub fn TcpStream::send_some(
   self : TcpStream,
   data : Bytes,
-) -> Result[Int, NetError] {
+) -> Result[Int32, NetError] {
   if data.length() == 0 {
     return Ok(0)
   }
@@ -420,14 +420,14 @@ pub fn TcpStream::send_some(
 /// through them.
 pub(all) struct Stream {
   /// The socket under this stream, for polling.
-  fd : () -> Int
+  fd : () -> Int32
   /// Reads what is available: `Ok(0)` = peer closed, `WouldBlock` =
   /// nothing now, positive = bytes. The three must stay distinguishable.
-  recv_some : (FixedArray[Byte], Int) -> Result[Int, NetError]
+  recv_some : (FixedArray[Byte], Int32) -> Result[Int32, NetError]
   /// Writes what the socket accepts; a short write is normal.
-  send_some : (Bytes) -> Result[Int, NetError]
+  send_some : (Bytes) -> Result[Int32, NetError]
   /// Bytes already buffered *inside* this stream (0 for plain sockets).
-  pending : () -> Int
+  pending : () -> Int32
   /// Non-blocking is the event loop's requirement, not a preference.
   set_nonblocking : (Bool) -> Result[Unit, NetError]
   close : () -> Unit
@@ -452,10 +452,10 @@ pub fn TcpStream::stream(self : TcpStream) -> Stream {
 /// is what feeds this: the poller does not need to know what kind of
 /// stream is on the other end.
 pub fn poll_fds(
-  fds : Array[Int],
-  timeout_ms : Int,
+  fds : Array[Int32],
+  timeout_ms : Int32,
   want_write : Bool,
-) -> Result[Array[Int], NetError] {
+) -> Result[Array[Int32], NetError] {
   let count = fds.length()
   if count == 0 {
     return Ok([])
@@ -463,11 +463,11 @@ pub fn poll_fds(
   if count > 128 {
     return Err(BadAddress("poll supports at most 128 descriptors"))
   }
-  let raw : FixedArray[Int] = FixedArray::make(count, 0)
+  let raw : FixedArray[Int32] = FixedArray::make(count, 0)
   for i in 0..<count {
     raw[i] = fds[i]
   }
-  let ready : FixedArray[Int] = FixedArray::make(count, 0)
+  let ready : FixedArray[Int32] = FixedArray::make(count, 0)
   let hits = if want_write {
     net_poll_writable(raw, count, timeout_ms, ready)
   } else {
@@ -476,7 +476,7 @@ pub fn poll_fds(
   if hits < 0 {
     return Err(Io(-hits, "poll"))
   }
-  let out : Array[Int] = []
+  let out : Array[Int32] = []
   for i = 0; i < count; i = i + 1 {
     if ready[i] == 1 {
       out.push(i)

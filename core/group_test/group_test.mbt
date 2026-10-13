@@ -10,7 +10,7 @@ fn member(id : String, at : Int64) -> @group.GroupMember {
 }
 
 ///|
-fn part(topic : String, index : Int) -> @cluster.PartitionId {
+fn part(topic : String, index : Int32) -> @cluster.PartitionId {
   @cluster.PartitionId::{ topic, index, }
 }
 

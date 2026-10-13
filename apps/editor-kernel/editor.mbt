@@ -22,7 +22,7 @@
 /// set surface (P27): an old artifact staged next to the new page would
 /// leave the panel silently missing, so the page asserts the version
 /// instead of discovering that by absence.
-pub fn mf_editor_abi_version() -> Int {
+pub fn mf_editor_abi_version() -> Int32 {
   2
 }
 
@@ -234,7 +234,7 @@ pub fn mf_editor_validate(spec_json : String) -> String {
 /// A browser socket delivers asynchronously, so the module keeps the
 /// protocol's bookkeeping and JS keeps the socket.
 priv struct Session {
-  mut next_rid : Int
+  mut next_rid : Int32
 }
 
 ///|
@@ -305,7 +305,7 @@ pub fn mf_editor_produce(topic : String, records_json : String) -> Bytes {
 
 ///|
 /// A FETCH request (Uncommitted: everything the log holds).
-pub fn mf_editor_fetch(topic : String, from : Int64, max : Int) -> Bytes {
+pub fn mf_editor_fetch(topic : String, from : Int64, max : Int32) -> Bytes {
   let topic_text = topic
   let payload = @buffer.Buffer::Buffer()
   let topic_bytes = @utf8.encode(topic_text[0:topic_text.length()])
@@ -444,7 +444,7 @@ pub fn mf_editor_function_set_delete(name : String) -> Bytes {
 
 ///|
 /// Builds one request frame and returns its bytes for JS to send.
-fn request(cmd : Int, payload : Bytes) -> Bytes {
+fn request(cmd : Int32, payload : Bytes) -> Bytes {
   let rid = session.next_rid
   session.next_rid = rid + 1
   frame(cmd, rid, payload)
@@ -454,7 +454,7 @@ fn request(cmd : Int, payload : Bytes) -> Bytes {
 /// One session-protocol frame (magic + version + cmd + request id +
 /// payload length + payload). Kept here so the page never assembles
 /// protocol bytes: it sends what these functions return.
-fn frame(cmd : Int, rid : Int, payload : Bytes) -> Bytes {
+fn frame(cmd : Int32, rid : Int32, payload : Bytes) -> Bytes {
   let out = @buffer.Buffer::Buffer()
   out.write_bytes(b"MFS")
   out.write_byte(b'\x02')
@@ -599,7 +599,7 @@ fn decode_records(payload : Bytes) -> Array[Json]? {
 ///|
 /// Tries to decode an apply reply (uleb128 name length + name +
 /// uleb128 process count).
-fn decode_applied(payload : Bytes) -> (String, Int)? {
+fn decode_applied(payload : Bytes) -> (String, Int32)? {
   let reader = @codec.Reader::new(payload)
   let len = match reader.read_uleb128_len() {
     Ok(len) => len

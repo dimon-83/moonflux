@@ -241,7 +241,7 @@ test "a record over the per-field limit is named before it reaches the wire" {
 }
 
 ///|
-fn flip_byte(data : Bytes, index : Int, replacement : Byte) -> Bytes {
+fn flip_byte(data : Bytes, index : Int32, replacement : Byte) -> Bytes {
   let out = Buffer::Buffer()
   for i in 0..<data.length() {
     if i == index {

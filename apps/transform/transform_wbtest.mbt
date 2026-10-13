@@ -199,7 +199,7 @@ test "data-driven recursion fails closed at runtime" {
     Ok(t) => t
     Err(e) => abort("compile_with: \{e}")
   }
-  let many = Array::makei(300, fn(_i : Int) {
+  let many = Array::makei(300, fn(_i : Int32) {
     (@utf8.encode("k"), @utf8.encode("v"))
   })
   let record = @protocol.Record::{

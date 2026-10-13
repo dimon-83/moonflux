@@ -4,78 +4,82 @@
 
 ///|
 #borrow(path)
-pub extern "C" fn fs_open(path : Bytes, len : Int, mode : Int) -> Int = "mf_fs_open"
+pub extern "C" fn fs_open(path : Bytes, len : Int32, mode : Int32) -> Int32 = "mf_fs_open"
 
 ///|
 #borrow(buf)
 pub extern "C" fn fs_pread(
-  fd : Int,
+  fd : Int32,
   buf : FixedArray[Byte],
-  len : Int,
-  offset : Int,
-) -> Int = "mf_fs_pread"
+  len : Int32,
+  offset : Int32,
+) -> Int32 = "mf_fs_pread"
 
 ///|
 #borrow(buf)
-pub extern "C" fn fs_write(fd : Int, buf : Bytes, len : Int) -> Int = "mf_fs_write"
+pub extern "C" fn fs_write(fd : Int32, buf : Bytes, len : Int32) -> Int32 = "mf_fs_write"
 
 ///|
-pub extern "C" fn fs_close(fd : Int) -> Int = "mf_fs_close"
+pub extern "C" fn fs_close(fd : Int32) -> Int32 = "mf_fs_close"
 
 ///|
-pub extern "C" fn fs_filesize(fd : Int) -> Int = "mf_fs_filesize"
+pub extern "C" fn fs_filesize(fd : Int32) -> Int32 = "mf_fs_filesize"
 
 ///|
-pub extern "C" fn fs_flush(fd : Int) -> Int = "mf_fs_flush"
+pub extern "C" fn fs_flush(fd : Int32) -> Int32 = "mf_fs_flush"
 
 ///|
 /// Which flush primitive this build calls (P34): 1 = F_FULLFSYNC, 0 = fsync.
 /// An int rather than a C string because the value is a fact with two
 /// states, and marshalling a pointer to say so would be a bug waiting to
 /// happen.
-pub extern "C" fn fs_flush_mode() -> Int = "mf_fs_flush_mode"
+pub extern "C" fn fs_flush_mode() -> Int32 = "mf_fs_flush_mode"
 
 ///|
 #borrow(path)
-pub extern "C" fn fs_mkdirs(path : Bytes, len : Int) -> Int = "mf_fs_mkdirs"
+pub extern "C" fn fs_mkdirs(path : Bytes, len : Int32) -> Int32 = "mf_fs_mkdirs"
 
 ///|
 #borrow(path)
-pub extern "C" fn fs_remove(path : Bytes, len : Int) -> Int = "mf_fs_remove"
+pub extern "C" fn fs_remove(path : Bytes, len : Int32) -> Int32 = "mf_fs_remove"
 
 ///|
 #borrow(path)
-pub extern "C" fn fs_remove_dir_all(path : Bytes, len : Int) -> Int = "mf_fs_remove_dir_all"
+pub extern "C" fn fs_remove_dir_all(path : Bytes, len : Int32) -> Int32 = "mf_fs_remove_dir_all"
 
 ///|
 #borrow(path)
-pub extern "C" fn fs_exists(path : Bytes, len : Int) -> Int = "mf_fs_exists"
+pub extern "C" fn fs_exists(path : Bytes, len : Int32) -> Int32 = "mf_fs_exists"
 
 ///|
-pub extern "C" fn fs_truncate(fd : Int, new_size : Int) -> Int = "mf_fs_truncate"
+pub extern "C" fn fs_truncate(fd : Int32, new_size : Int32) -> Int32 = "mf_fs_truncate"
 
 ///|
 #borrow(path)
-pub extern "C" fn fs_mtime(path : Bytes, len : Int) -> Int64 = "mf_fs_mtime"
+pub extern "C" fn fs_mtime(path : Bytes, len : Int32) -> Int64 = "mf_fs_mtime"
 
 ///|
 #borrow(buf)
-pub extern "C" fn fs_read(fd : Int, buf : FixedArray[Byte], len : Int) -> Int = "mf_fs_read"
+pub extern "C" fn fs_read(
+  fd : Int32,
+  buf : FixedArray[Byte],
+  len : Int32,
+) -> Int32 = "mf_fs_read"
 
 ///|
 #borrow(from, to)
 pub extern "C" fn fs_rename(
   from : Bytes,
-  from_len : Int,
+  from_len : Int32,
   to : Bytes,
-  to_len : Int,
-) -> Int = "mf_fs_rename"
+  to_len : Int32,
+) -> Int32 = "mf_fs_rename"
 
 ///|
 #borrow(path, buf)
 pub extern "C" fn fs_list_dir(
   path : Bytes,
-  path_len : Int,
+  path_len : Int32,
   buf : FixedArray[Byte],
-  buf_len : Int,
-) -> Int = "mf_fs_list_dir"
+  buf_len : Int32,
+) -> Int32 = "mf_fs_list_dir"

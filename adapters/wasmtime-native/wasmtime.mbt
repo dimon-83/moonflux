@@ -60,7 +60,7 @@ pub fn operator_engine(
       }
       let session = Session::{ handle, spec, }
       // ABI version handshake
-      let out : FixedArray[Int] = FixedArray::make(1, 0)
+      let out : FixedArray[Int32] = FixedArray::make(1, 0)
       if we_abi_version(session.handle, out, err, err.length()) != 0 {
         we_session_free(session.handle)
         return Err(@operator.GuestTrap("abi_version: " + read_err(err)))
@@ -94,7 +94,7 @@ pub fn operator_engine(
             we_session_free(session.handle)
             return Err(call_err(err))
           }
-          let init_out : FixedArray[Int] = FixedArray::make(1, 0)
+          let init_out : FixedArray[Int32] = FixedArray::make(1, 0)
           if we_init(session.handle, ptr, init_out, err, err.length()) != 0 {
             we_session_free(session.handle)
             return Err(@operator.GuestTrap("init: " + read_err(err)))
@@ -151,7 +151,7 @@ pub fn operator_engine(
       // The wall clock lives here, in the adapter, and it is used for
       // *reporting* only: the enforceable budget is fuel, because fuel
       // is reproducible and a clock is not (README 决策 33).
-      let last_ms : Array[Int?] = [None]
+      let last_ms : Array[Int32?] = [None]
       Ok(@operator.OperatorInstance::{
         abi_version: out[0],
         scalar_eval: scalar,
@@ -175,10 +175,10 @@ pub fn operator_engine(
 /// Allocates a guest buffer and returns its data pointer.
 fn alloc_buffer(
   session : Session,
-  len : Int,
-) -> Result[Int, @operator.OperatorError] {
+  len : Int32,
+) -> Result[Int32, @operator.OperatorError] {
   let err : FixedArray[Byte] = FixedArray::make(1024, b'\x00')
-  let out : FixedArray[Int] = FixedArray::make(1, 0)
+  let out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_alloc_input(session.handle, len, out, err, err.length()) != 0 {
     return Err(call_err(err))
   }
@@ -225,7 +225,7 @@ fn process_batch(
     0 {
     return Err(call_err(err))
   }
-  let out : FixedArray[Int] = FixedArray::make(1, 0)
+  let out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_process(session.handle, ptr, out, err, err.length()) != 0 {
     if we_fuel_left(session.handle, fuel_out, err, err.length()) == 0 &&
       fuel_out[0] <= 0L {
@@ -239,7 +239,7 @@ fn process_batch(
   }
   let out_ptr = out[0]
   // 3. status gate: non-zero means the guest refused the batch
-  let status_out : FixedArray[Int] = FixedArray::make(1, 0)
+  let status_out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_last_status(session.handle, status_out, err, err.length()) != 0 {
     return Err(call_err(err))
   }
@@ -247,7 +247,7 @@ fn process_batch(
     return Err(@operator.GuestTrap(guest_error_text(session, err)))
   }
   // 4. read the buffered output length, then the bytes
-  let len_out : FixedArray[Int] = FixedArray::make(1, 0)
+  let len_out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_output_len(session.handle, len_out, err, err.length()) != 0 {
     return Err(call_err(err))
   }
@@ -272,11 +272,11 @@ fn process_batch(
 /// header at ptr-4 (moonc boxed-array layout, see the spike doc).
 fn guest_error_text(session : Session, err : FixedArray[Byte]) -> String {
   let err2 : FixedArray[Byte] = FixedArray::make(1024, b'\x00')
-  let ptr_out : FixedArray[Int] = FixedArray::make(1, 0)
+  let ptr_out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_last_error(session.handle, ptr_out, err2, err2.length()) != 0 {
     return read_err(err)
   }
-  let len_out : FixedArray[Int] = FixedArray::make(1, 0)
+  let len_out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_boxed_len(session.handle, ptr_out[0], len_out, err2, err2.length()) != 0 {
     return read_err(err)
   }

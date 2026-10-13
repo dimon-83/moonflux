@@ -7,17 +7,17 @@
 
 ///|
 priv struct ReadCursor {
-  mut at : Int
-  mut piece : Int
+  mut at : Int32
+  mut piece : Int32
 }
 
 ///|
 /// A source that answers with the given piece sizes, repeating the
 /// last one if the reader asks for more.
 fn scripted_source(
-  pieces : Array[Int],
+  pieces : Array[Int32],
   bytes : Bytes,
-) -> (FixedArray[Byte], Int) -> Result[Int, String] {
+) -> (FixedArray[Byte], Int32) -> Result[Int32, String] {
   let cursor = ReadCursor::{ at: 0, piece: 0, }
   fn(buf, want) {
     if cursor.at >= bytes.length() {

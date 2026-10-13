@@ -35,17 +35,17 @@ extern "C" fn cli_now_us() -> Int64 = "mf_cli_now_us"
 /// class of bug P15 fixed in the fetch path; this is the tripwire for
 /// the next one). The fill is dots so a value that leaks into human
 /// output is recognisable.
-const BENCH_HEADER_BYTES : Int = 4
+const BENCH_HEADER_BYTES : Int32 = 4
 
 ///|
 /// How many records one fetch window asks for. Not the bound that
 /// matters — the server caps the reply by bytes and its `scan_end`
 /// decides when the drain is done (P15) — just large enough that a
 /// fast path is one round trip.
-const BENCH_FETCH_WINDOW : Int = 65536
+const BENCH_FETCH_WINDOW : Int32 = 65536
 
 ///|
-fn bench_fill_bytes(count : Int) -> Bytes {
+fn bench_fill_bytes(count : Int32) -> Bytes {
   let chunk = b"................................"
   let buf = Buffer::Buffer()
   let mut left = count
@@ -58,7 +58,7 @@ fn bench_fill_bytes(count : Int) -> Bytes {
 }
 
 ///|
-fn bench_value(offset : Int64, size : Int, fill : Bytes) -> Bytes {
+fn bench_value(offset : Int64, size : Int32, fill : Bytes) -> Bytes {
   let buf = Buffer::Buffer()
   buf.write_uint_be(offset.to_int().reinterpret_as_uint())
   buf.write_bytes(fill)
@@ -96,7 +96,7 @@ fn bench_entry_ok(entry : @log.LogEntry) -> Bool {
 /// reported number. p=0 is the minimum, p=100 the maximum; an empty
 /// sample set is the caller's bug and clamps to rank 1 (callers that
 /// can see zero samples guard before indexing).
-fn percentile_rank(n : Int, p : Int) -> Int {
+fn percentile_rank(n : Int32, p : Int32) -> Int32 {
   let rank = (p * n + 99) / 100
   if rank < 1 {
     1
@@ -109,7 +109,7 @@ fn percentile_rank(n : Int, p : Int) -> Int {
 
 ///|
 /// The `p`-th percentile of an ascending-sorted sample array.
-fn percentile_us(sorted : Array[Int64], p : Int) -> Int64 {
+fn percentile_us(sorted : Array[Int64], p : Int32) -> Int64 {
   sorted[percentile_rank(sorted.length(), p) - 1]
 }
 
@@ -133,7 +133,7 @@ fn stats_line(label : String, samples : Array[Int64]) -> String {
 ///|
 /// A positive integer flag with a default, or a failure that names the
 /// flag and the value that failed to parse.
-fn require_positive(flags : Flags, name : String, fallback : Int) -> Int {
+fn require_positive(flags : Flags, name : String, fallback : Int32) -> Int32 {
   match flags.get(name) {
     Some(text) =>
       match (try? @string.parse_int(text[0:text.length()])) {
@@ -155,7 +155,7 @@ fn require_positive(flags : Flags, name : String, fallback : Int) -> Int {
 /// unverifiable benchmark record is just noise. The ceiling is the
 /// producer's own per-field limit — refusing here, by name, in this
 /// process is the P15 rule (never ship it for the server to reject).
-fn bench_record_size(flags : Flags) -> Int {
+fn bench_record_size(flags : Flags) -> Int32 {
   let size = require_positive(flags, "record-size", 256)
   if size < BENCH_HEADER_BYTES + 1 {
     fail(
@@ -175,7 +175,7 @@ fn bench_record_size(flags : Flags) -> Int {
 /// producer's chunk size: one send is then exactly one frame, and a
 /// batch's timing means one round trip instead of some uncontrolled
 /// number of them.
-fn bench_batch_records(flags : Flags, size : Int) -> Int {
+fn bench_batch_records(flags : Flags, size : Int32) -> Int32 {
   let batch = require_positive(flags, "batch-records", 512)
   let sample = @protocol.Record::{
     timestamp: @env.now().reinterpret_as_int64(),
@@ -197,8 +197,8 @@ fn bench_batch_records(flags : Flags, size : Int) -> Int {
 /// One batch of benchmark records starting at `base`.
 fn bench_batch(
   base : Int64,
-  count : Int,
-  size : Int,
+  count : Int32,
+  size : Int32,
   fill : Bytes,
 ) -> Array[@protocol.Record] {
   let records : Array[@protocol.Record] = []
@@ -216,7 +216,11 @@ fn bench_batch(
 ///|
 /// Throughput as two integer rates. Zero elapsed (a run shorter than
 /// the clock's granularity) reports 0 rather than dividing by zero.
-fn report_throughput(records : Int, bytes : Int64, elapsed_us : Int64) -> Unit {
+fn report_throughput(
+  records : Int32,
+  bytes : Int64,
+  elapsed_us : Int64,
+) -> Unit {
   let (rps, bps) = if elapsed_us > 0L {
     (records.to_int64() * 1000000L / elapsed_us, bytes * 1000000L / elapsed_us)
   } else {

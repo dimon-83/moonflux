@@ -29,7 +29,7 @@ pub(all) struct GroupMember {
 /// should start at (the offset after the last processed record).
 pub(all) struct CommitRecord {
   topic : String
-  partition : Int
+  partition : Int32
   offset : Int64
 } derive(Debug, Eq, Show)
 

@@ -9,7 +9,7 @@ pub(all) suberror FsError {
   /// Path or argument rejected before any syscall.
   BadArgument(String)
   /// Underlying syscall failed; `code` is errno, `op` names it.
-  Io(Int, String)
+  Io(Int32, String)
 } derive(Debug, Eq)
 
 ///|
@@ -21,7 +21,7 @@ pub impl Show for FsError with fn output(self, logger) {
 }
 
 ///|
-fn syscall_result(code : Int, op : String) -> Result[Unit, FsError] {
+fn syscall_result(code : Int32, op : String) -> Result[Unit, FsError] {
   if code < 0 {
     Err(Io(-code, op))
   } else {
@@ -43,7 +43,7 @@ fn path_bytes(path : String) -> Result[Bytes, FsError] {
 /// thread-safe by design (AGENTS 金规则 5: no shared instances).
 pub struct File {
   path : String
-  fd : Int
+  fd : Int32
 } derive(Debug)
 
 ///|
@@ -73,7 +73,7 @@ pub fn File::open_read_write_append(path : String) -> Result[File, FsError] {
 }
 
 ///|
-fn File::open_mode(path : String, mode : Int) -> Result[File, FsError] {
+fn File::open_mode(path : String, mode : Int32) -> Result[File, FsError] {
   let bytes = match path_bytes(path) {
     Ok(bytes) => bytes
     Err(e) => return Err(e)
@@ -99,9 +99,9 @@ pub fn File::path(self : File) -> String {
 pub fn File::pread(
   self : File,
   buf : FixedArray[Byte],
-  len : Int,
-  position : Int,
-) -> Result[Int, FsError] {
+  len : Int32,
+  position : Int32,
+) -> Result[Int32, FsError] {
   if len < 0 || len > buf.length() || position < 0 {
     return Err(BadArgument("pread bounds"))
   }
@@ -116,7 +116,7 @@ pub fn File::pread(
 ///|
 /// Writes `len` bytes from `data` at the current end (append) or
 /// cursor position depending on open mode; returns bytes written.
-pub fn File::write_all(self : File, data : Bytes) -> Result[Int, FsError] {
+pub fn File::write_all(self : File, data : Bytes) -> Result[Int32, FsError] {
   let n = fs_write(self.fd, data, data.length())
   if n < 0 {
     Err(Io(-n, "write"))
@@ -127,7 +127,7 @@ pub fn File::write_all(self : File, data : Bytes) -> Result[Int, FsError] {
 
 ///|
 /// File size in bytes.
-pub fn File::size(self : File) -> Result[Int, FsError] {
+pub fn File::size(self : File) -> Result[Int32, FsError] {
   let n = fs_filesize(self.fd)
   if n < 0 {
     Err(Io(-n, "fstat"))

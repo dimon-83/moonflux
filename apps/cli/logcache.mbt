@@ -43,7 +43,7 @@
 /// reasoning that made roll size and index density knobs (P8). Zero or
 /// less means "no cache": every call opens afresh, which is how the
 /// gate shows what the cache is worth.
-fn log_cache_limit() -> Int {
+fn log_cache_limit() -> Int32 {
   match @env.get_env_var("MOONFLUX_LOG_CACHE") {
     Some(text) =>
       match (try? @string.parse_int(text[0:text.length()])) {
@@ -55,7 +55,7 @@ fn log_cache_limit() -> Int {
 }
 
 ///|
-const DEFAULT_LOG_CACHE_LIMIT : Int = 128
+const DEFAULT_LOG_CACHE_LIMIT : Int32 = 128
 
 ///|
 /// One cached handle, with the bookkeeping the bound needs.
@@ -64,11 +64,11 @@ priv struct CachedLog {
   /// multi-data-dir tool) may open logs from more than one
   data_dir : String
   topic : String
-  partition : Int
+  partition : Int32
   log : @log.SegmentedLog
   /// the tick at which this entry was last asked for; only the *order*
   /// matters, so a monotonic counter is enough and a clock is not
-  mut last_used : Int
+  mut last_used : Int32
 }
 
 ///|
@@ -76,7 +76,7 @@ priv struct CachedLog {
 priv struct LogCache {
   mut entries : Array[CachedLog]
   /// bumped on every lookup; the eviction victim is the smallest value
-  mut clock : Int
+  mut clock : Int32
 }
 
 ///|
@@ -89,7 +89,7 @@ fn LogCache::get(
   self : LogCache,
   data_dir : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> @log.SegmentedLog? {
   self.clock += 1
   for entry in self.entries {
@@ -108,7 +108,7 @@ fn LogCache::put(
   self : LogCache,
   data_dir : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
   log : @log.SegmentedLog,
 ) -> Unit {
   self.clock += 1
@@ -160,7 +160,7 @@ let log_cache : LogCache = LogCache::new()
 /// files go. A surviving entry would be a zombie — in-memory log end,
 /// empty disk — exactly the state P14's leg 8 used to create by wiping
 /// a directory under a running node. Returns how many handles went.
-fn log_cache_evict_topic(data_dir : String, topic : String) -> Int {
+fn log_cache_evict_topic(data_dir : String, topic : String) -> Int32 {
   let kept : Array[CachedLog] = []
   let mut evicted = 0
   for entry in log_cache.entries {

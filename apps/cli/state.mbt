@@ -16,10 +16,10 @@
 /// than this is asking the host to keep a database in a cache, and the
 /// answer is a refusal that names the limit — never a silent eviction
 /// loop that quietly forgets state.
-const DEFAULT_STATE_VIEW_KEYS : Int = 100000
+const DEFAULT_STATE_VIEW_KEYS : Int32 = 100000
 
 ///|
-fn state_view_cap() -> Int {
+fn state_view_cap() -> Int32 {
   match @env.get_env_var("MOONFLUX_STATE_KEYS") {
     Some(text) =>
       match (try? @string.parse_int(text[0:text.length()])) {

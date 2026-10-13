@@ -72,7 +72,7 @@ pub struct TlsSession {
   /// squeezing a pointer through it truncates it — which is a crash, not
   /// a warning (the first cut of this adapter did exactly that).
   ssl : Int64
-  fd : Int
+  fd : Int32
 }
 
 ///|
@@ -83,7 +83,7 @@ pub fn TlsSession::is_live(self : TlsSession) -> Bool {
 
 ///|
 /// The socket under the session, for polling.
-pub fn TlsSession::fd(self : TlsSession) -> Int {
+pub fn TlsSession::fd(self : TlsSession) -> Int32 {
   self.fd
 }
 
@@ -153,7 +153,7 @@ pub fn TlsContext::free(self : TlsContext) -> Unit {
 /// lets its caller poll (`@net` has the poll).
 pub fn TlsContext::attach(
   self : TlsContext,
-  fd : Int,
+  fd : Int32,
 ) -> Result[TlsSession, String] {
   let ssl = tls_new(self.ctx, fd)
   if ssl == 0L {
@@ -207,7 +207,7 @@ pub fn TlsSession::connect(self : TlsSession) -> Result[HandshakeStep, String] {
 ///|
 /// Bytes the session has decrypted and buffered. A poll loop that only
 /// watches the socket would sleep through them.
-pub fn TlsSession::pending(self : TlsSession) -> Int {
+pub fn TlsSession::pending(self : TlsSession) -> Int32 {
   tls_pending(self.ssl)
 }
 
@@ -217,8 +217,8 @@ pub fn TlsSession::pending(self : TlsSession) -> Int {
 pub fn TlsSession::read_some(
   self : TlsSession,
   buf : FixedArray[Byte],
-  len : Int,
-) -> Result[Int?, String] {
+  len : Int32,
+) -> Result[Int32?, String] {
   let rc = tls_read(self.ssl, buf, len)
   if rc > 0 {
     return Ok(Some(rc))
@@ -243,7 +243,7 @@ pub fn TlsSession::read_some(
 pub fn TlsSession::write_some(
   self : TlsSession,
   bytes : Bytes,
-) -> Result[Int?, String] {
+) -> Result[Int32?, String] {
   let rc = tls_write(self.ssl, bytes, bytes.length())
   if rc > 0 {
     return Ok(Some(rc))
@@ -269,7 +269,7 @@ pub fn TlsSession::close(self : TlsSession) -> Unit {
 // The shim, as externs. Names match tls_shim.c exactly.
 
 ///|
-extern "C" fn tls_init() -> Int = "mf_tls_init"
+extern "C" fn tls_init() -> Int32 = "mf_tls_init"
 
 ///|
 #borrow(host)
@@ -280,7 +280,7 @@ extern "C" fn tls_verify_result(ssl : Int64) -> Int64 = "mf_tls_verify_result"
 
 ///|
 #borrow(buf)
-extern "C" fn tls_last_error(buf : FixedArray[Byte], len : Int) -> Unit = "mf_tls_last_error"
+extern "C" fn tls_last_error(buf : FixedArray[Byte], len : Int32) -> Unit = "mf_tls_last_error"
 
 ///|
 #borrow(cert, key, ca)
@@ -288,7 +288,7 @@ extern "C" fn tls_server_ctx(
   cert : Bytes,
   key : Bytes,
   ca : Bytes,
-  require_client : Int,
+  require_client : Int32,
 ) -> Int64 = "mf_tls_server_ctx"
 
 ///|
@@ -299,21 +299,25 @@ extern "C" fn tls_client_ctx(ca : Bytes, cert : Bytes, key : Bytes) -> Int64 = "
 extern "C" fn tls_ctx_free(ctx : Int64) -> Unit = "mf_tls_ctx_free"
 
 ///|
-extern "C" fn tls_new(ctx : Int64, fd : Int) -> Int64 = "mf_tls_new"
+extern "C" fn tls_new(ctx : Int64, fd : Int32) -> Int64 = "mf_tls_new"
 
 ///|
-extern "C" fn tls_handshake(ssl : Int64, server : Int) -> Int = "mf_tls_handshake"
-
-///|
-#borrow(buf)
-extern "C" fn tls_read(ssl : Int64, buf : FixedArray[Byte], len : Int) -> Int = "mf_tls_read"
+extern "C" fn tls_handshake(ssl : Int64, server : Int32) -> Int32 = "mf_tls_handshake"
 
 ///|
 #borrow(buf)
-extern "C" fn tls_write(ssl : Int64, buf : Bytes, len : Int) -> Int = "mf_tls_write"
+extern "C" fn tls_read(
+  ssl : Int64,
+  buf : FixedArray[Byte],
+  len : Int32,
+) -> Int32 = "mf_tls_read"
 
 ///|
-extern "C" fn tls_pending(ssl : Int64) -> Int = "mf_tls_pending"
+#borrow(buf)
+extern "C" fn tls_write(ssl : Int64, buf : Bytes, len : Int32) -> Int32 = "mf_tls_write"
+
+///|
+extern "C" fn tls_pending(ssl : Int64) -> Int32 = "mf_tls_pending"
 
 ///|
 extern "C" fn tls_free(ssl : Int64) -> Unit = "mf_tls_free"

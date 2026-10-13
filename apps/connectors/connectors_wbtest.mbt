@@ -245,7 +245,7 @@ fn krec(key : String, value : String, ts : Int64) -> @protocol.Record {
 
 ///|
 /// A byte-wise patch, for tampering with a built batch.
-fn patch_byte(bytes : Bytes, at : Int, value : Int) -> Bytes {
+fn patch_byte(bytes : Bytes, at : Int32, value : Int32) -> Bytes {
   let out = Buffer::Buffer()
   out.write_bytes(bytes[0:at])
   out.write_byte(value.to_byte())
@@ -254,7 +254,7 @@ fn patch_byte(bytes : Bytes, at : Int, value : Int) -> Bytes {
 }
 
 ///|
-fn patch_u32(bytes : Bytes, at : Int, value : UInt) -> Bytes {
+fn patch_u32(bytes : Bytes, at : Int32, value : UInt32) -> Bytes {
   let out = Buffer::Buffer()
   out.write_bytes(bytes[0:at])
   out.write_byte((value >> 24).to_byte())

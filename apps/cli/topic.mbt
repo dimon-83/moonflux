@@ -107,7 +107,7 @@ fn topic_delete(argv : Array[String]) -> Unit {
 
 ///|
 /// Parses a positive integer flag, with the flag's name in the error.
-fn parse_positive(text : String, flag : String) -> Int {
+fn parse_positive(text : String, flag : String) -> Int32 {
   let value = match (try? @string.parse_int(text[0:text.length()])) {
     Ok(value) => value
     Err(_) => fail("--\{flag} must be an integer (got '\{text}')")

@@ -70,7 +70,7 @@ fn audit_deny(
   data_dir : String,
   user : String,
   role : String,
-  cmd : Int,
+  cmd : Int32,
   topic : String?,
   reason : String,
 ) -> Unit {
@@ -113,8 +113,8 @@ fn authorize_data_command(
   data_dir : String,
   topic : String,
   write : Bool,
-  cmd : Int,
-) -> Result[Unit, (Int, String)] {
+  cmd : Int32,
+) -> Result[Unit, (Int32, String)] {
   match identity {
     None => Ok(()) // trusted mode: no credentials configured
     Some(identity) =>

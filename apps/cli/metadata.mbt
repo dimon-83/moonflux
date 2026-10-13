@@ -32,8 +32,8 @@ pub(all) struct ClusterMetadata {
 /// A declared topic, as authored.
 pub(all) struct ClusterMetadataTopic {
   name : String
-  partitions : Int
-  replication_factor : Int
+  partitions : Int32
+  replication_factor : Int32
 } derive(Debug, Eq, Show)
 
 ///|

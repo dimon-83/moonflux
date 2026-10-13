@@ -42,7 +42,7 @@ let state : AverageState = AverageState::{
 fn parse_state_value(
   text : String,
   key : String,
-) -> Result[(Double, Int), String] {
+) -> Result[(Double, Int32), String] {
   // split returns an iterator, and a state value with the wrong number of
   // fields is a corrupted key: count the parts instead of pretending the
   // first two are the pair
@@ -74,17 +74,17 @@ fn parse_state_value(
 }
 
 ///|
-pub fn mf_op_abi_version() -> Int {
+pub fn mf_op_abi_version() -> Int32 {
   @sdk.abi_version()
 }
 
 ///|
-pub fn mf_op_alloc_input(len : Int) -> Bytes {
+pub fn mf_op_alloc_input(len : Int32) -> Bytes {
   @sdk.alloc_input(len)
 }
 
 ///|
-pub fn mf_op_init(config : Bytes) -> Int {
+pub fn mf_op_init(config : Bytes) -> Int32 {
   let cfg = match @sdk.parse_config(config) {
     Ok(cfg) => cfg
     Err(_) => return -1
@@ -139,12 +139,12 @@ pub fn mf_op_process(input : Bytes) -> Bytes {
 }
 
 ///|
-pub fn mf_op_output_len() -> Int {
+pub fn mf_op_output_len() -> Int32 {
   @sdk.output_len()
 }
 
 ///|
-pub fn mf_op_last_status() -> Int {
+pub fn mf_op_last_status() -> Int32 {
   @sdk.last_status()
 }
 
@@ -154,7 +154,7 @@ pub fn mf_op_last_error() -> Bytes {
 }
 
 ///|
-pub fn mf_op_state_abi_version() -> Int {
+pub fn mf_op_state_abi_version() -> Int32 {
   @sdk.state_abi_version()
 }
 
@@ -164,7 +164,7 @@ pub fn mf_op_state_apply(input : Bytes) -> Bytes {
     name: "average",
     process: fn(state_in, records) {
       let sums : Map[String, Double] = {}
-      let counts : Map[String, Int] = {}
+      let counts : Map[String, Int32] = {}
       for e in state_in {
         let k = match (try? @utf8.decode(e.key[0:e.key.length()])) {
           Ok(text) => text

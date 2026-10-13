@@ -8,7 +8,7 @@ fn spu(id : String) -> @cluster.SpuSpec {
 }
 
 ///|
-fn topic(name : String, partitions : Int, rf : Int) -> @cluster.TopicSpec {
+fn topic(name : String, partitions : Int32, rf : Int32) -> @cluster.TopicSpec {
   @cluster.TopicSpec::{ name, partitions, replication_factor: rf, }
 }
 

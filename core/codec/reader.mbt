@@ -38,7 +38,7 @@ pub impl Show for DecodeError with fn output(self, logger) {
 /// by `read_view` remain valid for the lifetime of the source.
 pub struct Reader {
   bytes : Bytes
-  mut pos : Int
+  mut pos : Int32
 }
 
 ///|
@@ -49,13 +49,13 @@ pub fn Reader::new(bytes : Bytes) -> Reader {
 
 ///|
 /// Number of bytes left before the cursor hits the end.
-pub fn Reader::remaining(self : Reader) -> Int {
+pub fn Reader::remaining(self : Reader) -> Int32 {
   self.bytes.length() - self.pos
 }
 
 ///|
 /// Current absolute position within the source bytes.
-pub fn Reader::position(self : Reader) -> Int {
+pub fn Reader::position(self : Reader) -> Int32 {
   self.pos
 }
 
@@ -89,7 +89,7 @@ pub fn Reader::peek_byte(self : Reader) -> Result[Byte, DecodeError] {
 /// Reads `n` bytes as a zero-copy view into the source.
 pub fn Reader::read_view(
   self : Reader,
-  n : Int,
+  n : Int32,
 ) -> Result[BytesView, DecodeError] {
   if n < 0 {
     return Err(LengthOutOfRange)
@@ -104,7 +104,10 @@ pub fn Reader::read_view(
 
 ///|
 /// Reads `n` bytes as an owned copy.
-pub fn Reader::read_bytes(self : Reader, n : Int) -> Result[Bytes, DecodeError] {
+pub fn Reader::read_bytes(
+  self : Reader,
+  n : Int32,
+) -> Result[Bytes, DecodeError] {
   match self.read_view(n) {
     Ok(view) => Ok(view.to_owned())
     Err(e) => Err(e)
@@ -138,7 +141,7 @@ pub fn Reader::read_uleb128(self : Reader) -> Result[UInt64, DecodeError] {
 ///|
 /// Reads an unsigned LEB128 length and validates it fits in `Int`
 /// (32-bit on every MoonBit backend) before returning it.
-pub fn Reader::read_uleb128_len(self : Reader) -> Result[Int, DecodeError] {
+pub fn Reader::read_uleb128_len(self : Reader) -> Result[Int32, DecodeError] {
   let v = match self.read_uleb128() {
     Ok(v) => v
     Err(e) => return Err(e)
@@ -165,8 +168,8 @@ pub fn Reader::read_u16_be(self : Reader) -> Result[UInt16, DecodeError] {
 
 ///|
 /// Reads a 32-bit big-endian unsigned integer.
-pub fn Reader::read_u32_be(self : Reader) -> Result[UInt, DecodeError] {
-  let mut v : UInt = 0U
+pub fn Reader::read_u32_be(self : Reader) -> Result[UInt32, DecodeError] {
+  let mut v : UInt32 = 0U
   for _i in 0..<4 {
     let b = match self.read_byte() {
       Ok(b) => b

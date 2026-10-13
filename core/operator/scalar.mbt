@@ -33,12 +33,12 @@ pub const EXPORT_SCALAR_EVAL : String = "mf_op_eval"
 /// back": on success `(ptr << 32) | len` — a wasm32 pointer is always
 /// below 2^31, so the value stays positive — and a negative value is a
 /// structured error code.
-pub fn scalar_result_pack(ptr : Int, len : Int) -> Int64 {
+pub fn scalar_result_pack(ptr : Int32, len : Int32) -> Int64 {
   (ptr.to_int64() << 32) | len.to_int64()
 }
 
 ///|
-pub fn scalar_result_unpack(packed : Int64) -> Result[(Int, Int), Int64] {
+pub fn scalar_result_unpack(packed : Int64) -> Result[(Int32, Int32), Int64] {
   if packed < 0L {
     return Err(packed)
   }

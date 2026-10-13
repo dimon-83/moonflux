@@ -27,7 +27,7 @@
 /// ACLs, and know that a URL is not a secret store.
 pub(all) struct MqttUrl {
   host : String
-  port : Int
+  port : Int32
   topic : String
   user : String?
   password : String?
@@ -86,7 +86,7 @@ pub fn parse_mqtt_url(url : String) -> Result[MqttUrl, String] {
 ///|
 /// The MQTT remaining-length varint: 7 bits per byte, high bit marks a
 /// continuation, at most four bytes (268 435 455).
-fn encode_remaining_length(len : Int) -> Bytes {
+fn encode_remaining_length(len : Int32) -> Bytes {
   let out = Buffer::Buffer()
   let mut value = len
   while true {
@@ -104,7 +104,7 @@ fn encode_remaining_length(len : Int) -> Bytes {
 }
 
 ///|
-fn mqtt_packet(type_flags : Int, body : Bytes) -> Bytes {
+fn mqtt_packet(type_flags : Int32, body : Bytes) -> Bytes {
   let out = Buffer::Buffer()
   out.write_byte(type_flags.to_byte())
   out.write_bytes(encode_remaining_length(body.length()))
@@ -153,7 +153,7 @@ fn build_connect(
 }
 
 ///|
-fn build_subscribe(packet_id : Int, topic : String) -> Bytes {
+fn build_subscribe(packet_id : Int32, topic : String) -> Bytes {
   let body = Buffer::Buffer()
   body.write_byte((packet_id >> 8).to_byte())
   body.write_byte((packet_id & 0xFF).to_byte())
@@ -171,7 +171,7 @@ fn build_publish(topic : String, payload : Bytes) -> Bytes {
 }
 
 ///|
-fn build_puback(packet_id : Int) -> Bytes {
+fn build_puback(packet_id : Int32) -> Bytes {
   let body = Buffer::Buffer()
   body.write_byte((packet_id >> 8).to_byte())
   body.write_byte((packet_id & 0xFF).to_byte())
@@ -179,7 +179,7 @@ fn build_puback(packet_id : Int) -> Bytes {
 }
 
 ///|
-fn read_uint16_be(bytes : Bytes, at : Int) -> Int {
+fn read_uint16_be(bytes : Bytes, at : Int32) -> Int32 {
   (bytes[at].to_int() << 8) | bytes[at + 1].to_int()
 }
 
@@ -190,7 +190,7 @@ fn read_uint16_be(bytes : Bytes, at : Int) -> Int {
 /// Reads exactly `n` bytes; a timeout mid-packet is an error — a
 /// partial packet is a broken packet, and the caller has already
 /// decided what "nothing at all" means before it gets here.
-fn read_exact(stream : @net.TcpStream, n : Int) -> Result[Bytes, String] {
+fn read_exact(stream : @net.TcpStream, n : Int32) -> Result[Bytes, String] {
   let out = Buffer::Buffer()
   let chunk : FixedArray[Byte] = FixedArray::make(n, b'\x00')
   let mut need = n
@@ -211,7 +211,7 @@ fn read_exact(stream : @net.TcpStream, n : Int) -> Result[Bytes, String] {
 /// One control packet as `(type_flags, body)`, or `None` when the
 /// socket is quiet for the receive deadline. Only the *first* byte may
 /// time out; after that a stall is a broken packet, not a quiet broker.
-fn read_packet(stream : @net.TcpStream) -> Result[(Int, Bytes)?, String] {
+fn read_packet(stream : @net.TcpStream) -> Result[(Int32, Bytes)?, String] {
   let head : FixedArray[Byte] = FixedArray::make(1, b'\x00')
   match stream.recv(head, 1) {
     Ok(0) => return Err("broker closed the connection")
@@ -258,12 +258,12 @@ fn read_packet(stream : @net.TcpStream) -> Result[(Int, Bytes)?, String] {
 priv struct Publish {
   topic : String
   payload : Bytes
-  qos : Int
-  packet_id : Int
+  qos : Int32
+  packet_id : Int32
 }
 
 ///|
-fn decode_publish(type_flags : Int, body : Bytes) -> Result[Publish, String] {
+fn decode_publish(type_flags : Int32, body : Bytes) -> Result[Publish, String] {
   if body.length() < 2 {
     return Err("publish shorter than its topic length")
   }

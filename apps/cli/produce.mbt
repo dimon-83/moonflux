@@ -126,7 +126,7 @@ fn produce_local(
 ///|
 fn produce_remote(
   topic : String,
-  partition : Int,
+  partition : Int32,
   file : String,
   key_mode : @connectors.KeyMode,
   addr : String,

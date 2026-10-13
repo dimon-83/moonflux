@@ -30,14 +30,14 @@
 /// may not be stricter than the protocol it carries without saying so;
 /// now the bound is derived from the protocol, and crossing it is
 /// reported rather than silent.
-const MAX_INBOX_BYTES : Int = @protocol.MAX_BATCH_BYTES + 1048576
+const MAX_INBOX_BYTES : Int32 = @protocol.MAX_BATCH_BYTES + 1048576
 
 ///|
 /// The same bound for the write side. The server's own largest reply is
 /// one batch frame, so a peer that reads at all never reaches it; a
 /// peer that has stopped reading is dropped instead of being allowed to
 /// grow this process's heap. Reported, like the inbox.
-const MAX_OUTBOX_BYTES : Int = @protocol.MAX_BATCH_BYTES + 1048576
+const MAX_OUTBOX_BYTES : Int32 = @protocol.MAX_BATCH_BYTES + 1048576
 
 ///|
 /// One served connection.
@@ -60,7 +60,7 @@ pub struct HubConnection {
   /// round costs the same bytes once.
   mut pending : Array[Bytes]
   /// how many bytes `pending` holds
-  mut pending_len : Int
+  mut pending_len : Int32
   /// for WebSocket connections: payload bytes unwrapped from WS frames,
   /// waiting for the frame parser. A WS frame is *envelope*, the bytes
   /// inside it are the session's frames — conflating the two makes every
@@ -79,7 +79,7 @@ pub struct HubConnection {
   /// this file waits for a peer any more.
   tls_deadline : Int64
   /// the configured handshake window, for the log line when it expires
-  window_hint_ms : Int
+  window_hint_ms : Int32
   /// a label for logs: "tcp" or "websocket"
   mut kind : String
 }
@@ -148,8 +148,8 @@ pub struct ConnectionHub {
   mut tls : @tls.TlsContext?
   mut conns : Array[HubConnection]
   /// the longest frame header + the largest payload this server accepts
-  max_frame : Int
-  poll_timeout_ms : Int
+  max_frame : Int32
+  poll_timeout_ms : Int32
   /// The metrics/health listener (P35), when this server has one. It sits at
   /// the END of the poll set on purpose: connections are `index - 1` in the
   /// existing math, and appending a listener keeps every one of those indices
@@ -165,13 +165,13 @@ pub struct ConnectionHub {
   /// connects and says nothing is paid by the *loop*: the control plane
   /// keeps a 3s liveness window, so it takes a tighter bound than a data
   /// port whose peers are all nodes it already knows.
-  handshake_deadline_ms : Int
+  handshake_deadline_ms : Int32
 }
 
 ///|
 pub fn ConnectionHub::new(
   listener : @net.TcpListener,
-  poll_timeout_ms : Int,
+  poll_timeout_ms : Int32,
 ) -> ConnectionHub {
   ConnectionHub::{
     listener,
@@ -223,7 +223,7 @@ pub fn ConnectionHub::rotate_tls(
 /// peer that connects and says nothing can cost the loop.
 pub fn ConnectionHub::with_handshake_deadline(
   self : ConnectionHub,
-  ms : Int,
+  ms : Int32,
 ) -> ConnectionHub {
   ConnectionHub::{
     listener: self.listener,
@@ -311,7 +311,7 @@ fn ConnectionHub::adopt(self : ConnectionHub, stream : @net.TcpStream) -> Unit {
 /// The deadline this connection was given, for the log line. Kept as a
 /// derived read rather than a second stored field: two copies of a
 /// number is one copy too many.
-fn HubConnection::handshake_ms_hint(self : HubConnection) -> Int {
+fn HubConnection::handshake_ms_hint(self : HubConnection) -> Int32 {
   self.window_hint_ms
 }
 
@@ -347,7 +347,7 @@ fn step_handshake(conn : HubConnection) -> Unit {
 
 ///|
 /// How long a TLS handshake may take before the connection is dropped.
-const HANDSHAKE_DEADLINE_MS : Int = 2000
+const HANDSHAKE_DEADLINE_MS : Int32 = 2000
 
 ///|
 /// Answers the metrics listener's queued scrapes, at most a few per round.
@@ -402,13 +402,13 @@ fn ConnectionHub::serve_metrics(self : ConnectionHub) -> Unit {
 /// How long a metrics client has to finish its request line. Small: this is a
 /// scrape, not a data transfer, and the deadline is the whole reason a
 /// stalled peer cannot cost the loop (P13's rule, applied to a new listener).
-const METRICS_READ_DEADLINE_MS : Int = 250
+const METRICS_READ_DEADLINE_MS : Int32 = 250
 
 ///|
 /// How many scrapes one round will answer. Small: an operator scraping every
 /// second is one connection, and a fleet of them must not be able to turn the
 /// data plane's loop into a metrics server.
-const METRICS_PER_ROUND : Int = 4
+const METRICS_PER_ROUND : Int32 = 4
 
 ///|
 /// Reads an HTTP request line (enough to route: method and path). Headers and
@@ -491,7 +491,7 @@ pub fn ConnectionHub::poll_once(
   self : ConnectionHub,
   handler : HubHandler,
   on_new_connection : (String) -> Unit,
-) -> Int {
+) -> Int32 {
   // 1. one wait for everything: the listener and every live connection
   //    share one poll set, so a request is read in the round it
   //    arrives. The listener used to be waited on *first and alone* —
@@ -501,7 +501,7 @@ pub fn ConnectionHub::poll_once(
   //    every round: a constant per-request tax of one hub tick,
   //    size-independent (the P17 benchmark measured it at ~200 ms on a
   //    ~1 ms round trip; see ticket 75).
-  let fds : Array[Int] = [self.listener.raw_fd()]
+  let fds : Array[Int32] = [self.listener.raw_fd()]
   for conn in self.conns {
     fds.push((conn.stream.fd)())
   }
@@ -647,7 +647,7 @@ fn read_available(conn : HubConnection) -> Result[Unit, String] {
 /// reads rather than a few thousand (which is what made the join cost
 /// visible in the first place), small enough to stay a buffer and not
 /// an allocation.
-const READ_CHUNK_BYTES : Int = 65536
+const READ_CHUNK_BYTES : Int32 = 65536
 
 ///|
 /// Joins this round's reads into the contiguous inbox the parser needs.
@@ -947,7 +947,7 @@ fn HubConnection::source(self : HubConnection) -> Bytes {
 
 ///|
 /// Drops `n` consumed bytes from that same buffer.
-fn HubConnection::consume(self : HubConnection, n : Int) -> Unit {
+fn HubConnection::consume(self : HubConnection, n : Int32) -> Unit {
   if self.kind == "websocket" {
     self.decoded = self.decoded[n:self.decoded.length()].to_owned()
   } else {

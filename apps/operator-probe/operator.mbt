@@ -18,7 +18,7 @@
 
 ///|
 priv struct ProbeState {
-  mut missing : Int
+  mut missing : Int32
 }
 
 ///|
@@ -43,17 +43,17 @@ fn json_string(text : String) -> String {
 }
 
 ///|
-pub fn mf_op_abi_version() -> Int {
+pub fn mf_op_abi_version() -> Int32 {
   @sdk.abi_version()
 }
 
 ///|
-pub fn mf_op_alloc_input(len : Int) -> Bytes {
+pub fn mf_op_alloc_input(len : Int32) -> Bytes {
   @sdk.alloc_input(len)
 }
 
 ///|
-pub fn mf_op_init(config : Bytes) -> Int {
+pub fn mf_op_init(config : Bytes) -> Int32 {
   let cfg = match @sdk.parse_config(config) {
     Ok(cfg) => cfg
     Err(_) => return -1
@@ -95,12 +95,12 @@ pub fn mf_op_process(input : Bytes) -> Bytes {
 }
 
 ///|
-pub fn mf_op_output_len() -> Int {
+pub fn mf_op_output_len() -> Int32 {
   @sdk.output_len()
 }
 
 ///|
-pub fn mf_op_last_status() -> Int {
+pub fn mf_op_last_status() -> Int32 {
   @sdk.last_status()
 }
 
@@ -110,7 +110,7 @@ pub fn mf_op_last_error() -> Bytes {
 }
 
 ///|
-pub fn mf_op_state_abi_version() -> Int {
+pub fn mf_op_state_abi_version() -> Int32 {
   @sdk.state_abi_version()
 }
 
@@ -119,7 +119,7 @@ pub fn mf_op_state_apply(input : Bytes) -> Bytes {
   let probe = @sdk.GuestStatefulOperator::{
     name: "probe",
     process: fn(state_in, records) {
-      let counts : Map[String, Int] = {}
+      let counts : Map[String, Int32] = {}
       for e in state_in {
         let k = match (try? @utf8.decode(e.key[0:e.key.length()])) {
           Ok(text) => text

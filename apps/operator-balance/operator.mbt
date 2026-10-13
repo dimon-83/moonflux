@@ -38,7 +38,7 @@ let state : BalanceState = BalanceState::{ commit: true, }
 
 ///|
 /// Reads one integer field out of a delta record's JSON value.
-fn delta_of(value : Bytes) -> Result[(String, Int, String, String), String] {
+fn delta_of(value : Bytes) -> Result[(String, Int32, String, String), String] {
   let iban = match @sdk.json_field(value, "iban") {
     Ok(Some(@sdk.ScalarText(text))) => text
     Ok(_) => return Err("balance record has no iban")
@@ -69,17 +69,17 @@ fn delta_of(value : Bytes) -> Result[(String, Int, String, String), String] {
 }
 
 ///|
-pub fn mf_op_abi_version() -> Int {
+pub fn mf_op_abi_version() -> Int32 {
   @sdk.abi_version()
 }
 
 ///|
-pub fn mf_op_alloc_input(len : Int) -> Bytes {
+pub fn mf_op_alloc_input(len : Int32) -> Bytes {
   @sdk.alloc_input(len)
 }
 
 ///|
-pub fn mf_op_init(config : Bytes) -> Int {
+pub fn mf_op_init(config : Bytes) -> Int32 {
   let cfg = match @sdk.parse_config(config) {
     Ok(cfg) => cfg
     Err(_) => return -1
@@ -114,12 +114,12 @@ pub fn mf_op_process(input : Bytes) -> Bytes {
 }
 
 ///|
-pub fn mf_op_output_len() -> Int {
+pub fn mf_op_output_len() -> Int32 {
   @sdk.output_len()
 }
 
 ///|
-pub fn mf_op_last_status() -> Int {
+pub fn mf_op_last_status() -> Int32 {
   @sdk.last_status()
 }
 
@@ -129,7 +129,7 @@ pub fn mf_op_last_error() -> Bytes {
 }
 
 ///|
-pub fn mf_op_state_abi_version() -> Int {
+pub fn mf_op_state_abi_version() -> Int32 {
   @sdk.state_abi_version()
 }
 
@@ -138,7 +138,7 @@ pub fn mf_op_state_apply(input : Bytes) -> Bytes {
   let balance = @sdk.GuestStatefulOperator::{
     name: "balance",
     process: fn(state_in, records) {
-      let balances : Map[String, Int] = {}
+      let balances : Map[String, Int32] = {}
       for e in state_in {
         let k = match (try? @utf8.decode(e.key[0:e.key.length()])) {
           Ok(text) => text

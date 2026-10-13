@@ -171,7 +171,7 @@ fn cmd_serve(argv : Array[String]) -> Unit {
 fn serve_maintenance_targets(
   data_dir : String,
   groups : GroupRegistry,
-  f : (String, Int, Int64) -> Unit,
+  f : (String, Int32, Int64) -> Unit,
 ) -> Unit {
   let topic_names = match @fs.list_dir("\{data_dir}/topics") {
     Ok(names) => names
@@ -242,7 +242,7 @@ fn serve_compact_all(
 fn serve_partition_floor(
   groups : GroupRegistry,
   topic : String,
-  partition : Int,
+  partition : Int32,
   committed : Int64,
 ) -> Int64 {
   let floors = groups.floors([
@@ -268,7 +268,7 @@ const HOUSEKEEPING_MS : Int64 = 1000L
 ///|
 /// How long the hub waits for activity before looping (its tick, and
 /// the listener's accept deadline).
-const HUB_TICK_MS : Int = 200
+const HUB_TICK_MS : Int32 = 200
 
 ///|
 /// One request against a served connection. This is the single-connection
@@ -636,7 +636,7 @@ fn dispatch_session_frame(
 fn segment_view(
   data_dir : String,
   ref : @client.PartitionRef,
-) -> Result[Bytes, (Int, String)] {
+) -> Result[Bytes, (Int32, String)] {
   let log = match open_partition_log(data_dir, ref.topic, ref.partition) {
     Ok(log) => log
     Err(e) => return Err((@client.ERR_STORAGE, e))
@@ -653,7 +653,7 @@ fn segment_view(
 }
 
 ///|
-fn reply_frame(rid : Int, code : Int, payload : Bytes) -> @client.Frame {
+fn reply_frame(rid : Int32, code : Int32, payload : Bytes) -> @client.Frame {
   if code == @client.CMD_OK {
     @client.Frame::{ cmd: @client.CMD_OK, rid, payload, }
   } else {
@@ -664,7 +664,7 @@ fn reply_frame(rid : Int, code : Int, payload : Bytes) -> @client.Frame {
 }
 
 ///|
-fn err_frame(rid : Int, code : Int, message : String) -> @client.Frame {
+fn err_frame(rid : Int32, code : Int32, message : String) -> @client.Frame {
   @client.Frame::{
     cmd: @client.CMD_ERR,
     rid,
@@ -673,13 +673,13 @@ fn err_frame(rid : Int, code : Int, message : String) -> @client.Frame {
 }
 
 ///|
-fn reply(cmd : Int, payload : Bytes) -> (Int, Bytes) {
+fn reply(cmd : Int32, payload : Bytes) -> (Int32, Bytes) {
   (cmd, payload)
 }
 
 ///|
 /// Structured error reply with a stable code (client-visible).
-fn err_reply(code : Int, msg : String) -> (Int, Bytes) {
+fn err_reply(code : Int32, msg : String) -> (Int32, Bytes) {
   reply(@client.CMD_ERR, @client.encode_error(code, msg))
 }
 
@@ -688,7 +688,7 @@ fn dispatch_produce(
   payload : Bytes,
   data_dir : String,
   identity : @auth.Identity?,
-) -> (Int, Bytes) {
+) -> (Int32, Bytes) {
   let reader = @codec.Reader::new(payload)
   let topic = match read_topic_name(reader) {
     Ok(topic) => topic
@@ -744,7 +744,7 @@ fn dispatch_produce_partition(
   payload : Bytes,
   data_dir : String,
   identity : @auth.Identity?,
-) -> (Int, Bytes) {
+) -> (Int32, Bytes) {
   let (topic, partition, frame) = match
     @client.decode_partitioned_produce(payload) {
     Ok(parsed) => parsed
@@ -786,7 +786,7 @@ fn dispatch_fetch_partition(
   data_dir : String,
   rules : RuleState,
   identity : @auth.Identity?,
-) -> (Int, Bytes) {
+) -> (Int32, Bytes) {
   let (topic, partition, from, max) = match
     @client.decode_partitioned_fetch(payload) {
     Ok(parsed) => parsed
@@ -894,7 +894,7 @@ priv struct FramedWindow {
   /// the first contributing offset (`from` when nothing did)
   base : Int64
   /// output records across the frames
-  records : Int
+  records : Int32
 }
 
 ///|
@@ -922,7 +922,7 @@ fn frame_window(
   entries : Array[@log.LogEntry],
   rules : RuleState,
   from : Int64,
-) -> Result[FramedWindow, (Int, String)] {
+) -> Result[FramedWindow, (Int32, String)] {
   let packer = ReplyPacker::new(from)
   let mut bytes = @protocol.FRAME_OVERHEAD_BYTES
   let mut records = 0
@@ -960,7 +960,7 @@ fn dispatch_fetch(
   data_dir : String,
   rules : RuleState,
   identity : @auth.Identity?,
-) -> (Int, Bytes) {
+) -> (Int32, Bytes) {
   let reader = @codec.Reader::new(payload)
   let topic = match read_topic_name(reader) {
     Ok(topic) => topic
@@ -1031,7 +1031,7 @@ fn dispatch_fetch_committed(
   high_watermark : Int64,
   log_end_offset : Int64,
   identity : @auth.Identity?,
-) -> (Int, Bytes) {
+) -> (Int32, Bytes) {
   let reader = @codec.Reader::new(payload)
   let topic = match read_topic_name(reader) {
     Ok(topic) => topic
@@ -1115,11 +1115,11 @@ fn dispatch_fetch_committed(
 /// the log cache lets go of the topic's handles **before** the files
 /// go, so no cached entry can outlive the data it describes.
 fn dispatch_topic_command(
-  cmd : Int,
+  cmd : Int32,
   payload : Bytes,
   data_dir : String,
   identity : @auth.Identity?,
-) -> Result[Bytes, (Int, String)] {
+) -> Result[Bytes, (Int32, String)] {
   let store = file_metadata_store(data_dir)
   let user = match identity {
     Some(identity) => identity.name
@@ -1236,7 +1236,7 @@ fn dispatch_topic_command(
 fn dispatch_apply(
   payload : Bytes,
   data_dir : String,
-) -> Result[Bytes, (Int, String)] {
+) -> Result[Bytes, (Int32, String)] {
   let text = @utf8.decode_lossy(payload[0:payload.length()])
   let json = @json.parse(text[0:text.length()]) catch {
     e => return Err((@client.ERR_BAD_PAYLOAD, "spec is not valid JSON: \{e}"))

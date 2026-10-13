@@ -166,7 +166,7 @@ test "segment file is a valid protocol byte stream" {
 }
 
 ///|
-fn flip_byte(data : Bytes, index : Int, replacement : Byte) -> Bytes {
+fn flip_byte(data : Bytes, index : Int32, replacement : Byte) -> Bytes {
   let out = Buffer::Buffer()
   for i in 0..<data.length() {
     out.write_byte(if i == index { replacement } else { data[i] })
@@ -177,7 +177,10 @@ fn flip_byte(data : Bytes, index : Int, replacement : Byte) -> Bytes {
 ///|
 /// Builds a log with `n` records of `batch` size each, on a memory
 /// segment whose bytes the test can also inspect.
-fn seeded_log(n : Int, batch : Int) -> (@log.SegmentedLog, @log.MemorySegment) {
+fn seeded_log(
+  n : Int32,
+  batch : Int32,
+) -> (@log.SegmentedLog, @log.MemorySegment) {
   let memory = @log.MemorySegment::new()
   let log = match @log.SegmentedLog::open(@log.MemorySegment::handle(memory)) {
     Ok(log) => log

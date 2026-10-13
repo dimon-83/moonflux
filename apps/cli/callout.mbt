@@ -28,7 +28,7 @@ struct CassetteEntry {
   method : String
   url : String
   body : String
-  status : Int
+  status : Int32
   response : String
 }
 
@@ -41,7 +41,7 @@ struct Callout {
   headers : Array[(String, String)]
   mode : String
   cassette : String
-  timeout_ms : Int
+  timeout_ms : Int32
   entries : Array[CassetteEntry]
 }
 
@@ -347,7 +347,7 @@ fn is_placeholder_name(name : String) -> Bool {
 fn build_callout_request(
   method : String,
   host : String,
-  port : Int,
+  port : Int32,
   path : String,
   body : Bytes,
   headers : Array[(String, String)],
@@ -388,8 +388,8 @@ fn live_exchange(
   url : String,
   body : Bytes,
   headers : Array[(String, String)],
-  timeout_ms : Int,
-) -> Result[(Int, Bytes), String] {
+  timeout_ms : Int32,
+) -> Result[(Int32, Bytes), String] {
   let (host, port, path) = match @connectors.parse_http_url(url) {
     Ok(parts) => parts
     Err(e) => return Err(e)

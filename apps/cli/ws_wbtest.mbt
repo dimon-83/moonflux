@@ -125,7 +125,7 @@ test "an unmasked client frame is refused" {
 /// Writes a masked client frame (what a browser would send).
 fn write_masked_frame(
   conn : @client.Conn,
-  opcode : Int,
+  opcode : Int32,
   payload : Bytes,
 ) -> Unit {
   let out = @buffer.Buffer::Buffer()
@@ -147,7 +147,7 @@ fn write_masked_frame(
 ///|
 /// Reads one frame from a server (unmasked is expected here — the
 /// masking rule applies to clients).
-fn read_server_frame(conn : @client.Conn) -> (Int, Bytes) {
+fn read_server_frame(conn : @client.Conn) -> (Int32, Bytes) {
   let header = match (conn.recv_exact)(2) {
     Ok(header) => header
     Err(e) => abort("header: \{e}")

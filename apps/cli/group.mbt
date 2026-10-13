@@ -14,7 +14,7 @@
 /// get right for no gain at this cadence.
 fn group_request(
   sc_addr : String,
-  cmd : Int,
+  cmd : Int32,
   payload : Bytes,
   token : String?,
 ) -> Result[Bytes, String] {
@@ -233,7 +233,7 @@ fn group_describe(argv : Array[String]) -> Unit {
 /// starts, and whether it has moved since the last commit.
 struct GroupCursor {
   topic : String
-  partition : Int
+  partition : Int32
   mut next : Int64
   mut committed : Int64
 }
@@ -554,7 +554,7 @@ fn leave_group(
 fn leader_of(
   sc_addr : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
   token : String?,
 ) -> String? {
   let ref = @client.PartitionRef::{ topic, partition, }
@@ -579,9 +579,9 @@ fn leader_of(
 /// decides only how long the member pauses, never what it does: a
 /// shorter or longer sleep changes how promptly a rebalance is noticed,
 /// not the outcome.
-fn sleep_ms(ms : Int) -> Unit {
+fn sleep_ms(ms : Int32) -> Unit {
   cli_sleep_ms(ms)
 }
 
 ///|
-extern "C" fn cli_sleep_ms(ms : Int) -> Unit = "mf_cli_sleep_ms"
+extern "C" fn cli_sleep_ms(ms : Int32) -> Unit = "mf_cli_sleep_ms"

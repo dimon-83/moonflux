@@ -9,7 +9,7 @@
 fn partition_has_bytes(
   data_dir : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> Bool {
   match @fs.exists(topic_log_path(data_dir, topic, partition)) {
     Ok(true) => return true
@@ -26,7 +26,11 @@ fn partition_has_bytes(
 /// A partition's segment file. The layout is one file per partition
 /// under the topic's directory; partition 0 predates multi-partition
 /// storage, which is why every pre-P5 caller passes 0.
-fn topic_log_path(data_dir : String, topic : String, partition : Int) -> String {
+fn topic_log_path(
+  data_dir : String,
+  topic : String,
+  partition : Int32,
+) -> String {
   "\{data_dir}/topics/\{topic}/partition-\{partition}.log"
 }
 
@@ -65,7 +69,7 @@ fn open_topic_log_shared(
 /// How many bytes a segment may hold before the log rolls to a new one
 /// (P8). Configurable because the value is a policy, not a fact: the
 /// storage gate sets it small to exercise rolling with a few records.
-fn roll_bytes() -> Int {
+fn roll_bytes() -> Int32 {
   match @env.get_env_var("MOONFLUX_ROLL_BYTES") {
     Some(text) =>
       match (try? @string.parse_int(text[0:text.length()])) {
@@ -77,7 +81,7 @@ fn roll_bytes() -> Int {
 }
 
 ///|
-const DEFAULT_ROLL_BYTES : Int = 1048576
+const DEFAULT_ROLL_BYTES : Int32 = 1048576
 
 ///|
 /// The retention policy in force (P8/T46). Both bounds default to 0 =
@@ -145,7 +149,7 @@ fn parse_compact_interval_ms(text : String?) -> Int64 {
 /// background pass will pay for. Absent/junk = 0 = rewrite as soon as
 /// anything is droppable, which is exactly the manual command's
 /// semantics.
-fn parse_min_dirty_bytes(text : String?) -> Int {
+fn parse_min_dirty_bytes(text : String?) -> Int32 {
   match text {
     Some(text) =>
       match (try? @string.parse_int(text[0:text.length()])) {
@@ -162,7 +166,7 @@ fn compact_interval_ms() -> Int64 {
 }
 
 ///|
-fn compaction_min_dirty_bytes() -> Int {
+fn compaction_min_dirty_bytes() -> Int32 {
   parse_min_dirty_bytes(@env.get_env_var("MOONFLUX_COMPACT_MIN_DIRTY_BYTES"))
 }
 
@@ -190,10 +194,10 @@ fn maintenance_due(last : Int64, now : Int64, interval : Int64) -> Bool {
 fn retain_partition(
   data_dir : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
   floor : Int64,
   now_ms : Int64,
-) -> Result[Int, String] {
+) -> Result[Int32, String] {
   let log = match open_partition_log(data_dir, topic, partition) {
     Ok(log) => log
     Err(e) => return Err(e)
@@ -232,7 +236,7 @@ fn retain_partition(
 fn compact_partition(
   data_dir : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
   floor : Int64,
   now_ms : Int64,
   policy : @log.CompactionPolicy,
@@ -262,7 +266,7 @@ fn compact_partition(
 /// How many records may pass between index anchors (P8/T45). Same
 /// reasoning as the roll threshold: policy, so it is configurable, and
 /// the storage gate sets it small to exercise the index.
-fn index_every_records() -> Int {
+fn index_every_records() -> Int32 {
   match @env.get_env_var("MOONFLUX_INDEX_EVERY") {
     Some(text) =>
       match (try? @string.parse_int(text[0:text.length()])) {
@@ -285,7 +289,7 @@ fn index_every_records() -> Int {
 fn open_partition_log(
   data_dir : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> Result[@log.SegmentedLog, String] {
   match log_cache.get(data_dir, topic, partition) {
     Some(log) => return Ok(log)
@@ -323,7 +327,7 @@ fn open_partition_log(
 fn open_partition_log_uncached(
   data_dir : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> Result[@log.SegmentedLog, String] {
   if not(valid_topic(topic)) {
     return Err("invalid topic name '\{topic}'")

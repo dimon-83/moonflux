@@ -144,7 +144,7 @@ fn format_double(value : Double) -> String {
 /// did not. A health endpoint that always says "ok" is decoration, so the
 /// checks are real reads: the metadata document must load and the metrics
 /// surface itself must be reachable.
-pub fn health_json(checks : Array[(String, Bool)]) -> (Int, String) {
+pub fn health_json(checks : Array[(String, Bool)]) -> (Int32, String) {
   let mut all_ok = true
   let items = StringBuilder::new()
   for i, pair in checks {
@@ -173,7 +173,7 @@ pub fn answer_metrics_request(
   metrics : Metrics,
   now_ms : Int64,
   checks : () -> Array[(String, Bool)],
-) -> (Int, String, String) {
+) -> (Int32, String, String) {
   // (status, content-type, body)
   let line_end = match request.find("\n") {
     Some(at) => at
@@ -213,7 +213,7 @@ pub fn answer_metrics_request(
 /// purpose: it says "no keep-alive" in the version, so a client cannot be
 /// surprised by the close.
 pub fn http_response(
-  status : Int,
+  status : Int32,
   content_type : String,
   body : String,
 ) -> String {
@@ -287,9 +287,9 @@ pub fn open_metrics_listener(
 pub fn server_metrics(
   data_dir : String,
   started_ms : Int64,
-  topics : () -> Int,
-  partitions : () -> Int,
-  groups : () -> Int,
+  topics : () -> Int32,
+  partitions : () -> Int32,
+  groups : () -> Int32,
 ) -> Metrics {
   let metrics = Metrics::new(started_ms)
   metrics.gauge("moonflux_topics", fn() { topics().to_double() })
@@ -315,13 +315,13 @@ pub fn server_health(data_dir : String) -> Array[(String, Bool)] {
 /// A command counter name for a command code. The label value is a NUMBER
 /// from the protocol's closed set, never a topic or a client string: a client
 /// must not be able to grow this process's memory by inventing label values.
-pub fn command_counter(cmd : Int) -> String {
+pub fn command_counter(cmd : Int32) -> String {
   "moonflux_commands_total{cmd=\"\{cmd}\"}"
 }
 
 ///|
 /// An error counter name for a reply code.
-pub fn error_counter(code : Int) -> String {
+pub fn error_counter(code : Int32) -> String {
   "moonflux_errors_total{code=\"\{code}\"}"
 }
 
@@ -329,7 +329,7 @@ pub fn error_counter(code : Int) -> String {
 /// How many topics this node has declared. A read of the metadata document,
 /// not a cached number: a gauge that can drift from the state it describes is
 /// worse than no gauge.
-pub fn declared_topics(data_dir : String) -> Int {
+pub fn declared_topics(data_dir : String) -> Int32 {
   match (file_metadata_store(data_dir).load)() {
     Ok(metadata) => metadata.topics.length()
     Err(_) => 0
@@ -338,7 +338,7 @@ pub fn declared_topics(data_dir : String) -> Int {
 
 ///|
 /// How many partitions those declarations add up to.
-pub fn declared_partitions(data_dir : String) -> Int {
+pub fn declared_partitions(data_dir : String) -> Int32 {
   match (file_metadata_store(data_dir).load)() {
     Ok(metadata) => {
       let mut total = 0

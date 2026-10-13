@@ -254,7 +254,7 @@ pub fn check_read(
   info : OffsetInfo,
   mode : ReadMode,
   from : Int64,
-  max_records : Int,
+  max_records : Int32,
 ) -> Result[Unit, ReplicaError] {
   if from < 0L || max_records < 0 {
     return Err(OutOfRange("negative offset or count"))

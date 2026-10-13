@@ -4,7 +4,7 @@
 // later).
 
 ///|
-fn decl(name : String, partitions : Int, rf : Int) -> ClusterMetadataTopic {
+fn decl(name : String, partitions : Int32, rf : Int32) -> ClusterMetadataTopic {
   ClusterMetadataTopic::{ name, partitions, replication_factor: rf, }
 }
 

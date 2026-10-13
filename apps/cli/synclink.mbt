@@ -38,8 +38,8 @@ pub struct SyncLink {
   /// reported so churn is visible instead of merely absent. Constant per
   /// incarnation — the node redials by dropping the link and dialling a
   /// fresh one next round, so this is the count at *this* dial.
-  opens : Int
-  mut rounds : Int
+  opens : Int32
+  mut rounds : Int32
 }
 
 ///|
@@ -156,7 +156,7 @@ fn SyncLink::connect(
 /// because everything above waits by polling.
 fn dial_stream(
   host : String,
-  port : Int,
+  port : Int32,
   link : PeerLink,
 ) -> Result[(@net.Stream, @tls.TlsContext?), String] {
   match link.tls {
@@ -193,7 +193,7 @@ fn dial_stream(
 /// How long a dial plus handshake may take. A listening peer accepts
 /// from the backlog immediately, so this is a routing check (nothing
 /// there), not a patience setting.
-const HANDSHAKE_TIMEOUT_MS : Int = 1000
+const HANDSHAKE_TIMEOUT_MS : Int32 = 1000
 
 ///|
 /// Sends one request and waits for its reply, serving this node's own
@@ -202,9 +202,9 @@ const HANDSHAKE_TIMEOUT_MS : Int = 1000
 fn SyncLink::call(
   self : SyncLink,
   pump : () -> Unit,
-  cmd : Int,
+  cmd : Int32,
   payload : Bytes,
-  timeout_ms : Int,
+  timeout_ms : Int32,
 ) -> Result[Bytes, String] {
   let deadline = now_ms() + timeout_ms.to_int64()
   self.rounds = self.rounds + 1

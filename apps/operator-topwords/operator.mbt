@@ -34,7 +34,7 @@ priv struct TopWordsState {
   mut sentence_field : String
   mut time_field : String
   mut window_ms : Int64
-  mut top : Int
+  mut top : Int32
   mut separator : String
   mut lowercase : Bool
   mut time_format : String
@@ -106,10 +106,10 @@ fn words_of(
 /// Parses `<window>;<word>:<count>;…` into (window, words, counts).
 fn parse_accumulator(
   text : String,
-) -> Result[(Int64, Array[String], Array[Int]), String] {
+) -> Result[(Int64, Array[String], Array[Int32]), String] {
   let mut window = 0L
   let words : Array[String] = []
-  let counts : Array[Int] = []
+  let counts : Array[Int32] = []
   if text == "" {
     return Ok((window, words, counts))
   }
@@ -144,10 +144,14 @@ fn parse_accumulator(
 ///|
 /// Sorts (word, count) pairs by count descending, then word ascending, and
 /// renders the top `top` as a JSON array.
-fn render_top(words : Array[String], counts : Array[Int], top : Int) -> String {
+fn render_top(
+  words : Array[String],
+  counts : Array[Int32],
+  top : Int32,
+) -> String {
   let n = words.length()
   // an index sort keeps this readable without a tuple-comparison helper
-  let order : Array[Int] = []
+  let order : Array[Int32] = []
   for i in 0..<n {
     order.push(i)
   }
@@ -217,17 +221,17 @@ fn event_time(value : Bytes) -> Result[Int64, String] {
 }
 
 ///|
-pub fn mf_op_abi_version() -> Int {
+pub fn mf_op_abi_version() -> Int32 {
   @sdk.abi_version()
 }
 
 ///|
-pub fn mf_op_alloc_input(len : Int) -> Bytes {
+pub fn mf_op_alloc_input(len : Int32) -> Bytes {
   @sdk.alloc_input(len)
 }
 
 ///|
-pub fn mf_op_init(config : Bytes) -> Int {
+pub fn mf_op_init(config : Bytes) -> Int32 {
   let cfg = match @sdk.parse_config(config) {
     Ok(cfg) => cfg
     Err(_) => return -1
@@ -333,12 +337,12 @@ pub fn mf_op_process(input : Bytes) -> Bytes {
 }
 
 ///|
-pub fn mf_op_output_len() -> Int {
+pub fn mf_op_output_len() -> Int32 {
   @sdk.output_len()
 }
 
 ///|
-pub fn mf_op_last_status() -> Int {
+pub fn mf_op_last_status() -> Int32 {
   @sdk.last_status()
 }
 
@@ -348,7 +352,7 @@ pub fn mf_op_last_error() -> Bytes {
 }
 
 ///|
-pub fn mf_op_state_abi_version() -> Int {
+pub fn mf_op_state_abi_version() -> Int32 {
   @sdk.state_abi_version()
 }
 
@@ -387,7 +391,7 @@ pub fn mf_op_state_apply(input : Bytes) -> Bytes {
       }
       let mut window = 0L
       let mut words : Array[String] = []
-      let mut counts : Array[Int] = []
+      let mut counts : Array[Int32] = []
       let mut have_state = false
       for e in state_in {
         if e.value.length() > 0 {

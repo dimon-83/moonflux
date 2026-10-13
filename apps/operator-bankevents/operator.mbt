@@ -23,7 +23,7 @@
 
 ///|
 /// Reads the signed amount of an operation object, or a named refusal.
-fn amount_of(obj : Map[String, Json], path : String) -> Result[Int, String] {
+fn amount_of(obj : Map[String, Json], path : String) -> Result[Int32, String] {
   match obj.get("amount") {
     Some(Number(d)) => {
       let n = d.to_int64()
@@ -53,7 +53,7 @@ fn text_of(obj : Map[String, Json], field : String) -> String? {
 /// Builds one output record: the delta applied to `iban`.
 fn delta_record(
   iban : String,
-  delta : Int,
+  delta : Int32,
   operation : String,
   txid : String,
   timestamp : String,
@@ -78,17 +78,17 @@ fn delta_record(
 }
 
 ///|
-pub fn mf_op_abi_version() -> Int {
+pub fn mf_op_abi_version() -> Int32 {
   @sdk.abi_version()
 }
 
 ///|
-pub fn mf_op_alloc_input(len : Int) -> Bytes {
+pub fn mf_op_alloc_input(len : Int32) -> Bytes {
   @sdk.alloc_input(len)
 }
 
 ///|
-pub fn mf_op_init(config : Bytes) -> Int {
+pub fn mf_op_init(config : Bytes) -> Int32 {
   match @sdk.parse_config(config) {
     Ok(cfg) => if cfg.length() == 0 { 0 } else { -1 }
     Err(_) => -1
@@ -213,12 +213,12 @@ pub fn mf_op_process(input : Bytes) -> Bytes {
 }
 
 ///|
-pub fn mf_op_output_len() -> Int {
+pub fn mf_op_output_len() -> Int32 {
   @sdk.output_len()
 }
 
 ///|
-pub fn mf_op_last_status() -> Int {
+pub fn mf_op_last_status() -> Int32 {
   @sdk.last_status()
 }
 

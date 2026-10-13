@@ -36,8 +36,8 @@ pub using @kernel {type Conn, type Producer, type Consumer, type ClientError}
 /// `pull` receives a destination buffer and how many bytes are wanted,
 /// and returns how many it wrote; 0 means a clean end of stream.
 fn fill_exact(
-  n : Int,
-  pull : (FixedArray[Byte], Int) -> Result[Int, String],
+  n : Int32,
+  pull : (FixedArray[Byte], Int32) -> Result[Int32, String],
 ) -> Result[Bytes, String] {
   if n < 0 {
     return Err("negative read length")
@@ -94,7 +94,7 @@ pub fn from_stream(stream : @net.TcpStream) -> Conn {
 
 ///|
 /// Opens a blocking TCP connection.
-pub fn tcp(host : String, port : Int) -> Result[Conn, String] {
+pub fn tcp(host : String, port : Int32) -> Result[Conn, String] {
   match @net.TcpStream::connect(host, port) {
     Ok(stream) => Ok(wrap_stream(stream))
     Err(e) => Err("connect \{host}:\{port}: \{e}")
@@ -110,7 +110,7 @@ pub fn tcp(host : String, port : Int) -> Result[Conn, String] {
 /// peer waits forever — and "no node may hang another" is the property
 /// this deadline design exists for. `timeout_ms <= 0` means no deadline,
 /// which is what a client with nothing else to serve asks for.
-pub fn conn_over_stream(stream : @net.Stream, timeout_ms : Int) -> Conn {
+pub fn conn_over_stream(stream : @net.Stream, timeout_ms : Int32) -> Conn {
   Conn::{
     send: fn(bytes) {
       let deadline = if timeout_ms > 0 {
@@ -145,7 +145,7 @@ pub fn conn_over_stream(stream : @net.Stream, timeout_ms : Int) -> Conn {
         // an answer variable rather than `return` keeps the closure's
         // type the only exit (MoonBit wants a loop to yield if it is
         // the closure's last expression)
-        let mut answer : Result[Int, String] = Err("read loop exited")
+        let mut answer : Result[Int32, String] = Err("read loop exited")
         let mut done = false
         while !done {
           match (stream.recv_some)(buf, want) {
@@ -217,11 +217,11 @@ pub fn tls_stream_over(
 /// session, so the link keeps it and frees it when it closes.
 pub fn tcp_tls_stream(
   host : String,
-  port : Int,
+  port : Int32,
   ca : String,
   cert : String?,
   key : String?,
-  handshake_timeout_ms : Int,
+  handshake_timeout_ms : Int32,
 ) -> Result[(@net.Stream, @tls.TlsContext), String] {
   match tls_handshake(host, port, ca, cert, key, handshake_timeout_ms) {
     Ok((socket, session, context)) =>
@@ -243,8 +243,8 @@ pub fn tcp_tls_stream(
 /// another by being busy.
 pub fn tcp_with_timeout(
   host : String,
-  port : Int,
-  timeout_ms : Int,
+  port : Int32,
+  timeout_ms : Int32,
 ) -> Result[Conn, String] {
   let stream = match @net.TcpStream::connect(host, port) {
     Ok(stream) => stream
@@ -272,7 +272,7 @@ pub fn socketpair() -> Result[(Conn, Conn), String] {
 /// presenting a credential when one is supplied (P12).
 pub fn connect_producer_with(
   host : String,
-  port : Int,
+  port : Int32,
   token : String?,
 ) -> Result[Producer, ClientError] {
   let conn = match tcp(host, port) {
@@ -286,7 +286,7 @@ pub fn connect_producer_with(
 /// Connects a producer over native TCP and performs the handshake.
 pub fn connect_producer(
   host : String,
-  port : Int,
+  port : Int32,
 ) -> Result[Producer, ClientError] {
   connect_producer_with(host, port, None)
 }
@@ -296,7 +296,7 @@ pub fn connect_producer(
 /// presenting a credential when one is supplied (P12).
 pub fn connect_consumer_with(
   host : String,
-  port : Int,
+  port : Int32,
   token : String?,
 ) -> Result[Consumer, ClientError] {
   let conn = match tcp(host, port) {
@@ -310,7 +310,7 @@ pub fn connect_consumer_with(
 /// Connects a consumer over native TCP and performs the handshake.
 pub fn connect_consumer(
   host : String,
-  port : Int,
+  port : Int32,
 ) -> Result[Consumer, ClientError] {
   connect_consumer_with(host, port, None)
 }
@@ -329,7 +329,7 @@ pub fn connect_consumer(
 ///|
 /// Milliseconds from now, for a deadline. Read in this layer, never in
 /// the kernel.
-fn deadline_after(ms : Int) -> Int64 {
+fn deadline_after(ms : Int32) -> Int64 {
   @env.now().reinterpret_as_int64() + ms.to_int64()
 }
 
@@ -346,11 +346,11 @@ fn past_deadline(deadline : Int64) -> Bool {
 /// talking to a peer) should expire.
 pub fn tcp_tls(
   host : String,
-  port : Int,
+  port : Int32,
   ca : String,
   cert : String?,
   key : String?,
-  handshake_timeout_ms : Int,
+  handshake_timeout_ms : Int32,
 ) -> Result[Conn, String] {
   tls_conn_with_timeout(host, port, ca, cert, key, handshake_timeout_ms, 0)
 }
@@ -361,12 +361,12 @@ pub fn tcp_tls(
 /// enough when the peer can go quiet *after* it.
 pub fn tls_conn_with_timeout(
   host : String,
-  port : Int,
+  port : Int32,
   ca : String,
   cert : String?,
   key : String?,
-  handshake_timeout_ms : Int,
-  io_timeout_ms : Int,
+  handshake_timeout_ms : Int32,
+  io_timeout_ms : Int32,
 ) -> Result[Conn, String] {
   let (socket, session, context) = match
     tls_handshake(host, port, ca, cert, key, handshake_timeout_ms) {
@@ -393,11 +393,11 @@ pub fn tls_conn_with_timeout(
 /// exists once.
 fn tls_handshake(
   host : String,
-  port : Int,
+  port : Int32,
   ca : String,
   cert : String?,
   key : String?,
-  timeout_ms : Int,
+  timeout_ms : Int32,
 ) -> Result[(@net.TcpStream, @tls.TlsSession, @tls.TlsContext), String] {
   let context = match @tls.client_context(ca, cert, key) {
     Ok(context) => context

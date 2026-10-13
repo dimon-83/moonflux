@@ -177,7 +177,7 @@ fn GroupRegistry::ensure(
 /// `partition-<N>/` directory and the pre-P8 `partition-<N>.log` single
 /// file (migrated by the next open, but the truth about disk until
 /// then). Anything else names no partition.
-fn partition_index_of(entry : String) -> Int? {
+fn partition_index_of(entry : String) -> Int32? {
   if !entry.has_prefix("partition-") {
     return None
   }
@@ -200,7 +200,7 @@ fn partition_index_of(entry : String) -> Int? {
 /// this is a max, not a count. An unlistable directory reads as zero:
 /// the control plane's data dir hosts no logs, and that is its normal
 /// shape, not a failure.
-fn disk_partition_end(data_dir : String, topic : String) -> Int {
+fn disk_partition_end(data_dir : String, topic : String) -> Int32 {
   let topic_dir = "\{data_dir}/topics/\{topic}"
   let mut highest = -1
   match @fs.list_dir(topic_dir) {
@@ -520,8 +520,8 @@ fn GroupRegistry::floors(
 /// Every group with its epoch and commit count, for `group list`.
 fn GroupRegistry::list(
   self : GroupRegistry,
-) -> Array[(String, Int64, Int, Int)] {
-  let out : Array[(String, Int64, Int, Int)] = []
+) -> Array[(String, Int64, Int32, Int32)] {
+  let out : Array[(String, Int64, Int32, Int32)] = []
   for state in self.groups {
     out.push(
       (
@@ -540,7 +540,7 @@ fn GroupRegistry::list(
 /// How many members the registry currently holds (P35). A gauge read: it
 /// counts what is in memory now, so it cannot disagree with the coordination
 /// the next heartbeat will do.
-pub fn GroupRegistry::member_count(self : GroupRegistry) -> Int {
+pub fn GroupRegistry::member_count(self : GroupRegistry) -> Int32 {
   let mut total = 0
   for group in self.groups {
     total = total + group.members.length()

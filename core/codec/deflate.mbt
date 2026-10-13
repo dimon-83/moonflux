@@ -24,8 +24,8 @@
 /// DEFLATE packs bits LSB-first within each byte (RFC 1951 §3.1.1).
 struct DeflateBitReader {
   bytes : Bytes
-  mut pos : Int
-  mut bit : Int
+  mut pos : Int32
+  mut bit : Int32
 }
 
 ///|
@@ -36,7 +36,7 @@ fn DeflateBitReader::new(bytes : Bytes) -> DeflateBitReader {
 ///|
 /// Reads one bit; -1 when the input is exhausted (callers turn that
 /// into a truncated-stream error rather than a panic).
-fn DeflateBitReader::read_bit(self : DeflateBitReader) -> Int {
+fn DeflateBitReader::read_bit(self : DeflateBitReader) -> Int32 {
   if self.pos >= self.bytes.length() {
     return -1
   }
@@ -51,7 +51,7 @@ fn DeflateBitReader::read_bit(self : DeflateBitReader) -> Int {
 
 ///|
 /// Reads `n` bits LSB-first; -1 when the input runs out first.
-fn DeflateBitReader::read_bits(self : DeflateBitReader, n : Int) -> Int {
+fn DeflateBitReader::read_bits(self : DeflateBitReader, n : Int32) -> Int32 {
   let mut value = 0
   for i = 0; i < n; i = i + 1 {
     let b = self.read_bit()
@@ -77,8 +77,8 @@ fn DeflateBitReader::align(self : DeflateBitReader) -> Unit {
 /// A canonical Huffman table (RFC 1951 §3.2.2): counts of codes per
 /// length, and the symbols ordered by (length, symbol value).
 struct HuffmanTable {
-  counts : Array[Int]
-  symbols : Array[Int]
+  counts : Array[Int32]
+  symbols : Array[Int32]
 }
 
 ///|
@@ -86,7 +86,7 @@ struct HuffmanTable {
 /// (a prefix code cannot exist); incomplete sets are accepted — the
 /// distance table with a single code is legal DEFLATE and both the
 /// RFC and every real encoder produce it.
-fn huffman_build(lengths : Array[Int]) -> HuffmanTable? {
+fn huffman_build(lengths : Array[Int32]) -> HuffmanTable? {
   let counts = Array::make(16, 0)
   for len in lengths {
     if len > 15 {
@@ -120,7 +120,7 @@ fn huffman_build(lengths : Array[Int]) -> HuffmanTable? {
 ///|
 /// Decodes one symbol, bit by bit (the "puff" walk): -1 on truncated
 /// input or a code that matches nothing in the table.
-fn HuffmanTable::decode(self : HuffmanTable, br : DeflateBitReader) -> Int {
+fn HuffmanTable::decode(self : HuffmanTable, br : DeflateBitReader) -> Int32 {
   let mut code = 0
   let mut first = 0
   let mut index = 0
@@ -145,7 +145,7 @@ fn HuffmanTable::decode(self : HuffmanTable, br : DeflateBitReader) -> Int {
 /// The fixed-Huffman literal/length table: 0-143 eight bits, 144-255
 /// nine, 256-279 seven, 280-287 eight (RFC 1951 §3.2.6).
 fn fixed_literal_table() -> HuffmanTable {
-  let lengths : Array[Int] = []
+  let lengths : Array[Int32] = []
   for i = 0; i < 144; i = i + 1 {
     lengths.push(8)
   }
@@ -168,7 +168,7 @@ fn fixed_literal_table() -> HuffmanTable {
 /// The fixed-Huffman distance table: 32 codes of five bits (30-31
 /// exist but never appear in a valid stream).
 fn fixed_distance_table() -> HuffmanTable {
-  let lengths : Array[Int] = []
+  let lengths : Array[Int32] = []
   for i = 0; i < 32; i = i + 1 {
     lengths.push(5)
   }
@@ -181,26 +181,26 @@ fn fixed_distance_table() -> HuffmanTable {
 ///|
 /// Length codes 257-285: the base match length and how many extra
 /// bits ride with each (RFC 1951 §3.2.5).
-let len_base : Array[Int] = [
+let len_base : Array[Int32] = [
   3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83,
   99, 115, 131, 163, 195, 227, 258,
 ]
 
 ///|
-let len_extra : Array[Int] = [
+let len_extra : Array[Int32] = [
   0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5,
   5, 0,
 ]
 
 ///|
 /// Distance codes 0-29: the base distance and its extra bits.
-let dist_base : Array[Int] = [
+let dist_base : Array[Int32] = [
   1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769,
   1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
 ]
 
 ///|
-let dist_extra : Array[Int] = [
+let dist_extra : Array[Int32] = [
   0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11,
   12, 12, 13, 13,
 ]
@@ -209,7 +209,7 @@ let dist_extra : Array[Int] = [
 /// The order code-length codes arrive in a dynamic block's header —
 /// deliberately scrambled by the RFC (§3.2.7), so the natural order is
 /// the classic mistake.
-let code_length_order : Array[Int] = [
+let code_length_order : Array[Int32] = [
   16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
 ]
 
@@ -312,7 +312,7 @@ fn read_dynamic_tables(
 /// decompression-bomb boundary: a small compressed payload must never
 /// expand into memory the caller never budgeted for — exceeding it is
 /// a structured error, not an allocation.
-pub fn inflate_raw(input : Bytes, max_out : Int) -> Result[Bytes, String] {
+pub fn inflate_raw(input : Bytes, max_out : Int32) -> Result[Bytes, String] {
   let br = DeflateBitReader::new(input)
   let out : Array[Byte] = []
   // the fixed tables are built per stream: a 288-entry build is
@@ -412,7 +412,7 @@ pub fn inflate_raw(input : Bytes, max_out : Int) -> Result[Bytes, String] {
 }
 
 ///|
-fn bomb_message(max_out : Int) -> String {
+fn bomb_message(max_out : Int32) -> String {
   "decompressed output exceeds the \{max_out}-byte cap (refusing a possible decompression bomb)"
 }
 
@@ -420,8 +420,8 @@ fn bomb_message(max_out : Int) -> String {
 /// The LSB-first bit writer (RFC 1951 §3.1.1).
 struct DeflateBitWriter {
   out : Buffer
-  mut acc : Int
-  mut nbits : Int
+  mut acc : Int32
+  mut nbits : Int32
 }
 
 ///|
@@ -432,8 +432,8 @@ fn DeflateBitWriter::new() -> DeflateBitWriter {
 ///|
 fn DeflateBitWriter::write_bits(
   self : DeflateBitWriter,
-  value : Int,
-  n : Int,
+  value : Int32,
+  n : Int32,
 ) -> Unit {
   self.acc = self.acc | (value << self.nbits)
   self.nbits += n
@@ -449,8 +449,8 @@ fn DeflateBitWriter::write_bits(
 /// bit first into the LSB-first stream — RFC 1951 §3.1.1's reversal).
 fn DeflateBitWriter::write_code(
   self : DeflateBitWriter,
-  code : Int,
-  len : Int,
+  code : Int32,
+  len : Int32,
 ) -> Unit {
   for i = 0; i < len; i = i + 1 {
     self.write_bits((code >> (len - 1 - i)) & 1, 1)
@@ -475,7 +475,7 @@ fn DeflateBitWriter::to_bytes(self : DeflateBitWriter) -> Bytes {
 ///|
 /// The fixed-Huffman code for a literal or a length symbol, as
 /// (code, length) — the ranges stitched straight from RFC 1951 §3.2.6.
-fn fixed_literal_code(symbol : Int) -> (Int, Int) {
+fn fixed_literal_code(symbol : Int32) -> (Int32, Int32) {
   if symbol < 144 {
     (0x30 + symbol, 8)
   } else if symbol < 256 {
@@ -490,7 +490,7 @@ fn fixed_literal_code(symbol : Int) -> (Int, Int) {
 ///|
 /// Finds the length code for a match length (3..258), returning the
 /// symbol index and the extra-bit value.
-fn length_code(length : Int) -> (Int, Int) {
+fn length_code(length : Int32) -> (Int32, Int32) {
   let mut i = len_base.length() - 1
   while i > 0 {
     if length >= len_base[i] {
@@ -503,7 +503,7 @@ fn length_code(length : Int) -> (Int, Int) {
 
 ///|
 /// Finds the distance code for a match distance, as (code, extra).
-fn distance_code(distance : Int) -> (Int, Int) {
+fn distance_code(distance : Int32) -> (Int32, Int32) {
   let mut i = dist_base.length() - 1
   while i > 0 {
     if distance >= dist_base[i] {
@@ -517,7 +517,7 @@ fn distance_code(distance : Int) -> (Int, Int) {
 ///|
 /// The three-byte hash for the LZ77 matcher: multiplicative, all 16
 /// bits used (deterministic, no randomness — the kernel red line).
-fn hash3(bytes : Bytes, pos : Int) -> Int {
+fn hash3(bytes : Bytes, pos : Int32) -> Int32 {
   let a = bytes[pos].to_int()
   let b = bytes[pos + 1].to_int()
   let c = bytes[pos + 2].to_int()
@@ -525,13 +525,13 @@ fn hash3(bytes : Bytes, pos : Int) -> Int {
 }
 
 ///|
-const MAX_CHAIN : Int = 128
+const MAX_CHAIN : Int32 = 128
 
 ///|
-const MIN_MATCH : Int = 3
+const MIN_MATCH : Int32 = 3
 
 ///|
-const WINDOW_SIZE : Int = 32768
+const WINDOW_SIZE : Int32 = 32768
 
 ///|
 /// Raw DEFLATE compression: one final fixed-Huffman block over a
@@ -541,8 +541,8 @@ const WINDOW_SIZE : Int = 32768
 /// work.
 pub fn deflate_raw(input : Bytes) -> Bytes {
   let w = DeflateBitWriter::new()
-  let head : Array[Int] = Array::make(65536, -1)
-  let prev : Array[Int] = Array::make(input.length(), -1)
+  let head : Array[Int32] = Array::make(65536, -1)
+  let prev : Array[Int32] = Array::make(input.length(), -1)
   // one final fixed-Huffman block: BFINAL=1 then BTYPE=01 come FIRST,
   // before any of the block's data
   w.write_bits(1, 1)
@@ -619,7 +619,7 @@ pub fn deflate_raw(input : Bytes) -> Bytes {
 
 ///|
 /// Adler-32 (RFC 1950 §8): the zlib container's checksum.
-pub fn adler32(data : Bytes) -> Int {
+pub fn adler32(data : Bytes) -> Int32 {
   let mut a = 1
   let mut b = 0
   let n = data.length()
@@ -732,7 +732,7 @@ fn zlib_unwrap(payload : Bytes) -> Result[Bytes, String] {
 ///|
 /// Unwraps a gzip container: verifies magic, method and the CRC-32 +
 /// ISIZE trailer.
-fn gzip_unwrap(payload : Bytes, max_out : Int) -> Result[Bytes, String] {
+fn gzip_unwrap(payload : Bytes, max_out : Int32) -> Result[Bytes, String] {
   if payload.length() < 18 {
     return Err("gzip payload too short")
   }
@@ -779,7 +779,7 @@ fn gzip_unwrap(payload : Bytes, max_out : Int) -> Result[Bytes, String] {
 /// guesses.
 pub fn kafka_decompress(
   payload : Bytes,
-  max_out : Int,
+  max_out : Int32,
 ) -> Result[Bytes, String] {
   match sniff_container(payload) {
     Ok(Gzip) => gzip_unwrap(payload, max_out)

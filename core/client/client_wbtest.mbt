@@ -238,7 +238,7 @@ test "server-side first read distinguishes v1 peers and garbage" {
 }
 
 ///|
-fn flip_byte(data : Bytes, index : Int, replacement : Byte) -> Bytes {
+fn flip_byte(data : Bytes, index : Int32, replacement : Byte) -> Bytes {
   let out = Buffer::Buffer()
   for i in 0..<data.length() {
     out.write_byte(if i == index { replacement } else { data[i] })

@@ -15,7 +15,7 @@ pub fn hex_encode(data : Bytes) -> String {
 }
 
 ///|
-fn digit_char(v : Int) -> Char {
+fn digit_char(v : Int32) -> Char {
   if v < 10 {
     (v + 48).unsafe_to_char() // '0'
   } else {
@@ -24,7 +24,7 @@ fn digit_char(v : Int) -> Char {
 }
 
 ///|
-fn hex_value(c : UInt16) -> Int? {
+fn hex_value(c : UInt16) -> Int32? {
   if c >= 48 && c <= 57 {
     Some(c.to_int() - 48)
   } else if c >= 97 && c <= 102 {

@@ -124,7 +124,7 @@ fn consume_local(topic : String, from : Int64, data_dir : String) -> Unit {
 ///|
 fn consume_remote(
   topic : String,
-  partition : Int,
+  partition : Int32,
   from : Int64,
   addr : String,
   committed : Bool,
@@ -196,4 +196,4 @@ fn consume_remote(
 /// the server caps the reply by bytes, and it is the server's answer
 /// that decides when a drain is finished (P15) — but a number large
 /// enough that a fast path is one round trip rather than thousands.
-const CONSUME_WINDOW : Int = 65536
+const CONSUME_WINDOW : Int32 = 65536

@@ -106,7 +106,7 @@ pub(all) struct CalloutSpec {
   /// The cassette path (required for record and replay).
   cassette : String
   /// The outbound deadline, in milliseconds.
-  timeout_ms : Int
+  timeout_ms : Int32
 } derive(Debug, Eq, Show)
 
 ///|

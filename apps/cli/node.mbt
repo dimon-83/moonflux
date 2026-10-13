@@ -102,7 +102,7 @@ fn load_or_create_identity(
 /// caller that meant it.
 fn control_call_secure(
   addr : String,
-  cmd : Int,
+  cmd : Int32,
   payload : Bytes,
   link : PeerLink,
 ) -> Result[Bytes, String] {
@@ -119,20 +119,20 @@ fn control_call_secure(
 /// A missed call is not a failure of the protocol: replication is
 /// convergent and the next tick retries, so a short deadline costs a
 /// retry, never a record (failures are reported once, not per tick).
-const PEER_CALL_TIMEOUT_MS : Int = 2000
+const PEER_CALL_TIMEOUT_MS : Int32 = 2000
 
 ///|
 /// How long a peer connection may take to establish. A listening peer
 /// accepts from the backlog immediately, so this is a routing check
 /// (nothing there) rather than a patience setting.
-const CONNECT_TIMEOUT_MS : Int = 300
+const CONNECT_TIMEOUT_MS : Int32 = 300
 
 ///|
 fn control_call_full(
   addr : String,
-  cmd : Int,
+  cmd : Int32,
   payload : Bytes,
-  timeout_ms : Int,
+  timeout_ms : Int32,
   link : PeerLink,
 ) -> Result[Bytes, String] {
   let (host, port) = parse_listen_addr(addr)
@@ -171,7 +171,7 @@ fn control_call_full(
 ///|
 fn control_call_on(
   conn : @client.Conn,
-  cmd : Int,
+  cmd : Int32,
   payload : Bytes,
   token : String?,
 ) -> Result[Bytes, String] {
@@ -243,7 +243,7 @@ fn report_to_control(
   sc_addr : String,
   record : @client.NodeRecord,
   reports : Array[@client.PartitionReport],
-  cmd : Int,
+  cmd : Int32,
   link : PeerLink,
 ) -> Result[Bytes, String] {
   let payload = match
@@ -314,7 +314,7 @@ fn pipeline_revision_of(payload : Bytes) -> Int64? {
 fn floor_for(
   floors : Array[@client.GroupFloor],
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> Int64? {
   for floor in floors {
     if floor.topic == topic && floor.partition == partition {
@@ -778,7 +778,7 @@ const DEFAULT_LEASE_MS : Int64 = 1500L
 /// than a healthy round trip (sub-millisecond on loopback) and
 /// comfortably shorter than the liveness timeout, so a stuck peer
 /// costs one tick instead of the whole cluster.
-const CONTROL_CALL_TIMEOUT_MS : Int = 1000
+const CONTROL_CALL_TIMEOUT_MS : Int32 = 1000
 
 ///|
 /// How long a control connection may spend in its TLS handshake. Tighter
@@ -787,25 +787,25 @@ const CONTROL_CALL_TIMEOUT_MS : Int = 1000
 /// loop is what keeps a heartbeat inside its liveness window. A healthy
 /// handshake on loopback is sub-millisecond, so this is still ~500x
 /// headroom.
-const CONTROL_HANDSHAKE_DEADLINE_MS : Int = 500
+const CONTROL_HANDSHAKE_DEADLINE_MS : Int32 = 500
 
 ///|
 /// How long the node's event loop may wait for a connection before
 /// looking at its housekeeping clock again. Small on purpose: it is
 /// the worst-case delay before an inbound replication pull is served.
-const POLL_TICK_MS : Int = 50
+const POLL_TICK_MS : Int32 = 50
 
 ///|
 /// How often a node does housekeeping (its accept timeout, and the
 /// heartbeat cadence). Deliberately faster than the liveness timeout
 /// so that a healthy node is never late by accident.
-const HOUSEKEEPING_INTERVAL_MS : Int = 500
+const HOUSEKEEPING_INTERVAL_MS : Int32 = 500
 
 ///|
 /// How long the control plane waits before calling a node offline.
 /// Must be a comfortable multiple of the heartbeat interval: three
 /// missed beats is a failure, one is a hiccup.
-const NODE_TIMEOUT_MS : Int = 3000
+const NODE_TIMEOUT_MS : Int32 = 3000
 
 ///|
 /// The host clock in milliseconds. Nodes read it here rather than in
@@ -861,11 +861,11 @@ struct NodeEntry {
 /// core/cluster's reconcile.
 struct NodeTable {
   entries : Array[NodeEntry]
-  timeout_ms : Int
+  timeout_ms : Int32
 }
 
 ///|
-fn NodeTable::new(timeout_ms : Int) -> NodeTable {
+fn NodeTable::new(timeout_ms : Int32) -> NodeTable {
   NodeTable::{ entries: [], timeout_ms, }
 }
 
@@ -932,7 +932,7 @@ fn NodeTable::leo_of(
   self : NodeTable,
   address : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> Int64 {
   match self.find_address(address) {
     Some(entry) => {
@@ -956,7 +956,7 @@ fn NodeTable::leo_of(
 /// How many registered nodes are currently considered online (P35). A read of
 /// the same state the liveness sweep uses, so the gauge and the sweep cannot
 /// disagree about who is up.
-fn NodeTable::online_count(self : NodeTable) -> Int {
+fn NodeTable::online_count(self : NodeTable) -> Int32 {
   let mut total = 0
   for entry in self.entries {
     if entry.online {
@@ -1014,7 +1014,7 @@ fn dispatch_control_frame(
   groups : GroupRegistry,
   asset : ClusterAsset,
   identity : @auth.Identity?,
-) -> (Int, Bytes) {
+) -> (Int32, Bytes) {
   // one permission check for every control command (P12), before the
   // payload is parsed: the control port is where a forged REGISTER or
   // SYNC_ACK would land, and a refusal must not depend on the request
@@ -1354,7 +1354,7 @@ struct PartitionHost {
   /// which partition of the topic this host owns (P7): every call the
   /// host makes on the wire names this pair, so the `partition: 0`
   /// literal that used to live in the replication helpers is gone
-  partition : Int
+  partition : Int32
   /// the topic this node was given, or "" when nothing is applied;
   /// mutable because a node learns it from the applied pipeline
   topic : String
@@ -1410,7 +1410,7 @@ fn PartitionHost::new(
   address : String,
   link_auth : PeerLink,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> PartitionHost {
   PartitionHost::{
     data_dir,
@@ -1737,7 +1737,7 @@ fn PartitionHost::replicate_once(
 /// stays responsive (serving requests between rounds) and so a
 /// freshly started follower does not try to swallow a whole log in
 /// one gulp.
-const REPLICATION_BATCH : Int = 512
+const REPLICATION_BATCH : Int32 = 512
 
 ///|
 /// How many bytes one replication round may carry. The record bound
@@ -1751,7 +1751,7 @@ const REPLICATION_BATCH : Int = 512
 ///
 /// One MiB is ~0.2s of writing at that cadence: comfortably inside the
 /// deadline, and still 20 MB/s per partition per tick.
-const REPLICATION_WINDOW_BYTES : Int = 1048576
+const REPLICATION_WINDOW_BYTES : Int32 = 1048576
 
 ///|
 /// Asks the leader for raw frames from `from`.
@@ -1759,9 +1759,9 @@ fn sync_fetch(
   pump : () -> Unit,
   link : SyncLink,
   topic : String,
-  partition : Int,
+  partition : Int32,
   from : Int64,
-  max_records : Int,
+  max_records : Int32,
 ) -> Result[@client.SyncResponse, String] {
   let request = @client.SyncRequest::{
     partition: @client.PartitionRef::{ topic, partition, },
@@ -1788,7 +1788,7 @@ fn sync_ack(
   pump : () -> Unit,
   link : SyncLink,
   topic : String,
-  partition : Int,
+  partition : Int32,
   from : String,
   leo : Int64,
 ) -> Result[(Int64, Int64), String] {
@@ -1819,7 +1819,7 @@ fn sync_ack(
 fn ask_leader(
   sc_addr : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
   link : PeerLink,
 ) -> Result[@client.PartitionView, String] {
   let ref = @client.PartitionRef::{ topic, partition, }
@@ -1943,7 +1943,7 @@ fn PartitionHost::take_nomination(
 fn confirm_leadership(
   sc_addr : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
   candidate : String,
   link : PeerLink,
 ) -> Result[Unit, String] {
@@ -2046,7 +2046,11 @@ fn HostTable::self_place(self : HostTable, reason : String) -> Unit {
 }
 
 ///|
-fn HostTable::find(self : HostTable, topic : String, partition : Int) -> Int? {
+fn HostTable::find(
+  self : HostTable,
+  topic : String,
+  partition : Int32,
+) -> Int32? {
   for i, host in self.hosts {
     if host.topic == topic && host.partition == partition {
       return Some(i)
@@ -2060,7 +2064,7 @@ fn HostTable::find(self : HostTable, topic : String, partition : Int) -> Int? {
 fn HostTable::get(
   self : HostTable,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> PartitionHost? {
   match self.find(topic, partition) {
     Some(i) => Some(self.hosts[i])
@@ -2124,7 +2128,7 @@ fn HostTable::ensure(
   self : HostTable,
   sc_addr : String,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> PartitionHost? {
   match self.get(topic, partition) {
     Some(host) => return Some(host)
@@ -2228,7 +2232,7 @@ fn HostTable::reports(self : HostTable) -> Array[@client.PartitionReport] {
 /// Nothing here asks the control plane anything: the assignment that
 /// arrived with the heartbeat already carries leader, replicas and
 /// nomination, so placement costs zero extra round trips.
-fn HostTable::host_count(self : HostTable) -> Int {
+fn HostTable::host_count(self : HostTable) -> Int32 {
   self.hosts.length()
 }
 
@@ -2246,7 +2250,7 @@ fn HostTable::host_count(self : HostTable) -> Int {
 fn HostTable::tick_one(
   self : HostTable,
   sc_addr : String,
-  i : Int,
+  i : Int32,
   pump : () -> Unit,
 ) -> Unit {
   let host = self.hosts[i]
@@ -2363,8 +2367,8 @@ fn host_or_error(
   hosts : HostTable,
   sc_addr : String,
   topic : String,
-  partition : Int,
-) -> Result[PartitionHost, (Int, Bytes)] {
+  partition : Int32,
+) -> Result[PartitionHost, (Int32, Bytes)] {
   match hosts.ensure(sc_addr, topic, partition) {
     Some(host) => Ok(host)
     None =>
@@ -2418,8 +2422,8 @@ fn partition_floor(host : PartitionHost) -> Int64 {
 fn require_leader(
   host : PartitionHost,
   topic : String,
-  partition : Int,
-) -> Result[Unit, (Int, Bytes)] {
+  partition : Int32,
+) -> Result[Unit, (Int32, Bytes)] {
   if host.is_leader() {
     return Ok(())
   }
@@ -2451,7 +2455,7 @@ fn dispatch_data_frame(
   hosts : HostTable,
   sc_addr : String,
   identity : @auth.Identity?,
-) -> (Int, Bytes) {
+) -> (Int32, Bytes) {
   // one permission check for every data command (P12)
   match identity {
     Some(identity) =>
@@ -3294,7 +3298,7 @@ fn PlacementState::clear_nomination(
 fn PlacementState::confirm(
   self : PlacementState,
   topic : String,
-  partition : Int,
+  partition : Int32,
   candidate : String,
 ) -> Result[Unit, String] {
   let label = "\{topic}[\{partition}]"
@@ -3376,7 +3380,7 @@ fn PlacementState::assignments_for(
 fn PlacementState::view(
   self : PlacementState,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> @client.PartitionView {
   let label = "\{topic}[\{partition}]"
   let nominated = match self.nomination_of(label) {

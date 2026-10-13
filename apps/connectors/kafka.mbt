@@ -45,9 +45,9 @@ pub(all) enum KafkaFrom {
 /// (default 9092).
 pub(all) struct KafkaUrl {
   host : String
-  port : Int
+  port : Int32
   topic : String
-  partition : Int
+  partition : Int32
   from : KafkaFrom
   /// `?compression=gzip` (P25): outgoing batches carry the gzip
   /// container, the codec real brokers' producers use. Absent means
@@ -153,13 +153,13 @@ pub fn parse_kafka_url(url : String) -> Result[KafkaUrl, String] {
 // i32-counted arrays, i32-length-prefixed bytes)
 
 ///|
-fn kw_i16(buf : Buffer, value : Int) -> Unit {
+fn kw_i16(buf : Buffer, value : Int32) -> Unit {
   buf.write_byte((value >> 8).to_byte())
   buf.write_byte((value & 0xFF).to_byte())
 }
 
 ///|
-fn kw_i32(buf : Buffer, value : Int) -> Unit {
+fn kw_i32(buf : Buffer, value : Int32) -> Unit {
   buf.write_byte((value >> 24).to_byte())
   buf.write_byte(((value >> 16) & 0xFF).to_byte())
   buf.write_byte(((value >> 8) & 0xFF).to_byte())
@@ -174,7 +174,7 @@ fn kw_i64(buf : Buffer, value : Int64) -> Unit {
 }
 
 ///|
-fn kw_u32(buf : Buffer, value : UInt) -> Unit {
+fn kw_u32(buf : Buffer, value : UInt32) -> Unit {
   buf.write_byte((value >> 24).to_byte())
   buf.write_byte(((value >> 16) & 0xFFU).to_int().to_byte())
   buf.write_byte(((value >> 8) & 0xFFU).to_int().to_byte())
@@ -205,7 +205,7 @@ fn kw_bytes(buf : Buffer, bytes : Bytes) -> Unit {
 
 ///|
 /// Signed 16-bit read (sign-extends, so -1 arrives as -1).
-fn kr_i16(reader : @codec.Reader) -> Result[Int, String] {
+fn kr_i16(reader : @codec.Reader) -> Result[Int32, String] {
   match reader.read_u16_be() {
     Ok(v) => {
       let raw = v.to_int()
@@ -216,7 +216,7 @@ fn kr_i16(reader : @codec.Reader) -> Result[Int, String] {
 }
 
 ///|
-fn kr_i32(reader : @codec.Reader) -> Result[Int, String] {
+fn kr_i32(reader : @codec.Reader) -> Result[Int32, String] {
   match reader.read_u32_be() {
     Ok(v) => Ok(v.reinterpret_as_int())
     Err(_) => Err("truncated i32")
@@ -232,7 +232,7 @@ fn kr_i64(reader : @codec.Reader) -> Result[Int64, String] {
 }
 
 ///|
-fn kr_u32(reader : @codec.Reader) -> Result[UInt, String] {
+fn kr_u32(reader : @codec.Reader) -> Result[UInt32, String] {
   match reader.read_u32_be() {
     Ok(v) => Ok(v)
     Err(_) => Err("truncated u32")
@@ -273,7 +273,7 @@ fn kr_nullable_string(reader : @codec.Reader) -> Result[String?, String] {
 ///|
 /// An i32-counted array: `None` for -1 (Kafka's null array), otherwise
 /// the count — the caller reads that many elements.
-fn kr_array_len(reader : @codec.Reader) -> Result[Int?, String] {
+fn kr_array_len(reader : @codec.Reader) -> Result[Int32?, String] {
   let len = match kr_i32(reader) {
     Ok(len) => len
     Err(e) => return Err(e)
@@ -366,7 +366,7 @@ fn read_zigzag_varint(reader : @codec.Reader) -> Result[Int64, String] {
 /// **The CRC covers from `attributes` (offset 21) to the end** — the
 /// base offset and the length are outside it, which is precisely how a
 /// broker assigns an offset by rewriting eight bytes.
-const BATCH_HEADER_BYTES : Int = 61
+const BATCH_HEADER_BYTES : Int32 = 61
 
 ///|
 /// Builds one v2 batch from records. Offsets are deltas 0..n-1
@@ -666,7 +666,7 @@ fn parse_batches(
 /// request would pay a metadata round trip per batch).
 priv struct KafkaConn {
   mut stream : @net.TcpStream?
-  mut correlation : Int
+  mut correlation : Int32
 }
 
 ///|
@@ -677,8 +677,8 @@ priv struct KafkaConn {
 fn kafka_request(
   conn : KafkaConn,
   stream : @net.TcpStream,
-  api_key : Int,
-  api_version : Int,
+  api_key : Int32,
+  api_version : Int32,
   body : Bytes,
 ) -> Result[Bytes, String] {
   conn.correlation += 1
@@ -731,7 +731,10 @@ fn kafka_request(
 /// Reads exactly `n` bytes from a stream; a timeout is an error here —
 /// every caller has already decided what "nothing" means at its own
 /// level (fetch quietness is an *empty response*, not a silent socket).
-fn read_exact_stream(stream : @net.TcpStream, n : Int) -> Result[Bytes, String] {
+fn read_exact_stream(
+  stream : @net.TcpStream,
+  n : Int32,
+) -> Result[Bytes, String] {
   let out = Buffer::Buffer()
   let chunk : FixedArray[Byte] = FixedArray::make(n, b'\x00')
   let mut need = n
@@ -756,7 +759,7 @@ fn read_exact_stream(stream : @net.TcpStream, n : Int) -> Result[Bytes, String] 
 /// mis-parse.
 fn kafka_connect(
   host : String,
-  port : Int,
+  port : Int32,
   conn : KafkaConn,
 ) -> Result[@net.TcpStream, String] {
   let stream = match @net.TcpStream::connect(host, port) {
@@ -810,7 +813,7 @@ fn kafka_connect(
 fn kafka_api_versions(
   conn : KafkaConn,
   stream : @net.TcpStream,
-) -> Result[Map[Int, (Int, Int)], String] {
+) -> Result[Map[Int32, (Int32, Int32)], String] {
   let body = match kafka_request(conn, stream, 18, 0, b"") {
     Ok(body) => body
     Err(e) => return Err(e)
@@ -828,7 +831,7 @@ fn kafka_api_versions(
     Ok(None) => return Err("ApiVersions returned a null array")
     Err(e) => return Err(e)
   }
-  let out : Map[Int, (Int, Int)] = {}
+  let out : Map[Int32, (Int32, Int32)] = {}
   for _i in 0..<count {
     let key = match kr_i16(reader) {
       Ok(v) => v
@@ -853,7 +856,7 @@ fn kafka_leader(
   conn : KafkaConn,
   stream : @net.TcpStream,
   topic : String,
-  partition : Int,
+  partition : Int32,
 ) -> Result[String, String] {
   let body = Buffer::Buffer()
   kw_i32(body, 1) // topics array: exactly one
@@ -868,7 +871,7 @@ fn kafka_leader(
     Ok(None) => return Err("metadata brokers: null array")
     Err(e) => return Err(e)
   }
-  let brokers : Map[Int, String] = {}
+  let brokers : Map[Int32, String] = {}
   for _i in 0..<broker_count {
     let node_id = match kr_i32(reader) {
       Ok(v) => v
@@ -984,7 +987,7 @@ fn kafka_resolve_offset(
   conn : KafkaConn,
   stream : @net.TcpStream,
   topic : String,
-  partition : Int,
+  partition : Int32,
   timestamp : Int64,
 ) -> Result[Int64, String] {
   let body = Buffer::Buffer()
@@ -1046,7 +1049,7 @@ fn kafka_produce(
   conn : KafkaConn,
   stream : @net.TcpStream,
   topic : String,
-  partition : Int,
+  partition : Int32,
   batch : Bytes,
 ) -> Result[Int64, String] {
   let body = Buffer::Buffer()
@@ -1116,7 +1119,7 @@ fn kafka_fetch(
   conn : KafkaConn,
   stream : @net.TcpStream,
   topic : String,
-  partition : Int,
+  partition : Int32,
   fetch_offset : Int64,
 ) -> Result[Array[KafkaRecord], String] {
   let body = Buffer::Buffer()

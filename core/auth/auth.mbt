@@ -70,7 +70,7 @@ pub fn parse_role(text : String) -> Result[Role, String] {
 /// added without a thought for permissions fails closed, and the failure
 /// shows up in the first test that tries to use it, not in production a
 /// month later.
-pub fn permit(role : Role, cmd : Int) -> Bool {
+pub fn permit(role : Role, cmd : Int32) -> Bool {
   if role is Root {
     // Root is the operator: everything, by definition, not by listing
     return true
@@ -100,7 +100,7 @@ pub fn permit(role : Role, cmd : Int) -> Bool {
 /// while the data itself stays behind its own gates. The command also
 /// stays in `is_node_command`: a data node's one-shot placement
 /// fallback asks the same question (P7).
-fn is_data_read(cmd : Int) -> Bool {
+fn is_data_read(cmd : Int32) -> Bool {
   cmd == @client.CMD_FETCH ||
   cmd == @client.CMD_FETCH_COMMITTED ||
   cmd == @client.CMD_FETCH_PARTITION ||
@@ -113,7 +113,7 @@ fn is_data_read(cmd : Int) -> Bool {
 /// What a member of a consumer group does: join, heartbeat, leave,
 /// commit. It is deliberately not part of "admin": a consumer manages
 /// its own progress and nothing else.
-fn is_group_member_command(cmd : Int) -> Bool {
+fn is_group_member_command(cmd : Int32) -> Bool {
   cmd == @client.CMD_GROUP_JOIN ||
   cmd == @client.CMD_GROUP_HEARTBEAT ||
   cmd == @client.CMD_GROUP_LEAVE ||
@@ -126,7 +126,7 @@ fn is_group_member_command(cmd : Int) -> Bool {
 /// the high watermark every committed read is built on, and a fake
 /// `REGISTER` puts a phantom replica in a set whose minimum defines that
 /// watermark.
-pub fn is_node_command(cmd : Int) -> Bool {
+pub fn is_node_command(cmd : Int32) -> Bool {
   cmd == @client.CMD_REGISTER ||
   cmd == @client.CMD_HEARTBEAT ||
   cmd == @client.CMD_SYNC_FETCH ||

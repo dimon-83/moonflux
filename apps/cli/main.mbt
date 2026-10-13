@@ -10,7 +10,7 @@
 // (core/protocol), so files and network share one framing.
 
 ///|
-extern "C" fn cli_exit(code : Int) -> Unit = "exit"
+extern "C" fn cli_exit(code : Int32) -> Unit = "exit"
 
 ///|
 /// Prints and exits; typed as `T` so call sites may use it in
@@ -30,10 +30,10 @@ extern "C" fn flush_streams() -> Unit = "mf_cli_flush"
 
 ///|
 #borrow(buf)
-extern "C" fn cli_eprint(buf : Bytes, len : Int) -> Unit = "mf_cli_eprint"
+extern "C" fn cli_eprint(buf : Bytes, len : Int32) -> Unit = "mf_cli_eprint"
 
 ///|
-extern "C" fn cli_pid() -> Int = "mf_cli_pid"
+extern "C" fn cli_pid() -> Int32 = "mf_cli_pid"
 
 ///|
 /// Writes one diagnostic line to stderr, flushed. Stdout carries data
@@ -262,7 +262,7 @@ fn client_token(flags : Flags) -> String? {
 
 ///|
 /// Splits "host:port" (IPv4/name only for P1).
-fn parse_listen_addr(addr : String) -> (String, Int) {
+fn parse_listen_addr(addr : String) -> (String, Int32) {
   match addr.rev_split_once(":") {
     Some((host, port)) =>
       match (try? @string.parse_int(port[0:port.length()])) {

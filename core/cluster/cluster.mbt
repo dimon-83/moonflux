@@ -24,8 +24,8 @@ pub(all) struct SpuSpec {
 /// each. Placement is derived, never authored (see `place`).
 pub(all) struct TopicSpec {
   name : String
-  partitions : Int
-  replication_factor : Int
+  partitions : Int32
+  replication_factor : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -39,7 +39,7 @@ pub(all) struct ClusterSpec {
 /// A partition's identity: its topic plus its index within the topic.
 pub(all) struct PartitionId {
   topic : String
-  index : Int
+  index : Int32
 } derive(Debug, Eq, Show)
 
 ///|
@@ -48,8 +48,8 @@ pub(all) struct PartitionId {
 /// seed — the same spec must always place the same way. The result is
 /// masked non-negative so it can index directly (Int wraps on the
 /// UInt conversion, and a negative index would abort).
-fn fnv1a(s : String) -> Int {
-  let mut hash : UInt = 2166136261U
+fn fnv1a(s : String) -> Int32 {
+  let mut hash : UInt32 = 2166136261U
   for i in 0..<s.length() {
     let c = s[i]
     hash = (hash ^ c.to_uint()) * 16777619U
@@ -178,8 +178,8 @@ fn sorted_spu_ids(spec : ClusterSpec) -> Array[String] {
 /// when it lands, it constrains this walk rather than replacing it.
 pub fn place(
   topic : String,
-  index : Int,
-  replication_factor : Int,
+  index : Int32,
+  replication_factor : Int32,
   node_ids : Array[String],
 ) -> Array[String] {
   let n = node_ids.length()
@@ -303,7 +303,7 @@ pub fn reconcile(
 
 ///|
 /// The replication factor a topic asks for (validated already).
-fn replication_factor_of(spec : ClusterSpec, topic : String) -> Int {
+fn replication_factor_of(spec : ClusterSpec, topic : String) -> Int32 {
   for t in spec.topics {
     if t.name == topic {
       return t.replication_factor

@@ -24,7 +24,7 @@ fn decoded_base(frame : Bytes) -> Int64 {
 }
 
 ///|
-fn decoded_len(frame : Bytes) -> Int {
+fn decoded_len(frame : Bytes) -> Int32 {
   match @protocol.decode_frame_strict(frame) {
     Ok(batch) => batch.records.length()
     Err(e) => abort("decode: \{e}")

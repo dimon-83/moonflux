@@ -307,7 +307,7 @@ fn tls_options_from(ca : String?, cert : String?, key : String?) -> TlsOptions? 
 
 ///|
 /// How long a client waits for a TLS handshake before giving up.
-const CLIENT_HANDSHAKE_TIMEOUT_MS : Int = 5000
+const CLIENT_HANDSHAKE_TIMEOUT_MS : Int32 = 5000
 
 ///|
 /// A consumer over either transport. One place decides, so `consume`
@@ -315,7 +315,7 @@ const CLIENT_HANDSHAKE_TIMEOUT_MS : Int = 5000
 /// different transport than its flags asked for.
 fn connect_consumer_transport(
   host : String,
-  port : Int,
+  port : Int32,
   token : String?,
   tls : TlsOptions?,
 ) -> Result[@client.Consumer, @client.ClientError] {
@@ -343,7 +343,7 @@ fn connect_consumer_transport(
 /// A producer over either transport.
 fn connect_producer_transport(
   host : String,
-  port : Int,
+  port : Int32,
   token : String?,
   tls : TlsOptions?,
 ) -> Result[@client.Producer, @client.ClientError] {
@@ -397,7 +397,7 @@ fn peer_link(flags : Flags) -> PeerLink {
 /// How long a node's control/peer call may spend in the TLS handshake.
 /// Shorter than the client's patience: a node has a tick to keep, and a
 /// peer that cannot finish a handshake in this long is not going to.
-const NODE_HANDSHAKE_TIMEOUT_MS : Int = 1000
+const NODE_HANDSHAKE_TIMEOUT_MS : Int32 = 1000
 
 ///|
 /// The listener side: `--tls-cert`/`--tls-key` turn TLS on for this

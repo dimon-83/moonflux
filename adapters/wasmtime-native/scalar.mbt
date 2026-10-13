@@ -13,8 +13,8 @@
 /// Probes the session for the v2 scalar exports. Returns the guest's
 /// scalar ABI version, or None when the module is v1-only (a fact
 /// about the module, not an error).
-fn scalar_version(session : Session, err : FixedArray[Byte]) -> Int? {
-  let out : FixedArray[Int] = FixedArray::make(1, 0)
+fn scalar_version(session : Session, err : FixedArray[Byte]) -> Int32? {
+  let out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_scalar_version(session.handle, out, err, err.length()) != 0 {
     return None
   }
@@ -27,7 +27,7 @@ fn scalar_version(session : Session, err : FixedArray[Byte]) -> Int? {
 ///|
 /// The scalar-eval bound: an answer is one value, so the record-size
 /// budget bounds it — the same truth everywhere else.
-fn scalar_answer_bound() -> Int {
+fn scalar_answer_bound() -> Int32 {
   @protocol.MAX_RECORD_BYTES
 }
 
@@ -65,7 +65,7 @@ fn scalar_eval_call(
     0 {
     return Err(call_err(err))
   }
-  let out : FixedArray[Int] = FixedArray::make(1, 0)
+  let out : FixedArray[Int32] = FixedArray::make(1, 0)
   let rc = we_scalar_eval(
     session.handle,
     ptr,
@@ -92,14 +92,14 @@ fn scalar_eval_call(
   }
   // the answer pointer rides the call's return; length and failure
   // ride v1's existing output_len / last_status exports
-  let status_out : FixedArray[Int] = FixedArray::make(1, 0)
+  let status_out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_last_status(session.handle, status_out, err, err.length()) != 0 {
     return Err(call_err(err))
   }
   if status_out[0] != 0 {
     return Err(@operator.EvalError(guest_error_text(session, err)))
   }
-  let len_out : FixedArray[Int] = FixedArray::make(1, 0)
+  let len_out : FixedArray[Int32] = FixedArray::make(1, 0)
   if we_output_len(session.handle, len_out, err, err.length()) != 0 {
     return Err(call_err(err))
   }

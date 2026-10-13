@@ -26,17 +26,17 @@ priv struct SubscribeState {
 let state : SubscribeState = SubscribeState::{ email_field: "", }
 
 ///|
-pub fn mf_op_abi_version() -> Int {
+pub fn mf_op_abi_version() -> Int32 {
   @sdk.abi_version()
 }
 
 ///|
-pub fn mf_op_alloc_input(len : Int) -> Bytes {
+pub fn mf_op_alloc_input(len : Int32) -> Bytes {
   @sdk.alloc_input(len)
 }
 
 ///|
-pub fn mf_op_init(config : Bytes) -> Int {
+pub fn mf_op_init(config : Bytes) -> Int32 {
   let cfg = match @sdk.parse_config(config) {
     Ok(cfg) => cfg
     Err(_) => return -1
@@ -74,12 +74,12 @@ pub fn mf_op_process(input : Bytes) -> Bytes {
 }
 
 ///|
-pub fn mf_op_output_len() -> Int {
+pub fn mf_op_output_len() -> Int32 {
   @sdk.output_len()
 }
 
 ///|
-pub fn mf_op_last_status() -> Int {
+pub fn mf_op_last_status() -> Int32 {
   @sdk.last_status()
 }
 
@@ -89,7 +89,7 @@ pub fn mf_op_last_error() -> Bytes {
 }
 
 ///|
-pub fn mf_op_state_abi_version() -> Int {
+pub fn mf_op_state_abi_version() -> Int32 {
   @sdk.state_abi_version()
 }
 

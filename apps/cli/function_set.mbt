@@ -54,7 +54,7 @@ fn function_set_local_dir(flags : Flags) -> String? {
 fn function_set_call(
   flags : Flags,
   local : String?,
-  cmd : Int,
+  cmd : Int32,
   payload : Bytes,
   verb : String,
 ) -> Bytes {
@@ -212,7 +212,7 @@ fn function_set_delete(argv : Array[String]) -> Unit {
 fn dispatch_function_set(
   frame : @client.Frame,
   store : MetadataStore,
-) -> Result[Bytes, (Int, String)] {
+) -> Result[Bytes, (Int32, String)] {
   match frame.cmd {
     @client.CMD_FUNCTION_SET_CREATE => {
       let text = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
@@ -282,7 +282,7 @@ fn dispatch_function_set(
 ///|
 /// True when the command is one the handler above answers — the
 /// dispatch sites use this to route without re-listing the constants.
-fn is_function_set_command(cmd : Int) -> Bool {
+fn is_function_set_command(cmd : Int32) -> Bool {
   cmd == @client.CMD_FUNCTION_SET_CREATE ||
   cmd == @client.CMD_FUNCTION_SET_LIST ||
   cmd == @client.CMD_FUNCTION_SET_GET ||

@@ -8,7 +8,7 @@
 /// bytes or an error (EOF mid-read is an error).
 pub(all) struct Conn {
   send : (Bytes) -> Result[Unit, String]
-  recv_exact : (Int) -> Result[Bytes, String]
+  recv_exact : (Int32) -> Result[Bytes, String]
   close : () -> Unit
 }
 
@@ -19,7 +19,7 @@ pub(all) struct Conn {
 pub(all) enum FirstRead {
   Got(Frame)
   Eof
-  WrongVersion(Int)
+  WrongVersion(Int32)
   Garbage(String)
 }
 

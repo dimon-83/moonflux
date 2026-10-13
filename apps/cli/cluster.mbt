@@ -130,7 +130,7 @@ fn cluster_offsets(argv : Array[String]) -> Unit {
 
 ///|
 /// `--partition N`: one rule for the flag, wherever it appears.
-fn parse_partition_flag(text : String) -> Int {
+fn parse_partition_flag(text : String) -> Int32 {
   match (try? @string.parse_int(text[0:text.length()])) {
     Ok(n) if n >= 0 => n
     _ => fail("--partition expects a non-negative integer, got \{text}")
@@ -430,7 +430,7 @@ fn cluster_spu_list(argv : Array[String]) -> Unit {
     Ok(topics) => topics
     Err(e) => fail("cluster spu list: \{e}")
   }
-  let hosted : Map[String, Int] = {}
+  let hosted : Map[String, Int32] = {}
   let topic_names : Map[String, Map[String, Bool]] = {}
   for topic in topics {
     for index in 0..<topic.partitions {
@@ -544,7 +544,7 @@ const METADATA_SNAPSHOT_KIND : String = "moonflux.metadata-snapshot"
 /// The snapshot format's own version, separate from the metadata revision:
 /// the format can change without the cluster's revision meaning anything
 /// different.
-const METADATA_SNAPSHOT_VERSION : Int = 1
+const METADATA_SNAPSHOT_VERSION : Int32 = 1
 
 ///|
 fn cluster_metadata_show(argv : Array[String]) -> Unit {
