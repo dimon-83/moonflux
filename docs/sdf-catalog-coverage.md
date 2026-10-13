@@ -50,19 +50,6 @@
 | `connectors.md`（同上） | 连接器 | extension | examples/sdf/11-kafka-bridge | p30 腿（Kafka 源/汇，独立 Python broker 断言 CRC 有效的批） |
 | `dedupe` primitive（参考示例集**未使用**） | 能力补齐 | extension | examples/sdf/26-dedupe | p29 腿 42–43（去重期限 = **键的形状**：键含窗口 ⇒ 每窗去重；无键按名拒绝） |
 
-## 部署视角的用例分类（决策 86）
-
-`scripts/deploy-sdf.sh` 把同一份目录按**能不能无人值守地跑**分成三类，逐行写在部署根的
-`catalog.tsv` 里（**没有静默跳过**）：
-
-| 模式 | 数量 | 含义 |
-| :--- | :--- | :--- |
-| `run` | 5 | 单 spec、源是 file/stdin、有**单一** `expected.txt` → 跑并逐字节验证（01/02/03/04/13） |
-| `run-unverified` | 3 | 跑了，但没有单一 golden（08 有 4 份视图；20/21 各有流与状态两份） |
-| `deploy-only` | 18 | 多 stage（顺序按各自 README）／需要外部系统（http/mqtt/kafka）／目录里没有 spec |
-
-容器路径按同一份分类走：一用例一容器，健康检查打 `/healthz`（决策 87）。
-
 ## 覆盖之外的三个明示非目标
 
 | 条目 | 状态 | 理由与替代 |
@@ -81,3 +68,20 @@
 - **案例合计：26** = 21（参考条目对应）+ 5（扩展）；门禁核对这个等式：
   `e2e-p29-examples.sh` 的 23 个 + `e2e-p30-connector-examples.sh` 的 3 个 = 26，与合计数一致才通过
 - `non-goal`：**1** 条参考条目（`primitives/sql`）+ 2 个跨条目非目标（wasip2/组件模型、仓库内 Rust 工具链）
+
+## 部署视角的用例分类（决策 86）
+
+> 放在文末是有原因的：`scripts/audit-sdf-coverage.sh` 把
+> `## 覆盖之外的三个明示非目标` **之前**的内容当作清单行来解析。把这一节插在它前面，
+> 会让审计把散文当行读——CI 的 `--selftest` 当场抓到过。
+
+`scripts/deploy-sdf.sh` 把同一份目录按**能不能无人值守地跑**分成三类，逐行写在部署根的
+`catalog.tsv` 里（**没有静默跳过**）：
+
+| 模式 | 数量 | 含义 |
+| :--- | :--- | :--- |
+| `run` | 5 | 单 spec、源是 file/stdin、有**单一** `expected.txt` → 跑并逐字节验证（01/02/03/04/13） |
+| `run-unverified` | 3 | 跑了，但没有单一 golden（08 有 4 份视图；20/21 各有流与状态两份） |
+| `deploy-only` | 18 | 多 stage（顺序按各自 README）／需要外部系统（http/mqtt/kafka）／目录里没有 spec |
+
+容器路径按同一份分类走：一用例一容器，健康检查打 `/healthz`（决策 87）。
