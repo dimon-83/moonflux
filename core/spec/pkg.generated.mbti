@@ -38,7 +38,7 @@ pub(all) struct PipelineSpec {
 
 pub(all) enum SinkSpec {
   StdoutSink
-  HttpSink(String)
+  HttpSink(String, Array[(String, String)], String)
   MqttSink(String)
   KafkaSink(String)
   TopicSink(String)

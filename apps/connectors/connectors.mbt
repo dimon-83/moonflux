@@ -290,7 +290,11 @@ pub fn stdout_sink() -> Sink {
 
 ///|
 /// HTTP POST sink: newline-joined values in the request body.
-pub fn http_sink(url : String) -> Sink {
+pub fn http_sink(
+  url : String,
+  headers : Array[(String, String)],
+  ca : String,
+) -> Sink {
   Sink::{
     name: "http-post:\{url}",
     flush: fn(records) {
@@ -301,7 +305,7 @@ pub fn http_sink(url : String) -> Sink {
         body.write_bytes(@utf8.encode(line[0:line.length()]))
         body.write_byte(b'\n')
       }
-      match http_post(url, body.to_bytes(), [], "") {
+      match http_post(url, body.to_bytes(), headers, ca) {
         Ok(_) => Ok(())
         Err(e) => Err("POST \{url}: \{e}")
       }

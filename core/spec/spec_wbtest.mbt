@@ -349,3 +349,58 @@ test "https source needs a ca, and carries it" {
     Err(errors) => abort("http without ca should parse: \{errors}")
   }
 }
+
+///|
+/// The http SINK is the alert path: a real webhook is https and authenticates
+/// with a header, so the sink gets the same headers/ca treatment as the source —
+/// and the same refusal when https has no trust anchor.
+test "https sink needs a ca, and carries headers" {
+  let doc = fn(sink : String) {
+    "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\"," +
+    "\"metadata\":{\"name\":\"s\"},\"spec\":{\"source\":{\"type\":\"stdin\"}," +
+    "\"topic\":{\"name\":\"t\"},\"transforms\":[],\"sink\":" +
+    sink +
+    "}}"
+  }
+  match
+    parse_spec(
+      doc(
+        "{\"type\":\"http\",\"url\":\"https://hook.example/x\"," +
+        "\"headers\":{\"Authorization\":\"Bearer t\"},\"ca\":\"/etc/ca.pem\"}",
+      ),
+    ) {
+    Ok(spec) =>
+      match spec.sink {
+        HttpSink(url, headers, ca) => {
+          assert_eq(url, "https://hook.example/x")
+          assert_eq(ca, "/etc/ca.pem")
+          assert_eq(headers.length(), 1)
+          assert_eq(headers[0], ("Authorization", "Bearer t"))
+        }
+        _ => abort("expected an http sink")
+      }
+    Err(errors) => abort("https sink with a ca should have parsed: \{errors}")
+  }
+  match
+    parse_spec(doc("{\"type\":\"http\",\"url\":\"https://hook.example/x\"}")) {
+    Ok(_) => abort("an https sink without a ca must be refused")
+    Err(errors) => assert_true("\{errors}".contains("https sinks need ca"))
+  }
+  // http sinks are unchanged: no ca required
+  match
+    parse_spec(doc("{\"type\":\"http\",\"url\":\"http://hook.example/x\"}")) {
+    Ok(_) => ()
+    Err(errors) => abort("a plain http sink should parse: \{errors}")
+  }
+  // a sink header carrying a newline is refused like a source header
+  match
+    parse_spec(
+      doc(
+        "{\"type\":\"http\",\"url\":\"http://h/x\"," +
+        "\"headers\":{\"X\":\"a\\r\\nb\"}}",
+      ),
+    ) {
+    Ok(_) => abort("a CR/LF sink header must be refused")
+    Err(_) => ()
+  }
+}

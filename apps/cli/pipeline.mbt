@@ -778,7 +778,7 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   // 3. the sink (constructed once: a streaming run flushes many batches)
   let sink = match applied.spec.sink {
     StdoutSink => @connectors.stdout_sink()
-    HttpSink(url) => @connectors.http_sink(url)
+    HttpSink(url, headers, ca) => @connectors.http_sink(url, headers, ca)
     MqttSink(url) => @connectors.mqtt_sink(url)
     KafkaSink(url) => @connectors.kafka_sink(url)
     TopicSink(name) => {

@@ -112,7 +112,14 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
   }
   let sink_detail = match spec.sink {
     StdoutSink => "stdout sink"
-    HttpSink(url) => "http sink: \{url}"
+    HttpSink(url, headers, ca) =>
+      "http sink: \{url}" +
+      (if ca.length() > 0 { " (TLS)" } else { "" }) +
+      (if headers.length() > 0 {
+        " (+\{headers.length()} request header(s))"
+      } else {
+        ""
+      })
     MqttSink(url) => "mqtt publish: \{url}"
     KafkaSink(url) => "kafka publish: \{url}"
     TopicSink(name) => "topic sink: \{name} — appends to this node's own log"

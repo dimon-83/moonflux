@@ -126,7 +126,10 @@ pub(all) enum SinkSpec {
   /// Write one line per record to standard output.
   StdoutSink
   /// HTTP POST the batch (newline-joined values) to a URL (P1).
-  HttpSink(String)
+  /// HTTP POST sink: url, request headers and the trust anchor for https.
+  /// Symmetric with the source because a real alert webhook is https and
+  /// authenticates with a header (WeCom/DingTalk/Feishu all do).
+  HttpSink(String, Array[(String, String)], String)
   /// Publish each record's value to an MQTT broker topic (P19).
   MqttSink(String)
   /// Publish each batch to a Kafka topic partition (P20).
@@ -377,13 +380,17 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
 ///|
 /// The CA bundle for an https source: a path, empty when absent. A non-string is
 /// refused here rather than coerced — "" would silently mean "no trust".
-fn parse_http_ca(src : Map[String, Json], errors : Array[SpecError]) -> String? {
+fn parse_http_ca(
+  src : Map[String, Json],
+  errors : Array[SpecError],
+  path : String,
+) -> String? {
   match src.get("ca") {
     None => Some("")
     Some(String(path)) => Some(path)
     Some(_) => {
       errors.push(SpecError::{
-        path: "$.spec.source.ca",
+        path,
         code: "bad-type",
         message: "ca must be the path to a CA bundle (a string)",
       })
@@ -407,13 +414,14 @@ fn parse_http_ca(src : Map[String, Json], errors : Array[SpecError]) -> String? 
 fn parse_http_headers(
   src : Map[String, Json],
   errors : Array[SpecError],
+  path : String,
 ) -> Array[(String, String)]? {
   let obj = match src.get("headers") {
     None => return Some([])
     Some(Object(obj)) => obj
     Some(_) => {
       errors.push(SpecError::{
-        path: "$.spec.source.headers",
+        path,
         code: "bad-type",
         message: "headers must be an object of name -> value strings",
       })
@@ -426,7 +434,7 @@ fn parse_http_headers(
       String(text) => text
       _ => {
         errors.push(SpecError::{
-          path: "$.spec.source.headers.\{name}",
+          path: "\{path}.\{name}",
           code: "bad-type",
           message: "header values must be strings",
         })
@@ -436,7 +444,7 @@ fn parse_http_headers(
     match header_name_problem(name) {
       Some(reason) =>
         errors.push(SpecError::{
-          path: "$.spec.source.headers",
+          path,
           code: "bad-value",
           message: "header name \{name} \{reason}",
         })
@@ -444,7 +452,7 @@ fn parse_http_headers(
         match header_value_problem(text) {
           Some(reason) =>
             errors.push(SpecError::{
-              path: "$.spec.source.headers.\{name}",
+              path: "\{path}.\{name}",
               code: "bad-value",
               message: "header value \{reason}",
             })
@@ -647,8 +655,8 @@ fn parse_body(
             match
               (
                 parse_http_interval(src, errors),
-                parse_http_headers(src, errors),
-                parse_http_ca(src, errors),
+                parse_http_headers(src, errors, "$.spec.source.headers"),
+                parse_http_ca(src, errors, "$.spec.source.ca"),
               ) {
               (Some(interval), Some(headers), Some(ca)) =>
                 // https without a trust anchor is refused HERE, where the
@@ -1181,7 +1189,12 @@ fn parse_body(
   // sink
   let sink : SinkSpec? = match body.get("sink") {
     Some(Object(sk)) => {
-      reject_unknown_keys("$.spec.sink", sk, ["type", "url", "name"], errors)
+      reject_unknown_keys(
+        "$.spec.sink",
+        sk,
+        ["type", "url", "name", "headers", "ca"],
+        errors,
+      )
       match (sk.get("type"), sk.get("url")) {
         (Some(String("stdout")), _) => Some(StdoutSink)
         (Some(String("topic")), _) =>
@@ -1206,17 +1219,40 @@ fn parse_body(
               None
             }
           }
-        (Some(String("http")), Some(String(url))) =>
-          if url.has_prefix("http://") && url.length() > 7 {
-            Some(HttpSink(url))
-          } else {
+        (Some(String("http")), Some(String(url))) => {
+          let ok_scheme = (url.has_prefix("http://") && url.length() > 7) ||
+            (url.has_prefix("https://") && url.length() > 8)
+          if !ok_scheme {
             errors.push(SpecError::{
               path: "$.spec.sink.url",
               code: "bad-value",
-              message: "url must start with http:// (P1 client speaks plain HTTP/1.1)",
+              message: "url must start with http:// or https://",
             })
             None
+          } else {
+            match
+              (
+                parse_http_headers(sk, errors, "$.spec.sink.headers"),
+                parse_http_ca(sk, errors, "$.spec.sink.ca"),
+              ) {
+              (Some(headers), Some(ca)) =>
+                // the alarm path is a webhook, and a webhook is https with an
+                // auth header — same refusal as the source when the anchor is
+                // missing, named where the operator typed it
+                if url.has_prefix("https://") && ca.length() == 0 {
+                  errors.push(SpecError::{
+                    path: "$.spec.sink.ca",
+                    code: "bad-value",
+                    message: "https sinks need ca: the path to the CA bundle that signs the server",
+                  })
+                  None
+                } else {
+                  Some(HttpSink(url, headers, ca))
+                }
+              _ => None
+            }
           }
+        }
         (Some(String("http")), _) => {
           errors.push(SpecError::{
             path: "$.spec.sink.url",

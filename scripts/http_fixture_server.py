@@ -68,8 +68,18 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         received = self.rfile.read(length) if length else b""
         self._log_request()
-        with open(self.server.body_path, "ab") as fh:
-            fh.write(received)
+        for name, value in self.server.required:
+            if self.headers.get(name) != value:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+        # POST bodies go to their own file: appending them to --body would
+        # corrupt the GET response a later request is supposed to get (measured
+        # while wiring the alert relay).
+        if self.server.post_log:
+            with open(self.server.post_log, "ab") as fh:
+                fh.write(received)
         self.send_response(200)
         self.send_header("Content-Length", "2")
         self.end_headers()
@@ -91,6 +101,7 @@ def main() -> int:
     parser.add_argument("--sni-name", help="name that selects --sni-cert instead of --tls-cert")
     parser.add_argument("--sni-cert", help="the certificate served when SNI matches --sni-name")
     parser.add_argument("--sni-key", help="key for --sni-cert")
+    parser.add_argument("--post-log", help="JSONL file recording each POST body")
     parser.add_argument("--require-sni", metavar="NAME",
                         help="refuse the handshake unless SNI carries NAME")
     args = parser.parse_args()
@@ -98,6 +109,7 @@ def main() -> int:
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.body_path = args.body
     server.log_path = args.log
+    server.post_log = args.post_log
     server.required = []
     for item in args.require:
         if "=" not in item:
