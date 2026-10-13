@@ -144,6 +144,13 @@ grep -q '"model": 1' "$WORK/view.out" ||
 pass "dynamic: a catalog spec compiles inside the image and yields the view model"
 
 # ---- dynamic: a broker container answers /healthz ----------------------
+# The image runs as a non-root user (uid 10001). A bind mount is created by the
+# engine owned by whoever runs it, so the container could not write its data dir
+# and the broker would die for a reason that has nothing to do with moonflux.
+# 777 on a throwaway temp dir is the honest way to say "this mount is for that
+# user"; a named volume would work too, but it also needs cleanup.
+mkdir -p "$WORK/broker"
+chmod 777 "$WORK/broker"
 docker run -d --name moonflux-p42-broker -p 19851:19801 -p 19852:19802 \
   -v "$WORK/broker:/data" "$TAG" > /dev/null ||
   fail "the broker container did not start"

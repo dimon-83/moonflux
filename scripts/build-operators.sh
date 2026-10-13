@@ -8,8 +8,29 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 echo "[1/3] building operator modules (wasm target)"
-moon build --target wasm --output-wat
-for op in operator-identity operator-upper operator-fixture operator-scalar operator-filter operator-flatmap operator-counter operator-wordkeys operator-tumble operator-probe operator-bankevents operator-balance operator-predicate operator-keyfield operator-loadtable operator-stolenplates operator-average operator-modelreq operator-subscribe operator-notify operator-keyconst operator-topwords operator-dedupe operator-average; do
+
+# The packages are NAMED, and the build runs twice ON PURPOSE. Both facts below
+# were measured, and both were invisible until something built the operators from
+# a PRISTINE tree — the Docker image build (decision 87) was the first thing in
+# this repository to do that; every gate machine so far had a warm _build/ that
+# hid them:
+#
+#   * a module-wide `moon build --target wasm` produced ZERO operator artifacts
+#     in a cold tree (58 tasks, no .wasm, then "missing …"), so the artifact step
+#     names the packages it needs;
+#   * `--output-wat` emits ONLY the .wat in this toolchain and no .wasm at all,
+#     while it KEEPS an existing .wasm — so the binary build goes first and the
+#     WAT pass second. The probe reads the compiler-emitted WAT as ground truth
+#     for the import section; the artifact under test is the .wasm.
+OPS="operator-identity operator-upper operator-fixture operator-scalar operator-filter operator-flatmap operator-counter operator-wordkeys operator-tumble operator-probe operator-bankevents operator-balance operator-predicate operator-keyfield operator-loadtable operator-stolenplates operator-average operator-modelreq operator-subscribe operator-notify operator-keyconst operator-topwords operator-dedupe"
+PKGS=""
+for op in $OPS; do
+  PKGS="$PKGS apps/$op"
+done
+moon build --target wasm $PKGS
+moon build --target wasm --output-wat $PKGS
+
+for op in $OPS; do
   WASM="_build/wasm/release/build/apps/$op/$op.wasm"
   [ -f "$WASM" ] || WASM="_build/wasm/debug/build/apps/$op/$op.wasm"
   [ -f "$WASM" ] || { echo "missing $WASM" >&2; exit 1; }
