@@ -36,7 +36,10 @@ pub(all) enum SourceSpec {
   /// headers. Headers are part of the source because some APIs select what they
   /// return by header — PostgREST picks its schema with `Accept-Profile`, and
   /// without it the same URL answers 404 (measured against a real feed).
-  HttpSource(String, Int64, Array[(String, String)])
+  /// The trust anchor for https (empty string for http). There is no implicit
+  /// system trust store: a spec is reviewed, so "which certificates do we
+  /// trust" has to be visible in it.
+  HttpSource(String, Int64, Array[(String, String)], String)
   /// Read newline-delimited text from standard input (P1).
   StdinSource
   /// Subscribe to an MQTT broker topic (P19); messages become records.
@@ -372,6 +375,24 @@ pub fn parse_spec(text : String) -> Result[PipelineSpec, Array[SpecError]] {
 }
 
 ///|
+/// The CA bundle for an https source: a path, empty when absent. A non-string is
+/// refused here rather than coerced — "" would silently mean "no trust".
+fn parse_http_ca(src : Map[String, Json], errors : Array[SpecError]) -> String? {
+  match src.get("ca") {
+    None => Some("")
+    Some(String(path)) => Some(path)
+    Some(_) => {
+      errors.push(SpecError::{
+        path: "$.spec.source.ca",
+        code: "bad-type",
+        message: "ca must be the path to a CA bundle (a string)",
+      })
+      None
+    }
+  }
+}
+
+///|
 /// Request headers for an HTTP source: an object of name -> value.
 ///
 /// The guard that matters is injection: a header value carrying CR or LF ends
@@ -596,7 +617,7 @@ fn parse_body(
       reject_unknown_keys(
         "$.spec.source",
         src,
-        ["type", "path", "url", "interval_ms", "name", "from", "headers"],
+        ["type", "path", "url", "interval_ms", "name", "from", "headers", "ca"],
         errors,
       )
       match (src.get("type"), src.get("path"), src.get("url")) {
@@ -611,25 +632,44 @@ fn parse_body(
           } else {
             Some(FileSource(path))
           }
-        (Some(String("http")), _, Some(String(url))) =>
-          if url.has_prefix("http://") && url.length() > 7 {
+        (Some(String("http")), _, Some(String(url))) => {
+          let ok_scheme = (url.has_prefix("http://") && url.length() > 7) ||
+            (url.has_prefix("https://") && url.length() > 8)
+          if !ok_scheme {
+            errors.push(SpecError::{
+              path: "$.spec.source.url",
+              code: "bad-value",
+              message: "url must start with http:// or https://",
+            })
+            None
+          } else {
+            let is_https = url.has_prefix("https://")
             match
               (
                 parse_http_interval(src, errors),
                 parse_http_headers(src, errors),
+                parse_http_ca(src, errors),
               ) {
-              (Some(interval), Some(headers)) =>
-                Some(HttpSource(url, interval, headers))
+              (Some(interval), Some(headers), Some(ca)) =>
+                // https without a trust anchor is refused HERE, where the
+                // operator can still see which key they typed — not later as an
+                // OpenSSL sentence from a handshake nobody can read. (The shim
+                // verifies with no anchors, so it would fail anyway; a named
+                // refusal is the same outcome with a usable cause.)
+                if is_https && ca.length() == 0 {
+                  errors.push(SpecError::{
+                    path: "$.spec.source.ca",
+                    code: "bad-value",
+                    message: "https sources need ca: the path to the CA bundle that signs the server",
+                  })
+                  None
+                } else {
+                  Some(HttpSource(url, interval, headers, ca))
+                }
               _ => None
             }
-          } else {
-            errors.push(SpecError::{
-              path: "$.spec.source.url",
-              code: "bad-value",
-              message: "url must start with http:// (P1 client speaks plain HTTP/1.1)",
-            })
-            None
           }
+        }
         (Some(String("http")), _, _) => {
           errors.push(SpecError::{
             path: "$.spec.source.url",

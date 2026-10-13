@@ -764,8 +764,8 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   let source : @connectors.Source? = match applied.spec.source {
     TopicSource(_, _) => None
     FileSource(path) => Some(@connectors.file_source(path, now))
-    HttpSource(url, interval_ms, headers) =>
-      Some(@connectors.http_source(url, now, interval_ms, headers))
+    HttpSource(url, interval_ms, headers, ca) =>
+      Some(@connectors.http_source(url, now, interval_ms, headers, ca))
     StdinSource => Some(@connectors.stdin_source(now))
     MqttSource(url) => Some(@connectors.mqtt_source(url))
     KafkaSource(url) => Some(@connectors.kafka_source(url))
@@ -909,7 +909,7 @@ fn source_kind_text(source : @spec.SourceSpec) -> String {
   match source {
     TopicSource(_, _) => "topic"
     FileSource(_) => "file"
-    HttpSource(_, _, _) => "http"
+    HttpSource(_, _, _, _) => "http"
     StdinSource => "stdin"
     MqttSource(_) => "mqtt"
     KafkaSource(_) => "kafka"

@@ -223,6 +223,7 @@ pub fn http_source(
   timestamp : Int64,
   interval_ms : Int64,
   headers : Array[(String, String)],
+  ca : String,
 ) -> Source {
   let state = PollState::{ delivered: false, last_ms: timestamp, }
   let polling = interval_ms > 0L
@@ -248,7 +249,7 @@ pub fn http_source(
         }
         timestamp
       }
-      let body = match http_get(url, headers) {
+      let body = match http_get(url, headers, ca) {
         Ok(body) => body
         Err(e) => return Err("GET \{url}: \{e}")
       }
@@ -300,7 +301,7 @@ pub fn http_sink(url : String) -> Sink {
         body.write_bytes(@utf8.encode(line[0:line.length()]))
         body.write_byte(b'\n')
       }
-      match http_post(url, body.to_bytes(), []) {
+      match http_post(url, body.to_bytes(), [], "") {
         Ok(_) => Ok(())
         Err(e) => Err("POST \{url}: \{e}")
       }
@@ -313,11 +314,17 @@ pub fn http_sink(url : String) -> Sink {
 
 ///|
 /// Parses "http://host[:port][/path]" into (host, port, path).
-pub fn parse_http_url(url : String) -> Result[(String, Int32, String), String] {
-  if !url.has_prefix("http://") {
-    return Err("only http:// URLs are supported")
+pub fn parse_http_url(
+  url : String,
+) -> Result[(String, String, Int32, String), String] {
+  let (scheme, default_port, head) = if url.has_prefix("https://") {
+    ("https", 443, 8)
+  } else if url.has_prefix("http://") {
+    ("http", 80, 7)
+  } else {
+    return Err("URL must start with http:// or https://")
   }
-  let rest = url[7:url.length()].to_owned()
+  let rest = url[head:url.length()].to_owned()
   let (authority, path) = match rest.find("/") {
     Some(idx) => (rest[0:idx].to_owned(), rest[idx:rest.length()].to_owned())
     None => (rest, "/")
@@ -328,10 +335,10 @@ pub fn parse_http_url(url : String) -> Result[(String, Int32, String), String] {
   match authority.rev_split_once(":") {
     Some((host, port_text)) =>
       match (try? @string.parse_int(port_text[0:port_text.length()])) {
-        Ok(port) => Ok((host.to_owned(), port, path))
+        Ok(port) => Ok((scheme, host.to_owned(), port, path))
         Err(_) => Err("bad port in URL: \{port_text}")
       }
-    None => Ok((authority, 80, path))
+    None => Ok((scheme, authority, default_port, path))
   }
 }
 
@@ -409,15 +416,244 @@ pub fn parse_http_response(bytes : Bytes) -> Result[(Int32, Bytes), String] {
 
 ///|
 /// One blocking HTTP exchange over a fresh TCP connection.
+
+///|
+/// Bounded waits for the https path. The http source is a poller: a peer that
+/// accepts the connection and then goes quiet must not pin the pipeline.
+const HTTP_HANDSHAKE_TIMEOUT_MS : Int32 = 10000
+
+///|
+const HTTP_IO_TIMEOUT_MS : Int32 = 30000
+
+///|
+/// Milliseconds from now. Read here (the host layer), never in the kernel.
+fn http_deadline_after(ms : Int32) -> Int64 {
+  @env.now().reinterpret_as_int64() + ms.to_int64()
+}
+
+///|
+fn http_past_deadline(deadline : Int64) -> Bool {
+  @env.now().reinterpret_as_int64() > deadline
+}
+
+///|
+/// The `Content-Length` a response promises, if it says so. The two spellings
+/// below cover what real servers send; anything else falls back to
+/// "read until the peer closes", which the read loop also handles — so a server
+/// we cannot measure is still read correctly, just less promptly.
+fn response_content_length(bytes : Bytes) -> Int32? {
+  let text = @utf8.decode_lossy(bytes[0:bytes.length()])
+  for marker in ["\r\nContent-Length: ", "\r\ncontent-length: "] {
+    match text.find(marker) {
+      None => ()
+      Some(at) => {
+        let rest = text[at + marker.length():text.length()]
+        let mut digits = ""
+        for part in rest.split("\r\n") {
+          digits = part.to_owned()
+          break
+        }
+        match (try? @string.parse_int(digits)) {
+          Ok(n) => return Some(n)
+          Err(_) => return None
+        }
+      }
+    }
+  }
+  None
+}
+
+///|
+/// Where the response header block ends (the body starts after it).
+fn response_header_end(bytes : Bytes) -> Int32? {
+  let text = @utf8.decode_lossy(bytes[0:bytes.length()])
+  match text.find("\r\n\r\n") {
+    Some(at) => Some(at + 4)
+    None => None
+  }
+}
+
+///|
+/// An https exchange.
+///
+/// Verification is not optional and there is NO implicit system trust store: an
+/// http source is configured by a spec somebody reviews, so "which certificates
+/// do we trust" has to be visible there. An empty CA is refused by name — both
+/// "quietly trust nothing" and "quietly trust everything" are wrong answers to a
+/// question nobody asked, and the second one is the dangerous one.
+fn https_exchange(
+  verb : String,
+  host : String,
+  port : Int32,
+  path : String,
+  body : Bytes,
+  headers : Array[(String, String)],
+  ca : String,
+) -> Result[(Int32, Bytes), String] {
+  if ca.length() == 0 {
+    return Err(
+      "https needs a trust anchor: set source.ca (there is no implicit system store)",
+    )
+  }
+  let context = match @tls.client_context(ca, None, None) {
+    Ok(context) => context
+    Err(e) => return Err(e)
+  }
+  let stream = match @net.TcpStream::connect(host, port) {
+    Ok(stream) => stream
+    Err(e) => {
+      context.free()
+      return Err("connect \{host}:\{port}: \{e}")
+    }
+  }
+  match stream.set_nonblocking(true) {
+    Ok(_) => ()
+    Err(e) => {
+      context.free()
+      let _ = stream.close()
+      return Err("nonblocking: \{e}")
+    }
+  }
+  let session = match context.attach(stream.raw_fd()) {
+    Ok(session) => session
+    Err(e) => {
+      context.free()
+      let _ = stream.close()
+      return Err(e)
+    }
+  }
+  // the certificate must name the host we asked for (P12): verification that
+  // ignores the name accepts any certificate the CA ever signed
+  session.set_host(host)
+  let fd = stream.raw_fd()
+  let deadline = http_deadline_after(HTTP_HANDSHAKE_TIMEOUT_MS)
+  let mut done = false
+  let mut failure = ""
+  while !done {
+    match session.connect() {
+      Ok(Done) => done = true
+      Ok(Pending(want_write)) => {
+        let _ = @net.poll_fds([fd], 50, want_write)
+        if http_past_deadline(deadline) {
+          failure = "TLS handshake timed out"
+          break
+        }
+      }
+      Err(e) => {
+        failure = e
+        break
+      }
+    }
+  }
+  if !done {
+    session.close()
+    let _ = stream.close()
+    context.free()
+    return Err("TLS to \{host}:\{port}: \{failure}")
+  }
+  let request = build_http_request(verb, host, port, path, body, headers)
+  let outcome = https_exchange_ready(session, fd, request)
+  session.close()
+  let _ = stream.close()
+  context.free()
+  match outcome {
+    Ok(response) => parse_http_response(response)
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// Writes the request, then reads until the peer closes (the request asks for
+/// `Connection: close`). One deadline covers both, so a peer that stalls is a
+/// failure rather than a hang.
+fn https_exchange_ready(
+  session : @tls.TlsSession,
+  fd : Int32,
+  request : Bytes,
+) -> Result[Bytes, String] {
+  let deadline = http_deadline_after(HTTP_IO_TIMEOUT_MS)
+  let mut sent = 0
+  while sent < request.length() {
+    match session.write_some(request[sent:request.length()].to_owned()) {
+      Ok(Some(n)) => {
+        if n == 0 {
+          return Err("TLS write made no progress")
+        }
+        sent = sent + n
+      }
+      Ok(None) => {
+        let _ = @net.poll_fds([fd], 50, true)
+        if http_past_deadline(deadline) {
+          return Err("TLS write timed out")
+        }
+      }
+      Err(e) => return Err(e)
+    }
+  }
+  let chunk : FixedArray[Byte] = FixedArray::make(65536, b'\x00')
+  let out = Buffer::Buffer()
+  while true {
+    match session.read_some(chunk, 65536) {
+      Ok(Some(0)) => break
+      Ok(Some(n)) => {
+        let part = Bytes::from_fixedarray(chunk, len=n)
+        out.write_bytes(part[0:n])
+        let so_far = out.to_bytes()
+        // A complete response is the stop condition, not the peer closing: many
+        // servers (python's http.server among them) end the connection without a
+        // TLS close_notify, which OpenSSL 3 reports as an error rather than an
+        // EOF. Reading by Content-Length sidesteps that entirely.
+        match (response_content_length(so_far), response_header_end(so_far)) {
+          (Some(want), Some(head)) =>
+            if so_far.length() - head >= want {
+              break
+            }
+          _ => ()
+        }
+        if so_far.length() > @protocol.MAX_BATCH_BYTES {
+          return Err(
+            "https response exceeds the payload budget (\{@protocol.MAX_BATCH_BYTES} bytes)",
+          )
+        }
+        if http_past_deadline(deadline) {
+          return Err("TLS read timed out")
+        }
+      }
+      Ok(None) => {
+        let _ = @net.poll_fds([fd], 50, false)
+        if http_past_deadline(deadline) {
+          return Err("TLS read timed out")
+        }
+      }
+      Err(e) => {
+        // OpenSSL 3 turns a missing close_notify into this error. Treating it as
+        // end-of-stream is what every other client does in practice, and the
+        // Content-Length check above is the real stop condition; refusing here
+        // would reject a correct response from a server that simply closed.
+        if e.contains("unexpected eof") {
+          break
+        }
+        return Err(e)
+      }
+    }
+  }
+  Ok(out.to_bytes())
+}
+
+///|
 fn http_exchange(
   verb : String,
   url : String,
   body : Bytes,
   headers : Array[(String, String)],
+  ca : String,
 ) -> Result[(Int32, Bytes), String] {
-  let (host, port, path) = match parse_http_url(url) {
+  let (scheme, host, port, path) = match parse_http_url(url) {
     Ok(parts) => parts
     Err(e) => return Err(e)
+  }
+  if scheme == "https" {
+    return https_exchange(verb, host, port, path, body, headers, ca)
   }
   let stream = match @net.TcpStream::connect(host, port) {
     Ok(stream) => stream
@@ -463,8 +699,9 @@ fn http_exchange(
 pub fn http_get(
   url : String,
   headers : Array[(String, String)],
+  ca : String,
 ) -> Result[Bytes, String] {
-  match http_exchange("GET", url, b"", headers) {
+  match http_exchange("GET", url, b"", headers, ca) {
     Ok((_, body)) => Ok(body)
     Err(e) => Err(e)
   }
@@ -476,8 +713,9 @@ pub fn http_post(
   url : String,
   body : Bytes,
   headers : Array[(String, String)],
+  ca : String,
 ) -> Result[Bytes, String] {
-  match http_exchange("POST", url, body, headers) {
+  match http_exchange("POST", url, body, headers, ca) {
     Ok((_, response)) => Ok(response)
     Err(e) => Err(e)
   }

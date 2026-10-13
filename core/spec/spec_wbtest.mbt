@@ -194,12 +194,13 @@ test "an http source takes an optional poll interval" {
   // absent or 0 keeps the one-shot P1 behavior; positive makes a poller
   let one_shot = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"http://h/p\"},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
   match parse_spec(one_shot) {
-    Ok(spec) => assert_true(spec.source is HttpSource("http://h/p", 0L, []))
+    Ok(spec) => assert_true(spec.source is HttpSource("http://h/p", 0L, [], ""))
     Err(errors) => abort("one-shot http source rejected: \{errors}")
   }
   let polled = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"x\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"http://h/p\",\"interval_ms\":250},\"transforms\":[],\"topic\":{\"name\":\"t\"},\"sink\":{\"type\":\"stdout\"}}}"
   match parse_spec(polled) {
-    Ok(spec) => assert_true(spec.source is HttpSource("http://h/p", 250L, []))
+    Ok(spec) =>
+      assert_true(spec.source is HttpSource("http://h/p", 250L, [], ""))
     Err(errors) => abort("polled http source rejected: \{errors}")
   }
   // a negative or non-numeric interval is a named rejection, not a clamp
@@ -286,7 +287,7 @@ test "http source headers parse, and injection is refused" {
   match parse_spec(doc("{\"Accept-Profile\":\"ia_csc\",\"X-Trace\":\"abc\"}")) {
     Ok(spec) =>
       match spec.source {
-        HttpSource(_, _, headers) => {
+        HttpSource(_, _, headers, _) => {
           assert_eq(headers.length(), 2)
           // sorted by name: an object's iteration order must not reach the wire
           assert_eq(headers[0], ("Accept-Profile", "ia_csc"))
@@ -305,5 +306,46 @@ test "http source headers parse, and injection is refused" {
       Ok(_) => abort("headers \{bad} should have been refused")
       Err(_) => ()
     }
+  }
+}
+
+///|
+/// https needs an explicit trust anchor, refused at VALIDATION time with a
+/// message that names the key — measured need: the real feed is https, and the
+/// http source's TLS verifies with whatever CA the spec names (no implicit
+/// system store, so an empty one can only fail later with an OpenSSL sentence).
+test "https source needs a ca, and carries it" {
+  let doc = fn(source : String) {
+    "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\"," +
+    "\"metadata\":{\"name\":\"h\"},\"spec\":{\"source\":" +
+    source +
+    "," +
+    "\"topic\":{\"name\":\"t\"},\"transforms\":[],\"sink\":{\"type\":\"stdout\"}}}"
+  }
+  match
+    parse_spec(
+      doc("{\"type\":\"http\",\"url\":\"https://h/p\",\"ca\":\"/tmp/ca.pem\"}"),
+    ) {
+    Ok(spec) =>
+      match spec.source {
+        HttpSource(url, _, _, ca) => {
+          assert_eq(url, "https://h/p")
+          assert_eq(ca, "/tmp/ca.pem")
+        }
+        _ => abort("expected an http source")
+      }
+    Err(errors) => abort("https with a ca should have parsed: \{errors}")
+  }
+  match parse_spec(doc("{\"type\":\"http\",\"url\":\"https://h/p\"}")) {
+    Ok(_) => abort("https without a ca must be refused")
+    Err(errors) => {
+      let text = "\{errors}"
+      assert_true(text.contains("https sources need ca"))
+    }
+  }
+  // a plain-http source still parses with no ca at all
+  match parse_spec(doc("{\"type\":\"http\",\"url\":\"http://h/p\"}")) {
+    Ok(_) => ()
+    Err(errors) => abort("http without ca should parse: \{errors}")
   }
 }

@@ -50,7 +50,7 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
   })
   let (role, detail) = match spec.source {
     FileSource(path) => ("source-runner", "file source: \{path}")
-    HttpSource(url, interval_ms, headers) =>
+    HttpSource(url, interval_ms, headers, ca) =>
       (
         "source-runner",
         (if interval_ms > 0L {
@@ -58,6 +58,7 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
         } else {
           "http source: \{url}"
         }) +
+        (if ca.length() > 0 { " (TLS, CA \{ca})" } else { "" }) +
         (if headers.length() > 0 {
           " (+\{headers.length()} request header(s))"
         } else {

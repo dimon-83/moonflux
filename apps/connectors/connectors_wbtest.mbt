@@ -8,17 +8,27 @@
 test "url parsing: default port, explicit port, path" {
   assert_eq(
     parse_http_url("http://example.com/a/b"),
-    Ok(("example.com", 80, "/a/b")),
+    Ok(("http", "example.com", 80, "/a/b")),
   )
   assert_eq(
     parse_http_url("http://127.0.0.1:8080"),
-    Ok(("127.0.0.1", 8080, "/")),
+    Ok(("http", "127.0.0.1", 8080, "/")),
   )
   assert_eq(
     parse_http_url("http://127.0.0.1:18080/data?x=1"),
-    Ok(("127.0.0.1", 18080, "/data?x=1")),
+    Ok(("http", "127.0.0.1", 18080, "/data?x=1")),
   )
-  assert_true(parse_http_url("https://example.com/") is Err(_))
+  // https is supported now: the scheme decides the port default and the
+  // transport (TLS), and the CA comes from the spec (decision 91)
+  assert_eq(
+    parse_http_url("https://example.com/"),
+    Ok(("https", "example.com", 443, "/")),
+  )
+  assert_eq(
+    parse_http_url("https://h.example:8443/x"),
+    Ok(("https", "h.example", 8443, "/x")),
+  )
+  assert_true(parse_http_url("ftp://example.com/") is Err(_))
   assert_true(parse_http_url("http://example.com:abc/") is Err(_))
   assert_true(parse_http_url("http://") is Err(_))
 }

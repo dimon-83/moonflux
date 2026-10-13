@@ -390,9 +390,17 @@ fn live_exchange(
   headers : Array[(String, String)],
   timeout_ms : Int32,
 ) -> Result[(Int32, Bytes), String] {
-  let (host, port, path) = match @connectors.parse_http_url(url) {
+  let (scheme, host, port, path) = match @connectors.parse_http_url(url) {
     Ok(parts) => parts
     Err(e) => return Err(e)
+  }
+  // The callout speaks plain HTTP only for now. Refusing https by NAME matters:
+  // `parse_http_url` accepts it, and continuing would open a plain socket to a
+  // TLS port — a silent wrong transport rather than a legible refusal.
+  if scheme != "http" {
+    return Err(
+      "callout url scheme \{scheme} is not supported yet (only http://; https lands with the http source's TLS work)",
+    )
   }
   let stream = match @net.TcpStream::connect(host, port) {
     Ok(stream) => stream

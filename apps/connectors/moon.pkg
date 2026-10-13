@@ -11,4 +11,5 @@ import {
   "moonflux/core/protocol",
   "moonflux/adapters/fs-native" @fs,
   "moonflux/adapters/net-native" @net,
+  "moonflux/adapters/tls-native" @tls,
 }
