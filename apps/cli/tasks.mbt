@@ -330,3 +330,84 @@ fn task_count(data_dir : String) -> Int32 {
     Err(_) => 0
   }
 }
+
+///|
+/// Parses a SET document's `pipelines` array into task documents. Each element
+/// is either a stored task object (`{pipeline, spec, ...}`) or a bare spec
+/// document; both are accepted because that is what makes a catalog
+/// round-trip, and because the control plane and the CLI must not disagree
+/// about what a set document is.
+///
+/// `write_task_set` is the inverse for the CLI's `--set`; the control plane
+/// uses this to accept one.
+fn task_docs_from_pipelines(
+  items : Array[Json],
+) -> Result[Array[TaskDoc], String] {
+  let out : Array[TaskDoc] = []
+  for item in items {
+    // Two shapes, and the difference is exactly where the document lives:
+    //   a stored task object: {pipeline, spec: <whole document>, ...}
+    //   a bare spec document: {apiVersion, kind, metadata, spec: <body>}
+    // Reading `item["spec"]` for both would hand the parser the BODY of a bare
+    // spec (its source/topic/transforms live one level up), which the parser
+    // refuses — measured, and the reason this comment exists.
+    let (name, spec_json) = match item.value("pipeline") {
+      Some(String(name)) =>
+        match item.value("spec") {
+          Some(spec_json) => (name, spec_json)
+          None => return Err("task \{name} has no spec")
+        }
+      _ =>
+        match @spec.parse_spec(item.stringify()) {
+          Ok(spec) => (spec.metadata_name, item)
+          Err(errors) => {
+            let sb = StringBuilder::new()
+            sb.write_string("a spec in the set did not parse (")
+            sb.write_string(errors.length().to_string())
+            sb.write_string(" error(s)): ")
+            for e in errors {
+              sb.write_string("\{e.path}: \{e.message}; ")
+            }
+            return Err(sb.to_string())
+          }
+        }
+    }
+    let spec = match @spec.parse_spec(spec_json.stringify()) {
+      Ok(spec) => spec
+      Err(errors) => {
+        let sb = StringBuilder::new()
+        sb.write_string("the spec for task \{name} did not parse: ")
+        for e in errors {
+          sb.write_string("\{e.path}: \{e.message}; ")
+        }
+        return Err(sb.to_string())
+      }
+    }
+    // Always store the canonical task object: a bare spec element becomes
+    // {pipeline, applied_at, functions, spec}. Leaving it bare would make the
+    // stored document depend on how it arrived, and a later reader that wants
+    // applied_at/functions would find neither.
+    out.push(TaskDoc::{
+      name,
+      spec,
+      json: task_json(name, spec_json, [], @env.now().reinterpret_as_int64()),
+    })
+  }
+  Ok(out)
+}
+
+///|
+/// Parses a document that is meant to be a SET: `{"pipelines": [...]}`. Used
+/// by `apply --set` and by the control plane's set verb.
+fn task_docs_from_set_text(
+  text : String,
+  label : String,
+) -> Result[Array[TaskDoc], String] {
+  let doc = @json.parse(text[0:text.length()]) catch {
+    e => return Err("\{label}: invalid json: \{e}")
+  }
+  match doc.value("pipelines") {
+    Some(Array(items)) => task_docs_from_pipelines(items)
+    _ => Err("\{label}: expected a set document (\"pipelines\": [...])")
+  }
+}

@@ -1170,22 +1170,48 @@ fn dispatch_control_frame(
           }
         Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
       }
-    // the cluster's pipeline (P11): published here, pulled by nodes
+    // the cluster's task set (P11 + P37): published here, pulled by nodes.
+    // Three shapes arrive on one verb, and the shape is what the CLI said:
+    //   bare spec text              -> upsert (the pre-P37 payload, still valid)
+    //   {"mode":"upsert"|"replace"|"set","document":"..."}
+    // A bare spec stays accepted so an older client keeps working, and it keeps
+    // the meaning it always had for the single-pipeline cluster.
     @client.CMD_CLUSTER_PIPELINE_APPLY => {
       let text = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
-      match asset.publish(text, store) {
-        Ok(revision) => {
+      match parse_publish_payload(text) {
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        Ok((document, mode)) =>
+          match asset.publish(document, mode, store) {
+            Ok((revision, names)) => {
+              note(
+                "cluster task set now revision \{revision} (\{names.length()} task(s): \{names.join(", ")}); data nodes pull it on their next heartbeat",
+              )
+              Ok(
+                @client.encode_cluster_pipeline(@client.ClusterPipeline::{
+                  revision,
+                  document: "",
+                }),
+              )
+            }
+            Err(e) => Err((@client.ERR_TRANSFORM, e))
+          }
+      }
+    }
+    @client.CMD_CLUSTER_PIPELINE_DELETE => {
+      let name = @utf8.decode_lossy(frame.payload[0:frame.payload.length()])
+      match asset.delete_task(name) {
+        Ok((revision, names)) => {
           note(
-            "cluster pipeline applied (revision \{revision}, \{text.length()} bytes); data nodes will pull it on their next heartbeat",
+            "deleted task \{name}: cluster task set now revision \{revision} (\{names.length()} task(s))",
           )
           Ok(
             @client.encode_cluster_pipeline(@client.ClusterPipeline::{
               revision,
-              spec_json: "",
+              document: "",
             }),
           )
         }
-        Err(e) => Err((@client.ERR_TRANSFORM, e))
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
       }
     }
     @client.CMD_CLUSTER_PIPELINE_FETCH =>
@@ -1196,16 +1222,16 @@ fn dispatch_control_frame(
         Ok(
           @client.encode_cluster_pipeline(@client.ClusterPipeline::{
             revision: asset.revision,
-            spec_json: "",
+            document: "",
           }),
         )
-      } else if asset.spec_json.length() == 0 {
+      } else if asset.document.length() == 0 {
         Err((@client.ERR_BAD_PAYLOAD, "no pipeline is applied on this cluster"))
       } else {
         Ok(
           @client.encode_cluster_pipeline(@client.ClusterPipeline::{
             revision: asset.revision,
-            spec_json: asset.spec_json,
+            document: asset.document,
           }),
         )
       }
@@ -3423,4 +3449,30 @@ fn format_addresses(addresses : Array[String]) -> String {
     sb.write_string(address)
   }
   sb.to_string()
+}
+
+///|
+/// Reads a publish payload: either a bare spec document (the pre-P37 shape,
+/// meaning upsert) or the envelope the current CLI sends. Accepting both keeps
+/// an older client working and keeps the meaning it had.
+fn parse_publish_payload(
+  text : String,
+) -> Result[(String, PublishMode), String] {
+  let doc = @json.parse(text[0:text.length()]) catch {
+    _ => return Ok((text, PublishMode::Upsert))
+  }
+  let mode = match doc.value("mode") {
+    Some(String(mode)) => mode
+    _ => return Ok((text, PublishMode::Upsert))
+  }
+  let document = match doc.value("document") {
+    Some(String(document)) => document
+    _ => return Err("a publish envelope needs a \"document\" string")
+  }
+  match mode {
+    "upsert" => Ok((document, PublishMode::Upsert))
+    "replace" => Ok((document, PublishMode::Replace))
+    "set" => Ok((document, PublishMode::Set))
+    _ => Err("unknown publish mode \{mode} (upsert, replace or set)")
+  }
 }

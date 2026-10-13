@@ -150,11 +150,25 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
       Ok(bytes) => @utf8.decode_lossy(bytes[0:bytes.length()])
       Err(e) => fail("read \{spec_path}: \{e}")
     }
+    // Which of the three shapes the operator meant travels WITH the document
+    // (P37): a control plane must never have to guess whether "apply" means
+    // "add this task" or "this is now the whole cluster's task list".
+    let mode = if flags.get("set") is Some(_) {
+      "set"
+    } else if flags.get("replace") is Some(_) {
+      "replace"
+    } else {
+      "upsert"
+    }
+    let envelope : Map[String, Json] = {}
+    envelope["mode"] = Json::string(mode)
+    envelope["document"] = Json::string(text)
+    let body = Json::object(envelope).stringify()
     let payload = match
       control_call_secure(
         sc_addr,
         @client.CMD_CLUSTER_PIPELINE_APPLY,
-        @utf8.encode(text),
+        @utf8.encode(body),
         peer_link(flags),
       ) {
       Ok(payload) => payload
@@ -165,7 +179,7 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
       Err(e) => fail("pipeline apply: \{e}")
     }
     println(
-      "applied pipeline to the cluster at revision \{pipeline.revision}; data nodes pull it on their next heartbeat",
+      "\{mode} published to the cluster at revision \{pipeline.revision}; data nodes pull the whole task set on their next heartbeat",
     )
     cli_exit(0)
   }
@@ -181,9 +195,10 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
   let (tasks, message) = if flags.get("set") is Some(_) {
     let incoming = load_set_doc(spec_path)
     let prepared : Array[TaskDoc] = []
-    for triple in incoming {
-      let (name, spec, spec_json) = triple
-      prepared.push(prepare_task(store, data_dir, name, spec, spec_json, now))
+    for doc in incoming {
+      prepared.push(
+        prepare_task(store, data_dir, doc.name, doc.spec, doc.json, now),
+      )
     }
     (prepared, "applied \{prepared.length()} task(s) as the whole set")
   } else {
@@ -275,65 +290,19 @@ fn prepare_task(
 
 ///|
 /// Reads a `--set` document: `{"pipelines": [...]}` where each element is
-/// either a stored task object (`{pipeline, spec, ...}`, i.e. what apply
-/// writes and what `list` reads) or a bare spec document. Accepting both is
-/// what makes a catalog round-trip possible without a second format.
-fn load_set_doc(path : String) -> Array[(String, @spec.PipelineSpec, Json)] {
+/// either a stored task object or a bare spec document (both accepted, so a
+/// catalog round-trips). The parsing itself lives with the task-set layer, so
+/// the CLI and the control plane cannot drift on what a set document is.
+fn load_set_doc(path : String) -> Array[TaskDoc] {
   let bytes = match @fs.read_file(path) {
     Ok(bytes) => bytes
     Err(e) => fail("read \{path}: \{e}")
   }
   let text = @utf8.decode_lossy(bytes[0:bytes.length()])
-  let doc = @json.parse(text[0:text.length()]) catch {
-    e => fail("\{path}: invalid json: \{e}")
+  match task_docs_from_set_text(text, path) {
+    Ok(docs) => docs
+    Err(e) => fail(e)
   }
-  let items : Array[Json] = match doc.value("pipelines") {
-    Some(Array(items)) => items
-    _ =>
-      fail(
-        "\{path}: --set needs a set document (\"pipelines\": [...]); apply one spec without --set",
-      )
-  }
-  let out : Array[(String, @spec.PipelineSpec, Json)] = []
-  for item in items {
-    let (name, spec_json) = match item.value("pipeline") {
-      Some(String(name)) =>
-        match item.value("spec") {
-          Some(spec_json) => (name, spec_json)
-          None => fail("\{path}: task \{name} has no spec")
-        }
-      _ => {
-        // a bare spec: its identity is metadata.name
-        let text = item.stringify()
-        let spec = match @spec.parse_spec(text) {
-          Ok(spec) => spec
-          Err(errors) => {
-            for e in errors {
-              warn("  \{e.path}: [\{e.code}] \{e.message}")
-            }
-            fail(
-              "\{path}: a spec in the set did not parse (\{errors.length()} error(s))",
-            )
-          }
-        }
-        (spec.metadata_name, item)
-      }
-    }
-    let spec_text = spec_json.stringify()
-    let spec = match @spec.parse_spec(spec_text) {
-      Ok(spec) => spec
-      Err(errors) => {
-        for e in errors {
-          warn("  \{e.path}: [\{e.code}] \{e.message}")
-        }
-        fail(
-          "\{path}: the spec for task \{name} did not parse (\{errors.length()} error(s))",
-        )
-      }
-    }
-    out.push((name, spec, spec_json))
-  }
-  out
 }
 
 ///|
@@ -342,6 +311,26 @@ fn load_set_doc(path : String) -> Array[(String, @spec.PipelineSpec, Json)] {
 fn pipeline_delete(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let name = flags.require("name")
+  if flags.get("remote") is Some(sc_addr) {
+    let payload = match
+      control_call_secure(
+        sc_addr,
+        @client.CMD_CLUSTER_PIPELINE_DELETE,
+        @utf8.encode(name),
+        peer_link(flags),
+      ) {
+      Ok(payload) => payload
+      Err(e) => fail("pipeline delete: \{e}")
+    }
+    let pipeline = match @client.decode_cluster_pipeline(payload) {
+      Ok(pipeline) => pipeline
+      Err(e) => fail("pipeline delete: \{e}")
+    }
+    println(
+      "deleted task \{name} on the cluster (now revision \{pipeline.revision}); data nodes pull the new set on their next heartbeat",
+    )
+    cli_exit(0)
+  }
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
   let set = load_task_set(data_dir)
   if set.find(name) is None {
@@ -388,12 +377,12 @@ fn pipeline_list(argv : Array[String]) -> Unit {
       Ok(pipeline) => pipeline
       Err(e) => fail("pipeline list: \{e}")
     }
-    if pipeline.spec_json.length() == 0 {
+    if pipeline.document.length() == 0 {
       println("no task is applied on this cluster")
       cli_exit(0)
     }
     let set = match
-      parse_task_set_text(pipeline.spec_json, "the cluster's task set") {
+      parse_task_set_text(pipeline.document, "the cluster's task set") {
       Ok(set) => set
       Err(e) => fail(e)
     }

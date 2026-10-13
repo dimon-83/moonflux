@@ -1217,6 +1217,14 @@ pub const CMD_CLUSTER_PIPELINE_APPLY = 32
 /// document. Two questions in one command because the heartbeat already
 /// carries the revision — a node only fetches when it differs, and a
 /// several-kilobyte document should not ride every heartbeat.
+/// Removes one task from the cluster's task set (P37). Like APPLY it is
+/// Root-only: the role table in `core/auth` lists data reads, group-member
+/// commands and node commands, and everything else falls through to
+/// "Root only" — which is where changing a cluster's desired state belongs.
+pub const CMD_CLUSTER_PIPELINE_DELETE = 37
+
+/// The control plane's task-set document (a node pulls it when the revision
+/// moves; the payload is empty to ask for the revision alone).
 pub const CMD_CLUSTER_PIPELINE_FETCH = 33
 
 ///|
@@ -1230,15 +1238,19 @@ pub const CMD_FUNCTION_SET_FETCH = 34
 /// asked for, the document itself.
 pub(all) struct ClusterPipeline {
   revision : Int64
-  /// empty when the control plane has no pipeline applied yet
-  spec_json : String
+  /// The cluster's TASK-SET document (P37), or empty when the control plane
+  /// has nothing applied. It was one spec before the set existed; the wire
+  /// shape (a revision and one string) is unchanged, and an older reader
+  /// refuses a set document it cannot parse as a spec rather than misreading
+  /// it — noisy, never silent.
+  document : String
 } derive(Debug, Eq, Show)
 
 ///|
 pub fn encode_cluster_pipeline(pipeline : ClusterPipeline) -> Bytes {
   let buf = @buffer.Buffer::Buffer()
   buf.write_leb128(pipeline.revision)
-  write_field(buf, pipeline.spec_json)
+  write_field(buf, pipeline.document)
   buf.to_bytes()
 }
 
@@ -1251,11 +1263,11 @@ pub fn decode_cluster_pipeline(
     Ok(revision) => revision.reinterpret_as_int64()
     Err(_) => return Err("truncated pipeline revision")
   }
-  let spec_json = match read_field(reader) {
-    Ok(spec_json) => spec_json
+  let document = match read_field(reader) {
+    Ok(document) => document
     Err(e) => return Err(e)
   }
-  Ok(ClusterPipeline::{ revision, spec_json, })
+  Ok(ClusterPipeline::{ revision, document, })
 }
 
 ///|

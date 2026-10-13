@@ -170,6 +170,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p35-metrics.sh" scripts/e2e-p35-metrics.sh
   step "e2e-p36-state-migration.sh" scripts/e2e-p36-state-migration.sh
   step "e2e-p37-multi-task.sh" scripts/e2e-p37-multi-task.sh
+  step "e2e-p37b-cluster-tasks.sh" scripts/e2e-p37b-cluster-tasks.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh

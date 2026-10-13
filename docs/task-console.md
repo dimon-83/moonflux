@@ -44,9 +44,10 @@
 
 > **落地实录 2026-10-13（本地口径，决策 81）**：文档形状、命令面、按 topic 选链、
 > 同主题冲突按名拒绝、v1 内存迁移、`--set` 全集替换、`pipeline run --name` 都已落地，
-> 门禁 `scripts/e2e-p37-multi-task.sh` **10 腿**全绿。**尚未落地（P37-1b）**：集群侧的
-> upsert/delete 与节点采纳集合文档——今天 `apply --remote` 仍发布单个 spec，混版节点
-> 会拒绝解析并保留在跑的（有噪音、不静默）。另外落地时确认了三条纪律：本地 apply
+> 门禁 `scripts/e2e-p37-multi-task.sh` **11 腿**全绿。**P37-1b 已落地 2026-10-13（决策 82）**：
+> 集群侧持同一份集合文档 + 一个文档级修订，`apply --remote` 三种形状（信封）与
+> `delete --remote`（Root-only），节点**整份采纳**（`cluster_revision` 与任务列表同时前进），
+> 坏文档被拒且保留在跑的。门禁 `scripts/e2e-p37b-cluster-tasks.sh` **6 腿**。另外落地时确认了三条纪律：本地 apply
 > **丢弃** `cluster_revision`；`/metrics` 里**不得出现任务名**（只出 `moonflux_tasks` 计数）；
 > `rules active` 这类诊断必须走 **stderr**（块缓冲的 stdout 会让它"打印了但看不见"）。
 
