@@ -10,3 +10,9 @@ uncovered.log
 
 # moonflux local runtime data (P0 demo / CLI default data dir)
 .moonflux-data/
+
+# The SDF example deployment root (scripts/deploy-sdf.sh). It is build output:
+# data dirs, logs, pids and the catalog of one deployment. Nothing in it is
+# source, and a deployment that got committed would be a deployment nobody
+# could reproduce.
+_deploy/

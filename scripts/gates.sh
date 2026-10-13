@@ -175,6 +175,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p38-run-registration.sh" scripts/e2e-p38-run-registration.sh
   step "e2e-p39-console.sh" scripts/e2e-p39-console.sh
   step "e2e-p40-panels.sh" scripts/e2e-p40-panels.sh
+  step "e2e-p41-deploy.sh" scripts/e2e-p41-deploy.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
