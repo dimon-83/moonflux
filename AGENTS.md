@@ -1,5 +1,7 @@
 # AGENTS.md — moonflux 项目规约
 
+> **两条铁律（英文，简短，必读）→ [AGENT.md](AGENT.md)：① 资源必须受控且必须释放（门禁与 moonflux 内部同等适用）；② 面向 agent 的文件用英文、其余文档中文，双语副本后补。**
+>
 > 本文件是 **moonflux 的项目章程与 agent 工作规则**：任何在本仓库工作的 agent（或人）开始任务前必读。
 > 项目定位与范围 → [README.md](README.md)｜技术依据与证据 → [docs/fluvio-moonbit-evaluation.md](docs/fluvio-moonbit-evaluation.md)｜对标参考规则 → [docs/fluvio-reference-guide.md](docs/fluvio-reference-guide.md)
 
