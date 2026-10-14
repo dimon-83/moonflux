@@ -91,19 +91,40 @@ fn cmd_runner(argv : Array[String]) -> Unit {
   let flag_restart = flags.get("restart")
   let control = flags.get("control")
   let want = flags.get("name")
+  // `--worker <id>` is the scheduling half: the runner runs the tasks whose
+  // `target` is this id (or "any"/absent). Without it, a runner runs everything
+  // in its data dir — the single-node shape. A worker with nothing pinned to it
+  // is a legitimate idle state, not an error: the scheduler may assign later.
+  let worker = flags.get("worker")
 
   let set = load_task_set(data_dir)
   let chosen : Array[TaskDoc] = []
   for task in set.tasks {
-    match want {
-      None => chosen.push(task)
-      Some(w) => if task.name == w { chosen.push(task) }
+    let name_match = match want {
+      None => true
+      Some(w) => task.name == w
+    }
+    let worker_match = match worker {
+      None => true
+      Some(id) =>
+        match task.target {
+          None => true
+          Some("any") => true
+          Some(t) => t == id
+        }
+    }
+    if name_match && worker_match {
+      chosen.push(task)
     }
   }
   if chosen.length() == 0 {
-    fail(
-      "runner: nothing to run under \{data_dir} (apply a task set first, or check --name)",
-    )
+    match worker {
+      None =>
+        fail(
+          "runner: nothing to run under \{data_dir} (apply a task set first, or check --name)",
+        )
+      Some(id) => warn("runner: no tasks are pinned to worker \{id}; idle\n")
+    }
   }
 
   // a runner is a long-lived process: a SIGTERM must stop its children

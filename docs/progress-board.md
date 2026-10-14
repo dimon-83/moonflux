@@ -48,6 +48,7 @@
 | # | 项 | 优先级 | 说明 / 依据 |
 | :--- | :--- | :--- | :--- |
 | 0a | **P37-1 多任务地基（本地口径）** | ✅ 2026-10-13 | 决策 81：`topology.json` v2 集合 + 按名 upsert/`--set`/`delete`/`list` + **取数按 topic 选链** + v1 内存迁移 + `moonflux_tasks` 无标签 gauge；门禁 `e2e-p37-multi-task.sh` **10 腿**。顺带修：健康检查恒真、诊断走块缓冲 stdout、`--set` 吞参数（并加 `audit-flags.py` 门禁防这一类） |
+| 0q | **调度：target + worker 过滤** | ✅ 2026-10-13 | 决策 97：每任务 target 进文档、runner --worker 只跑自己的任务；门禁 3 条。**未做**：控制面对账循环、task start/stop |
 | 0p | **task 只读命令面 + restart 进文档** | ✅ 2026-10-13 | 决策 96：task status/logs；restart 进任务集文档、runner 按任务读。**未做**：task start/stop + target 调度 |
 | 0o | **runner 监督器** | ✅ 2026-10-13 | 决策 95：起/停/重启子进程 + 优雅 SIGTERM；门禁 4 条。**未做**：调度 + docker 集群测试 |
 | 0n | **外部失败重试** | ✅ 2026-10-13 | 决策 94：源/汇失败退避重试、进程不死、汇批次不丢；门禁 4 条。**未做**：一个进程跑整个任务集（N 点位 = N 进程） |

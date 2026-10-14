@@ -100,7 +100,7 @@ fn ClusterAsset::load(data_dir : String) -> ClusterAsset {
             _ => 0L
           }
           cluster_document_of([
-            task_json(name, spec, [], applied_at, "on-failure"),
+            task_json(name, spec, [], applied_at, "on-failure", None),
           ])
         }
         None => ""
@@ -288,12 +288,14 @@ fn parse_published_spec(text : String) -> Result[TaskDoc, String] {
     name: spec.metadata_name,
     spec,
     restart: "on-failure",
+    target: None,
     json: task_json(
       spec.metadata_name,
       json,
       [],
       @env.now().reinterpret_as_int64(),
       "on-failure",
+      None,
     ),
   })
 }

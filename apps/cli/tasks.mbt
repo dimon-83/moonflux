@@ -37,6 +37,10 @@ struct TaskDoc {
   /// set document — the deployment concern — not in the PipelineSpec, which is
   /// the dataflow. The runner reads it; `--restart` overrides it per run.
   restart : String
+  /// Which node should run this task, or None for "any". The scheduling half of
+  /// the deployment concern (restart is the other half): the runner with
+  /// `--worker <id>` runs the tasks whose target is that id (or absent/"any").
+  target : String?
 }
 
 ///|
@@ -59,6 +63,15 @@ fn restart_of(json : Json) -> String {
   match json.value("restart") {
     Some(String(s)) => s
     _ => "on-failure"
+  }
+}
+
+///|
+/// The node a stored task document is pinned to, or None for "any".
+fn target_of(json : Json) -> String? {
+  match json.value("target") {
+    Some(String(s)) => Some(s)
+    _ => None
   }
 }
 
@@ -111,7 +124,13 @@ fn parse_task_set_text(
         return Err(sb.to_string())
       }
     }
-    tasks.push(TaskDoc::{ name, spec, json: item, restart: restart_of(item), })
+    tasks.push(TaskDoc::{
+      name,
+      spec,
+      json: item,
+      restart: restart_of(item),
+      target: target_of(item),
+    })
   }
   Ok(TaskSet::{ tasks: sort_tasks(tasks), revision, })
 }
@@ -193,11 +212,16 @@ fn task_json(
   function_sets : Array[(String, Int64)],
   applied_at : Int64,
   restart : String,
+  target : String?,
 ) -> Json {
   let doc : Map[String, Json] = {}
   doc["pipeline"] = Json::string(name)
   doc["applied_at"] = Json::number(applied_at.to_double())
   doc["restart"] = Json::string(restart)
+  match target {
+    Some(t) => doc["target"] = Json::string(t)
+    None => ()
+  }
   let set_items : Array[Json] = []
   for pair in function_sets {
     let (set_name, revision) = pair
@@ -330,8 +354,12 @@ fn task_list_lines(set : TaskSet) -> Array[String] {
       }
       _ => "-"
     }
+    let target = match task.target {
+      Some(t) => t
+      None => "any"
+    }
     out.push(
-      "\{task.name}\ttopic=\{task.spec.topic.name}\ttransforms=\{task.spec.transforms.length()}\tfunctions=\{functions}\tapplied_at=\{applied_at}",
+      "\{task.name}\ttopic=\{task.spec.topic.name}\ttransforms=\{task.spec.transforms.length()}\tfunctions=\{functions}\ttarget=\{target}\tapplied_at=\{applied_at}",
     )
   }
   out
@@ -405,6 +433,7 @@ fn task_docs_from_pipelines(
     // stored document depend on how it arrived, and a later reader that wants
     // applied_at/functions would find neither.
     let restart = restart_of(item)
+    let target = target_of(item)
     out.push(TaskDoc::{
       name,
       spec,
@@ -414,8 +443,10 @@ fn task_docs_from_pipelines(
         [],
         @env.now().reinterpret_as_int64(),
         restart,
+        target,
       ),
       restart,
+      target,
     })
   }
   Ok(out)
