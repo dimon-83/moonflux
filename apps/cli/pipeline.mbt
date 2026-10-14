@@ -597,6 +597,62 @@ fn topic_source_loop(
 }
 
 ///|
+/// How an outside-world failure is handled by a long-running pipeline: retry
+/// with exponential backoff, report every attempt, report the recovery.
+///
+/// Why the RUN does this instead of a supervisor: a poller that dies on one
+/// failed fetch makes "keep it running" somebody else's problem. The plant
+/// deployment needed `systemd Restart=always` purely to retry, and a crash-loop
+/// restart is not a retry — it is the same failure with a process boundary in
+/// the middle. P19's rule ("a broken connection is a structured error; retrying
+/// is the caller's next round") is exactly this: the run loop is the caller.
+///
+/// Deterministic, no jitter: this platform's gates assert behaviour, and a random
+/// sleep would make them flaky. A deployment that wants jitter can run more than
+/// one node.
+priv struct RetryState {
+  mut failures : Int32
+  mut next_delay_ms : Int64
+}
+
+///|
+const RETRY_BASE_MS : Int64 = 1000
+
+///|
+const RETRY_MAX_MS : Int64 = 60000
+
+///|
+fn RetryState::new() -> RetryState {
+  RetryState::{ failures: 0, next_delay_ms: RETRY_BASE_MS, }
+}
+
+///|
+/// Reports a failure and waits before the next attempt. Loud on purpose: a
+/// silent retry loop is how a night of data goes missing without anyone noticing.
+fn RetryState::wait(self : RetryState, what : String, detail : String) -> Unit {
+  self.failures = self.failures + 1
+  let delay = self.next_delay_ms
+  warn(
+    "warning: \{what}: \{detail}; retrying in \{delay / 1000L}s (attempt \{self.failures})\n",
+  )
+  cli_sleep_ms(delay.to_int())
+  self.next_delay_ms = if delay * 2L > RETRY_MAX_MS {
+    RETRY_MAX_MS
+  } else {
+    delay * 2L
+  }
+}
+
+///|
+fn RetryState::recovered(self : RetryState, what : String) -> Unit {
+  if self.failures > 0 {
+    warn("\{what}: recovered after \{self.failures} attempt(s)\n")
+  }
+  self.failures = 0
+  self.next_delay_ms = RETRY_BASE_MS
+}
+
+///|
 fn pipeline_run(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
@@ -842,10 +898,19 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     Some(source) => source
     None => fail("a topic source has no connector to pull from")
   }
+  let source_retry = RetryState::new()
+  let sink_retry = RetryState::new()
   while true {
     let pull = match (source.pull)() {
-      Ok(pull) => pull
-      Err(e) => fail("source \{source.name}: \{e}")
+      Ok(pull) => {
+        source_retry.recovered("source \{source.name}")
+        pull
+      }
+      Err(e) => {
+        // a failed fetch is not the end of a long-running poller
+        source_retry.wait("source \{source.name}", e)
+        continue
+      }
     }
     match pull {
       Exhausted => break
@@ -879,9 +944,20 @@ fn pipeline_run(argv : Array[String]) -> Unit {
             Ok(out) => out
             Err(e) => fail("transform: \{e}")
           }
-          match (sink.flush)(out_records) {
-            Ok(_) => ()
-            Err(e) => fail("sink \{sink.name}: \{e}")
+          // The SAME batch is retried until it goes out: a sink that drops a
+          // batch on the first error is a sink that silently loses alerts, and
+          // "the sink was down for a minute" is not a reason to lose one. The
+          // batch is already in the topic, so a restart would replay it — but
+          // the run does not need a restart to keep its promise.
+          let mut flushed = false
+          while !flushed {
+            match (sink.flush)(out_records) {
+              Ok(_) => {
+                sink_retry.recovered("sink \{sink.name}")
+                flushed = true
+              }
+              Err(e) => sink_retry.wait("sink \{sink.name}", e)
+            }
           }
           // a source without offsets reports -1 as progress: the run table
           // says "no offsets" rather than inventing a position

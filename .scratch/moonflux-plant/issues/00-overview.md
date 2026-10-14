@@ -16,4 +16,5 @@ headers/ca），部署目录只有 spec 与单元文件。
 | ③ | **TLS 发 SNI**（`SSL_ctrl`；`SSL_set_tlsext_host_name` 是宏不是符号 ✗）→ **真实端点直连成功** | p45 的 SNI 腿（夹具拒收无 SNI 握手）+ 实机直连 | ✅ 决策 92 |
 | ④ | 部署产品化：两段管道（判决落主题键＝点位／STUCK 外发 webhook）+ systemd/launchd + logrotate + **重启即重放**；http 汇补齐 headers/ca | `e2e-p46-deploy-routing.sh` 4 腿 | ✅ 决策 93 |
 | ⑤ | 文档同步：README 决策 88–93、feature-matrix、roadmap、board、部署指南（工程外 `moonflux/README.md`）、本 ticket | gates.sh 含 p43–p46 + `audit-shell-vars.py`；CI 四条腿 | ✅ |
+| ⑥ | **外部失败重试**（源/汇退避、进程不死、汇批次不丢） | `e2e-p47-poll-retry.sh` 4 腿 | ✅ 决策 94 |
 | 后续 | 更多点位（每点位一条 spec；`nodes` 级别的批量生成）；告警按**时段**基线化（实测最长恒值段集中在凌晨 02:45–04:45 ✗）；GuestTrap 错误文本里中文不可读 ✗；`operator-stuck` 的红旗值清单按点位维护 | — | ⏳ |

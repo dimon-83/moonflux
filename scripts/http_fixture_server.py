@@ -38,8 +38,24 @@ class Handler(BaseHTTPRequestHandler):
         with open(self.server.log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+    def _maybe_fail(self) -> bool:
+        """A server that is briefly broken, for the retry gate: the first N
+        requests answer 500 and are counted, so a client that gives up on them
+        never sees the healthy server behind them."""
+        with self.server.lock:
+            if self.server.served < self.server.fail_first:
+                self.server.served += 1
+                self.send_response(500)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return True
+            self.server.served += 1
+        return False
+
     def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
         self._log_request()
+        if self._maybe_fail():
+            return
         for name, value in self.server.required:
             if self.headers.get(name) != value:
                 body = json.dumps({
@@ -68,6 +84,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         received = self.rfile.read(length) if length else b""
         self._log_request()
+        if self._maybe_fail():
+            return
         for name, value in self.server.required:
             if self.headers.get(name) != value:
                 self.send_response(404)
@@ -102,6 +120,8 @@ def main() -> int:
     parser.add_argument("--sni-cert", help="the certificate served when SNI matches --sni-name")
     parser.add_argument("--sni-key", help="key for --sni-cert")
     parser.add_argument("--post-log", help="JSONL file recording each POST body")
+    parser.add_argument("--fail-first", type=int, default=0,
+                        help="answer 500 to the first N GET/POST requests (retry gates)")
     parser.add_argument("--require-sni", metavar="NAME",
                         help="refuse the handshake unless SNI carries NAME")
     args = parser.parse_args()
@@ -110,6 +130,10 @@ def main() -> int:
     server.body_path = args.body
     server.log_path = args.log
     server.post_log = args.post_log
+    server.fail_first = args.fail_first
+    server.served = 0
+    import threading
+    server.lock = threading.Lock()
     server.required = []
     for item in args.require:
         if "=" not in item:

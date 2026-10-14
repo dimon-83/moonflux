@@ -182,6 +182,7 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p44-http-headers.sh" scripts/e2e-p44-http-headers.sh
   step "e2e-p45-http-tls.sh" scripts/e2e-p45-http-tls.sh
 step "e2e-p46-deploy-routing.sh" scripts/e2e-p46-deploy-routing.sh
+step "e2e-p47-poll-retry.sh" scripts/e2e-p47-poll-retry.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
