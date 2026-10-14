@@ -55,13 +55,50 @@ step() { # $1 = label, rest = command
     return
   fi
   start="$(date +%s)"
-  if "$@" > "$log" 2>&1; then
-    elapsed="$(( $(date +%s) - start ))"
+  # Two things this shape buys, and both are about a step not taking its caller
+  # down with it:
+  #
+  #   * `</dev/null` + `> log`: nothing a gate spawns inherits THIS script's
+  #     stdin/stdout. That inheritance is how a suite run becomes a hung terminal
+  #     or a crashed client — the caller waits for a pipe that a daemon it never
+  #     started still holds open.
+  #   * `set -m` in the subshell + a watchdog: each step is its own process
+  #     GROUP, so a step that hangs is reaped whole (`kill -- -PID`) instead of
+  #     leaving children behind to hold the pipes the step was handed. Measured
+  #     reason: a suite run that outlived its own tool call left the caller
+  #     waiting on exactly those pipes.
+  ( set -m; "$@" ) </dev/null > "$log" 2>&1 &
+  local pid=$!
+  local waited=0 status=0 limit="${MOONFLUX_GATES_STEP_TIMEOUT:-900}"
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$limit" ]; then
+      elapsed="$(( $(date +%s) - start ))"
+      FAILED+=("$label (timeout)")
+      printf 'FAIL  %-40s %4ss  TIMEOUT after %ss, killing its process group  %s\n' \
+        "$label" "$elapsed" "$limit" "$log"
+      tail -n "$TAIL_LINES" "$log" | sed 's/^/      | /'
+      kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+      sleep 2
+      kill -9 -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+  status=$?
+  elapsed="$(( $(date +%s) - start ))"
+  if [ "$status" -eq 0 ]; then
     PASSED+=("$label")
-    printf 'PASS  %-40s %4ss  %s\n' "$label" "$elapsed" \
-      "$(tail -n 1 "$log" | tr -d '\r' | cut -c1-58)"
+    # the preview prefers the gate's own verdict over whatever line happens to
+    # be last (a shell job-control notice like "Killed: 9" is not a verdict)
+    local preview
+    preview="$(grep -E 'PASS:|FAIL:|all green|passed, [0-9]+ failed|Total tests' "$log" |
+      tail -n 1 | tr -d '\r' | cut -c1-58)"
+    [ -n "$preview" ] || preview="$(tail -n 1 "$log" | tr -d '\r' | cut -c1-58)"
+    printf 'PASS  %-40s %4ss  %s\n' "$label" "$elapsed" "$preview"
   else
-    elapsed="$(( $(date +%s) - start ))"
     FAILED+=("$label")
     printf 'FAIL  %-40s %4ss  %s\n' "$label" "$elapsed" "$log"
     tail -n "$TAIL_LINES" "$log" | sed 's/^/      | /'
