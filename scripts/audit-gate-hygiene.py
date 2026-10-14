@@ -20,6 +20,11 @@ by READING the scripts:
     can hang, and a hang is the failure this file exists to prevent.
   * a `pkill`/`killall` pattern that is not scoped to a temp path can kill
     something it did not start (including the tool that invoked the suite).
+  * the SUITE's own mechanisms (`--suite`): a per-step process group and a
+    watchdog in gates.sh, detached stdin, and the helper scripts that make rule 1
+    real. Deleting one of these silently returns the repository to the state
+    where a gate run could take its caller down, so their presence is checked
+    the same way a gate's hygiene is.
 
 Usage:
   python3 scripts/audit-gate-hygiene.py [dir-or-file...]     # default: scripts/
@@ -104,7 +109,61 @@ def audit(path: pathlib.Path) -> list[str]:
     return problems
 
 
+def audit_suite(root: pathlib.Path) -> list[str]:
+    """The suite's own safety mechanisms must exist and stay wired."""
+    problems: list[str] = []
+    gates = root / "scripts" / "gates.sh"
+    if not gates.is_file():
+        return [f"{gates} is missing: the suite has no entry point"]
+    text = gates.read_text(encoding="utf-8", errors="replace")
+    # each step in its own process group, under a watchdog, with stdin detached:
+    # this is what makes a hung gate reapable and stops a leaked child holding
+    # the caller's pipe (the measured crash of a run that outlived its tool call)
+    if "set -m" not in text:
+        problems.append(
+            f"{gates}: no `set -m` — steps no longer run in their own process "
+            f"group, so a hung step can only be killed by its own pid"
+        )
+    if "MOONFLUX_GATES_STEP_TIMEOUT" not in text:
+        problems.append(f"{gates}: no per-step watchdog — a hung gate stalls the suite")
+    if "</dev/null" not in text:
+        problems.append(
+            f"{gates}: steps no longer detach stdin — a gate that reads it blocks"
+        )
+    ci = root / ".github" / "workflows" / "ci.yml"
+    ci_text = ci.read_text(encoding="utf-8", errors="replace") if ci.is_file() else ""
+    for needed in [
+        "scripts/gates-bg.sh",
+        "scripts/resource-watch.sh",
+        "scripts/run-watched.sh",
+        "scripts/audit-gate-hygiene.py",
+        "AGENT.md",
+    ]:
+        if not (root / needed).exists():
+            problems.append(f"{needed} is missing (AGENT.md rule 1's enforcement)")
+    if ci_text and "run-watched.sh" not in ci_text:
+        problems.append(
+            f"{ci}: the docker cluster run is not watched — a long run's resource "
+            f"evidence should be on disk next to its log"
+        )
+    return problems
+
+
 def main(argv: list[str]) -> int:
+    suite_only = "--suite" in argv
+    argv = [a for a in argv if a != "--suite"]
+    if suite_only:
+        root = pathlib.Path(argv[1]) if len(argv) > 1 else pathlib.Path(".")
+        problems = audit_suite(root)
+        for problem in problems:
+            print(problem)
+        if problems:
+            print(f"\naudit-gate-hygiene --suite: {len(problems)} problem(s)")
+            return 1
+        print("audit-gate-hygiene --suite: the suite's safety mechanisms are in place "
+              "(per-step process group, watchdog, detached stdin, gates-bg/"
+              "resource-watch/run-watched, AGENT.md)")
+        return 0
     roots = [pathlib.Path(a) for a in argv[1:]] or [pathlib.Path("scripts")]
     files: list[pathlib.Path] = []
     for root in roots:

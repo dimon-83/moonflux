@@ -38,6 +38,17 @@ if [ -z "$LOGDIR" ]; then
 fi
 mkdir -p "$LOGDIR"
 
+# A foreground terminal is how a caller gets exposed to every pipe a leaked gate
+# spawns (AGENT.md rule 1): the caller waits for a pipe held by a daemon it never
+# started. CI has no TTY and must keep working, so this is a nudge, not a
+# refusal — the same reason the hygiene audit is static rather than a runtime
+# check.
+if [ -t 1 ] && [ "${MOONFLUX_GATES_FOREGROUND_OK:-0}" != "1" ]; then
+  printf 'note: this is a foreground terminal. Heavy runs belong in scripts/gates-bg.sh\n' >&2
+  printf '      (detached: nothing a gate spawns can hold this terminal open).\n' >&2
+  printf '      set MOONFLUX_GATES_FOREGROUND_OK=1 to silence this.\n' >&2
+fi
+
 step() { # $1 = label, rest = command
   local label="$1"
   shift
@@ -123,6 +134,10 @@ step "audit-shell-vars.py" python3 scripts/audit-shell-vars.py scripts
 # the caller or leak a process is exactly what cannot be answered by running
 # them (decision 102)
 step "audit-gate-hygiene.py" python3 scripts/audit-gate-hygiene.py
+# the suite's own mechanisms are checked the same way: deleting the watchdog,
+# the detached launch or the watcher would silently return the repository to a
+# state where a gate run can take its caller down (AGENT.md rule 1)
+step "audit-gate-hygiene.py --suite" python3 scripts/audit-gate-hygiene.py --suite .
 step "audit-verbs.py" scripts/audit-verbs.py
 step "no gate routes data through the stdin device" bash -c '
   # COMMENT LINES ARE NOT USAGES. The first version of this guard matched the
