@@ -9,6 +9,19 @@
 # Usage:
 #   scripts/gates.sh              # everything
 #   scripts/gates.sh fast         # skip the E2E gates (still builds + tests)
+#
+# OUTPUT BUDGET (decision 99). This suite is run many times a day, and every
+# run's output is rendered again wherever it is watched: a terminal, a CI log
+# view, an agent's transcript. Measured on the way in: a full run printed ~770
+# lines to the console, and the same 770 lines were re-rendered on every rerun —
+# that repeated rendering, not any single file, is what exhausted a client's
+# renderer. So the default is a SUMMARY: each step writes its full output to a
+# log file, the console gets one line per step, and a failing step gets a
+# bounded tail plus the path to its full log. Nothing is lost — it is on disk.
+#
+#   MOONFLUX_GATES_VERBOSE=1   stream every step's output (the old behaviour)
+#   MOONFLUX_GATES_TAIL=N      lines of a failing step's log to show (default 25)
+#   MOONFLUX_GATES_LOGDIR=D    where the per-step logs go
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,14 +30,41 @@ cd "$ROOT"
 MODE="${1:-full}"
 FAILED=()
 PASSED=()
+VERBOSE="${MOONFLUX_GATES_VERBOSE:-0}"
+TAIL_LINES="${MOONFLUX_GATES_TAIL:-25}"
+LOGDIR="${MOONFLUX_GATES_LOGDIR:-}"
+if [ -z "$LOGDIR" ]; then
+  LOGDIR="$(mktemp -d /tmp/moonflux-gates.XXXXXX)"
+fi
+mkdir -p "$LOGDIR"
+
 step() { # $1 = label, rest = command
   local label="$1"
   shift
-  printf '\n=== %s ===\n' "$label"
-  if "$@"; then
+  local slug log start elapsed
+  slug="$(printf '%s' "$label" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-60)"
+  log="$LOGDIR/$slug.log"
+  if [ "$VERBOSE" = "1" ]; then
+    printf '\n=== %s ===\n' "$label"
+    # pipefail (set above) makes the pipeline carry the STEP's status, not tee's
+    if "$@" 2>&1 | tee "$log"; then
+      PASSED+=("$label")
+    else
+      FAILED+=("$label")
+    fi
+    return
+  fi
+  start="$(date +%s)"
+  if "$@" > "$log" 2>&1; then
+    elapsed="$(( $(date +%s) - start ))"
     PASSED+=("$label")
+    printf 'PASS  %-40s %4ss  %s\n' "$label" "$elapsed" \
+      "$(tail -n 1 "$log" | tr -d '\r' | cut -c1-58)"
   else
+    elapsed="$(( $(date +%s) - start ))"
     FAILED+=("$label")
+    printf 'FAIL  %-40s %4ss  %s\n' "$label" "$elapsed" "$log"
+    tail -n "$TAIL_LINES" "$log" | sed 's/^/      | /'
   fi
 }
 
@@ -186,14 +226,21 @@ step "e2e-p47-poll-retry.sh" scripts/e2e-p47-poll-retry.sh
 step "e2e-p48-runner.sh" scripts/e2e-p48-runner.sh
 step "e2e-p49-docker-cluster.sh" scripts/e2e-p49-docker-cluster.sh
 step "e2e-p50-scheduling.sh" scripts/e2e-p50-scheduling.sh
+step "e2e-p51-lifecycle.sh" scripts/e2e-p51-lifecycle.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh
 
 printf '\n================ summary ================\n'
-for label in "${PASSED[@]}"; do printf 'PASS  %s\n' "$label"; done
+# Only the failures are re-listed: each passed step already printed its own line
+# above, and repeating 70+ labels here was a third of the console output this
+# suite used to produce.
 if [ "${#FAILED[@]}" -gt 0 ]; then
   for label in "${FAILED[@]}"; do printf 'FAIL  %s\n' "$label"; done
 fi
-printf '%d passed, %d failed\n' "${#PASSED[@]}" "${#FAILED[@]}"
+printf '%d passed, %d failed' "${#PASSED[@]}" "${#FAILED[@]}"
+if [ "$VERBOSE" != "1" ]; then
+  printf '  (per-step logs: %s)' "$LOGDIR"
+fi
+printf '\n'
 [ "${#FAILED[@]}" -eq 0 ] || exit 1
