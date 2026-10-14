@@ -203,16 +203,29 @@ wait_for 400 sched_has "floater	.*state=running" ||
   { sched; fail "6: the started task did not come back"; }
 pass "6. start --remote → 又跑起来"
 
-# ---- 7. kill -> offline (the task is restart: never) ----------------------
+# ---- 7a. an IDLE long-running task must keep saying it is alive -----------
+# never-b's input topic is quiet, so it has nothing to process. On this gate's
+# first docker run it reported nothing at all and the 3s liveness window reaped a
+# perfectly healthy process as `offline` - a live task declared dead. The idle
+# heartbeat (decision 105) is what fixes it, and this leg is the regression
+# guard: wait PAST the window and the task must still be running.
+wait_for 400 runs_has "task=never-b	state=running" ||
+  { runs; docker logs "$RB" 2>&1 | tail -5; fail "7a: never-b never came up on worker-b"; }
+sleep 5
+runs | grep "task=never-b" | grep -q "state=running" ||
+  { runs; fail "7a: an IDLE task was reaped as offline (the idle heartbeat regressed)"; }
+pass "7a. 空闲的长跑任务过了 3s 回收窗口仍 **running**（idle 心跳，决策 105）"
+
+# ---- 7b. kill -> offline (the task is restart: never) ---------------------
 # the run registry reports the pid of the process INSIDE the container, so kill
 # it there; restart: never is what makes "offline" the end state
 NEVER_PID=$(runs | grep "task=never-b" | grep "state=running" | head -1 | sed -E 's/.*pid=([0-9]+).*/\1/')
-[ -n "$NEVER_PID" ] || { runs; fail "7: never-b is not running, so there is nothing to kill"; }
+[ -n "$NEVER_PID" ] || { runs; fail "7b: never-b is not running, so there is nothing to kill"; }
 docker exec "$RB" /bin/sh -lc "kill -9 $NEVER_PID" > /dev/null 2>&1 ||
-  fail "7: could not kill the task's process inside its container"
+  fail "7b: could not kill the task's process inside its container"
 wait_for 400 runs_has "task=never-b	state=offline" ||
-  { runs; fail "7: a killed restart:never task was not reaped as offline"; }
-pass "7. kill -9 子进程 → 过回收窗口后 offline（restart: never，不复活）"
+  { runs; fail "7b: a killed restart:never task was not reaped as offline"; }
+pass "7b. kill -9 子进程 → 过回收窗口后 offline（restart: never，不复活）"
 
 # ---- 8. losing a worker: floating moves, a pin does not -------------------
 OWNER=$(sched | grep '^floater' | sed -E 's/.*owner=([^	]*).*/\1/')

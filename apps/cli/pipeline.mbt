@@ -584,6 +584,12 @@ fn topic_source_loop(
       // learn about new bytes: drop it and open again (see
       // open_topic_log_shared — a cached follower handle is the bug this
       // function exists to avoid).
+      // A relay whose input is quiet is ALIVE, and must say so: without this
+      // heartbeat the liveness window reaps it as offline (decision 105).
+      match session {
+        Some(run) => run.idle(now_ms(), cursor)
+        None => ()
+      }
       cli_sleep_ms(topic_source_poll_ms())
       log = match open_topic_log_shared(data_dir, name) {
         Ok(log) => log
@@ -596,6 +602,10 @@ fn topic_source_loop(
       Err(e) => fail("topic source \{name}: \{e}")
     }
     if entries.length() == 0 {
+      match session {
+        Some(run) => run.idle(now_ms(), cursor)
+        None => ()
+      }
       cli_sleep_ms(50)
       continue
     }
@@ -962,11 +972,23 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     }
     match pull {
       Exhausted => break
-      Quiet => cli_sleep_ms(50)
+      Quiet => {
+        // idle is not death: say "alive" on a throttled heartbeat, or the run
+        // registry's liveness window reaps a healthy idle poller (decision 105)
+        match session {
+          Some(run) => run.idle(now_ms(), -1L)
+          None => ()
+        }
+        cli_sleep_ms(50)
+      }
       Records(records) =>
         if records.length() == 0 {
           // a pull with nothing in it is a quiet poll wearing a data
-          // shape: sleep like one, don't spin
+          // shape: sleep like one, don't spin — and heartbeat like one too
+          match session {
+            Some(run) => run.idle(now_ms(), -1L)
+            None => ()
+          }
           cli_sleep_ms(50)
         } else {
           let base = match log.append(records) {

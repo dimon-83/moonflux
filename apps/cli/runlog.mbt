@@ -230,6 +230,19 @@ fn RunSession::batch(self : RunSession, progress : Int64, now : Int64) -> Unit {
 }
 
 ///|
+/// Says "still alive" without claiming anything happened. A long-running task
+/// that is merely IDLE (a relay with nothing to relay) used to report nothing
+/// at all, so the run registry's liveness window reaped it as `offline` — a live
+/// process declared dead, which is the failure mode the registry exists to
+/// prevent (measured in docker: an idle `restart: never` task went offline while
+/// its child was still running). Not a batch, so no run-log event: "nothing
+/// happened" is not work, and writing it as one would inflate every idle task's
+/// log forever. The reporter throttles this on its own interval.
+fn RunSession::idle(self : RunSession, now : Int64, progress : Int64) -> Unit {
+  self.reporter.heartbeat(now, progress)
+}
+
+///|
 /// The graceful ending: write `run-stop`, THEN tell the platform the run
 /// stopped on purpose. A run that is killed instead never reaches this, which
 /// is exactly how the two endings stay distinguishable.

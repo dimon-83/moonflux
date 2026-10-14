@@ -79,6 +79,16 @@ PID1=$(running_pid relay)
 [ -n "$PID1" ] || { runs; fail "1: no pid for the running task"; }
 pass "1. 任务 running（pid=${PID1}）"
 
+# ---- 1b. idle is not death ---------------------------------------------
+# The relay's input topic is quiet, so it has nothing to process. Without the
+# idle heartbeat the run registry's 3s liveness window reaps it as `offline` — a
+# live task declared dead (found in docker, fixed in decision 105). Wait past the
+# window and it must still be running.
+sleep 5
+running_pid relay | grep -q . ||
+  { runs; fail "1b: an IDLE task was reaped as offline (the idle heartbeat regressed)"; }
+pass "1b. 空闲任务过了 3s 回收窗口仍 running（idle 心跳，决策 105）"
+
 # ---- 2. task stop stops it gracefully ----------------------------------
 "$EXE" task stop --name relay --data-dir "$D" > /dev/null 2>&1 ||
   fail "2: task stop failed"
