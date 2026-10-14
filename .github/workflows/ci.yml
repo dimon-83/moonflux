@@ -118,6 +118,11 @@ jobs:
           MOONFLUX_REQUIRE_DOCKER: "1"
           MOONFLUX_DOCKER_TAG: moonflux:ci
         run: bash scripts/e2e-p42-docker.sh
+      - name: Docker cluster gate (sc + spu x2 + runner)
+        env:
+          MOONFLUX_REQUIRE_DOCKER: "1"
+          MOONFLUX_DOCKER_TAG: moonflux:ci
+        run: bash scripts/e2e-p49-docker-cluster.sh
 
   full-linux:
     # the full suite on Linux (P34, item ② of the user's list). The macOS

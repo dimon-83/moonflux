@@ -184,6 +184,7 @@ if [ "$MODE" != "fast" ]; then
 step "e2e-p46-deploy-routing.sh" scripts/e2e-p46-deploy-routing.sh
 step "e2e-p47-poll-retry.sh" scripts/e2e-p47-poll-retry.sh
 step "e2e-p48-runner.sh" scripts/e2e-p48-runner.sh
+step "e2e-p49-docker-cluster.sh" scripts/e2e-p49-docker-cluster.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh

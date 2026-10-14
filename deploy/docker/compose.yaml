@@ -120,9 +120,20 @@ services:
       - sc
     restart: unless-stopped
 
+  runner:
+    profiles: ["cluster"]
+    image: moonflux:local
+    command: ["sh", "-c", "moonflux runner --data-dir /data --control sc:19900 --cli /usr/local/bin/moonflux"]
+    volumes:
+      - runner-data:/data
+    depends_on:
+      - sc
+    restart: unless-stopped
+
 volumes:
   broker-data:
   case-data:
+  runner-data:
   sc-data:
   spu-a-data:
   spu-b-data:
