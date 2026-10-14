@@ -24,6 +24,18 @@ WORK="$(mktemp -d)"
 PASS=0
 FAIL=0
 
+# This gate starts `pipeline run` children with `&` and kills them explicitly on
+# the happy path. A failure BETWEEN the two leaves them running — and before the
+# suite detached itself (decision 101) such a survivor held the caller's stdout
+# open, which is how "a gate hung" and "the caller died" turned out to be one
+# event. The sweep is scoped to THIS gate's temp dir on purpose: an unscoped
+# pkill can kill something it never started. Found by scripts/audit-gate-hygiene.py.
+cleanup() {
+  pkill -f "$WORK" 2>/dev/null || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
 fail() { echo "E2E-P33-TOPIC-RELAY FAIL: $*" >&2; FAIL=$((FAIL + 1)); }
 pass() { echo "E2E-P33-TOPIC-RELAY PASS: $*"; PASS=$((PASS + 1)); }
 wait_for_lines() { # file count tenths

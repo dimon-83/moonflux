@@ -119,6 +119,10 @@ step "moon fmt --check" moon fmt --check
 # A platform-dependent death that says nothing is worth a five-line guard.
 step "audit-flags.py" scripts/audit-flags.py
 step "audit-shell-vars.py" python3 scripts/audit-shell-vars.py scripts
+# static, instant, and it runs NO gate: whether the gates themselves can hang
+# the caller or leak a process is exactly what cannot be answered by running
+# them (decision 102)
+step "audit-gate-hygiene.py" python3 scripts/audit-gate-hygiene.py
 step "audit-verbs.py" scripts/audit-verbs.py
 step "no gate routes data through the stdin device" bash -c '
   # COMMENT LINES ARE NOT USAGES. The first version of this guard matched the

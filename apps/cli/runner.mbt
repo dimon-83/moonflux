@@ -369,12 +369,34 @@ fn cmd_runner(argv : Array[String]) -> Unit {
             let pid = spawn_task(cli, task.name, data_dir, control)
             if pid >= 0 {
               warn("runner: started \{task.name} (pid \{pid})\n")
-              children.push(Child::{
-                name: task.name,
-                pid,
-                restart: policy,
-                stopping: false,
-              })
+              // REUSE a stopped slot for this task when there is one. Pushing a
+              // fresh entry every time left the old one behind as a pid=-1
+              // corpse, so a task that starts and stops repeatedly grew this
+              // array without bound: memory that is never released, and every
+              // reconcile pass paying for the corpses (found by reading the loop
+              // after a "what allocates per cycle" pass — decision 102).
+              let mut reused = false
+              for i in 0..<children.length() {
+                if !reused &&
+                  children[i].name == task.name &&
+                  children[i].pid <= 0 {
+                  children[i] = Child::{
+                    name: task.name,
+                    pid,
+                    restart: policy,
+                    stopping: false,
+                  }
+                  reused = true
+                }
+              }
+              if !reused {
+                children.push(Child::{
+                  name: task.name,
+                  pid,
+                  restart: policy,
+                  stopping: false,
+                })
+              }
             } else {
               warn("runner: could not spawn \{task.name}\n")
             }

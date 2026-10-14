@@ -31,6 +31,14 @@ EXE="${MOONFLUX_EXE:-$ROOT/_build/native/debug/build/apps/cli/cli.exe}"
 [ -x "$EXE" ] || { echo "cli executable not found; run: moon build --target native" >&2; exit 1; }
 
 WORK="${MOONFLUX_P4_WORK:-/tmp/moonflux-p4-editor}"
+
+# background processes this gate starts must not survive it (see
+# scripts/audit-gate-hygiene.py): a failure path would otherwise leave them
+# running, and a survivor can hold the caller's stdout open (decision 101).
+cleanup() {
+  pkill -f "$WORK" 2>/dev/null || true
+}
+trap cleanup EXIT
 BROKER_PORT="${MOONFLUX_P4_BROKER_PORT:-19421}"
 PAGE_PORT="${MOONFLUX_P4_PAGE_PORT:-19422}"
 TOPIC="${MOONFLUX_P4_TOPIC:-editor-events}"
