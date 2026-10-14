@@ -36,6 +36,22 @@ extern "C" fn cli_eprint(buf : Bytes, len : Int32) -> Unit = "mf_cli_eprint"
 extern "C" fn cli_pid() -> Int32 = "mf_cli_pid"
 
 ///|
+extern "C" fn cli_install_term_handler() -> Unit = "mf_cli_install_term_handler"
+
+///|
+extern "C" fn cli_term_requested() -> Int32 = "mf_cli_term_requested"
+
+///|
+#borrow(prog, argv_flat)
+extern "C" fn cli_spawn(prog : Bytes, argv_flat : Bytes) -> Int32 = "mf_cli_spawn"
+
+///|
+extern "C" fn cli_kill(pid : Int32, sig : Int32) -> Int32 = "mf_cli_kill"
+
+///|
+extern "C" fn cli_reap(pid : Int32) -> Int64 = "mf_cli_reap"
+
+///|
 /// Writes one diagnostic line to stderr, flushed. Stdout carries data
 /// (records) in the CLI's streaming commands and is parsed by column,
 /// so anything explanatory must not land there.
@@ -203,7 +219,8 @@ fn main {
     text == "benchmark" ||
     text == "profile" ||
     text == "partition" ||
-    text == "doctor"
+    text == "doctor" ||
+    text == "runner"
   }
 
   let start = if args.length() > 0 && is_command(args[0]) {
@@ -240,6 +257,7 @@ fn main {
     "profile" => cmd_profile(rest)
     "partition" => cmd_partition(rest)
     "doctor" => cmd_doctor(rest)
+    "runner" => cmd_runner(rest)
     _ => usage()
   }
 }

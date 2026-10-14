@@ -546,6 +546,9 @@ fn topic_source_loop(
     }
   }
   while true {
+    if cli_term_requested() != 0 {
+      break
+    }
     let end = log.high_watermark()
     if cursor >= end {
       // Caught up. The writer is another process, so this handle cannot
@@ -593,6 +596,10 @@ fn topic_source_loop(
       Some(run) => run.batch(next_cursor, now_ms())
       None => ()
     }
+  }
+  match session {
+    Some(run) => run.stop("signal", -1L)
+    None => ()
   }
 }
 
@@ -655,6 +662,11 @@ fn RetryState::recovered(self : RetryState, what : String) -> Unit {
 ///|
 fn pipeline_run(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
+  // SIGTERM/SIGINT is a GRACEFUL stop, not a kill: both loops below notice the
+  // flag, fall out, and write run-stop + the stopped report — so a supervisor's
+  // `task stop` ends the run as "stopped", while a SIGKILL leaves it to be
+  // reaped as "offline" (the difference P37-2 exists to keep visible).
+  cli_install_term_handler()
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
   // --spec runs a document directly (no applied state needed);
   // otherwise the applied topology supplies it
@@ -901,6 +913,9 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   let source_retry = RetryState::new()
   let sink_retry = RetryState::new()
   while true {
+    if cli_term_requested() != 0 {
+      break
+    }
     let pull = match (source.pull)() {
       Ok(pull) => {
         source_retry.recovered("source \{source.name}")
@@ -972,11 +987,12 @@ fn pipeline_run(argv : Array[String]) -> Unit {
         }
     }
   }
-  // the graceful ending: the loop ran out of records (a one-shot source), so
-  // the run says it stopped on purpose — a killed run never gets here, which
-  // is how the platform tells the two apart (P37-2)
+  // the graceful ending. Two reasons reach here, and the run log records which:
+  // a one-shot source ran out of records, or a signal asked the run to stop.
+  // A SIGKILL never gets here — that is what makes "offline" distinct (P37-2).
+  let reason = if cli_term_requested() != 0 { "signal" } else { "exhausted" }
   match session {
-    Some(run) => run.stop("exhausted", -1L)
+    Some(run) => run.stop(reason, -1L)
     None => ()
   }
   cli_exit(0)

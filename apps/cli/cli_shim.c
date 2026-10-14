@@ -12,6 +12,9 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <time.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <string.h>
 
 void mf_cli_flush(void) {
   fflush(stdout);
@@ -92,4 +95,86 @@ int mf_cli_hostname(uint8_t *buf, int len) {
     n++;
   }
   return n;
+}
+
+// ---------------------------------------------------------------------
+// Signal handling and child-process supervision, for the runner.
+//
+// A runner supervises child `pipeline run` processes: it spawns them, reaps
+// them (non-blocking, from its own event loop), restarts them by policy, and
+// on its own SIGTERM forwards the signal so each child stops gracefully. The
+// SIGTERM handler is deliberately minimal — it sets a flag and nothing else —
+// because a signal handler may only do async-signal-safe work.
+
+static volatile sig_atomic_t g_term_requested = 0;
+
+static void mf_term_handler(int sig) {
+  (void)sig;
+  g_term_requested = 1;
+}
+
+void mf_cli_install_term_handler(void) {
+  struct sigaction sa;
+  sa.sa_handler = mf_term_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0; /* no SA_RESTART: a poll/sleep returns, the loop notices */
+  sigaction(SIGTERM, &sa, 0);
+  sigaction(SIGINT, &sa, 0);
+}
+
+int mf_cli_term_requested(void) { return g_term_requested; }
+
+/* Spawns `prog` with the flattened argv (strings separated by NUL, the list
+ * ending with an empty entry, i.e. two consecutive NULs). Returns the child
+ * pid, or -1 on failure. The child is exec'd directly — no shell — so a task
+ * name or data dir never reaches a shell's interpretation. */
+int32_t mf_cli_spawn(const uint8_t *prog, const uint8_t *argv_flat) {
+  pid_t pid = fork();
+  if (pid < 0) {
+    return -1;
+  }
+  if (pid == 0) {
+    char *argv[16];
+    int n = 0;
+    const char *p = (const char *)argv_flat;
+    while (n < 15) {
+      argv[n++] = (char *)p;
+      const char *e = p;
+      while (*e != '\0') e++;
+      p = e + 1;
+      if (*p == '\0') { /* the empty entry terminates the list */
+        argv[n] = NULL;
+        break;
+      }
+    }
+    argv[n] = NULL;
+    execv((const char *)prog, argv);
+    _exit(127); /* only reachable if exec failed */
+  }
+  return (int32_t)pid;
+}
+
+int mf_cli_kill(int32_t pid, int sig) { return kill((pid_t)pid, sig); }
+
+/* Non-blocking reap. Returns 0 while the child still runs, -1 on error, and
+ * (exit_code + 1) once it has exited (so "exited with 0" is 1, which the caller
+ * subtracts). Signal deaths come back as 128 + signo, like a shell. */
+int64_t mf_cli_reap(int32_t pid) {
+  int status;
+  pid_t r = waitpid((pid_t)pid, &status, WNOHANG);
+  if (r == 0) {
+    return 0;
+  }
+  if (r < 0) {
+    return -1;
+  }
+  int code;
+  if (WIFEXITED(status)) {
+    code = WEXITSTATUS(status);
+  } else if (WIFSIGNALED(status)) {
+    code = 128 + WTERMSIG(status);
+  } else {
+    code = 1;
+  }
+  return (int64_t)code + 1;
 }

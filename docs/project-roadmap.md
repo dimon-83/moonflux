@@ -17,6 +17,7 @@
 | P37-4…6 | 每任务资产 / 生命周期与 Docker / 浏览器 playground | — | ⏳ 未开工 |
 | 部署 | **SDF 例子的 native 部署**（每用例一次部署 + 运行登记处） | `e2e-p41-deploy.sh` 7 腿 | ✅ 决策 86 |
 | 能力 | **http 源请求头**（决策 90） | `e2e-p44-http-headers.sh` 5 腿 | ✅ |
+| 能力 | **runner 常驻监督器**（决策 95） | `e2e-p48-runner.sh` 4 腿 | ✅ 本地 / ⏳ docker 集群 |
 | 能力 | **长跑管道的重试语义**（决策 94） | `e2e-p47-poll-retry.sh` 4 腿 | ✅ |
 | 部署 | **恒值监控的部署产品化**（决策 93） | `e2e-p46-deploy-routing.sh` 4 腿（只发 STUCK／鉴权头到对端／键＝点位／重启重放） | ✅ |
 | 能力 | **http 源 https/TLS + SNI**（决策 91/92） | `e2e-p45-http-tls.sh` 6 腿（含拒绝路径与 SNI 双向） | ✅ 含真实端点 |
