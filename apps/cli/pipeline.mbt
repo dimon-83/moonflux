@@ -73,6 +73,7 @@ fn persist_applied(
     spec_json,
     function_sets,
     @env.now().reinterpret_as_int64(),
+    "on-failure",
   )
   write_task_set(data_dir, [task], cluster_revision)
 }
@@ -299,7 +300,12 @@ fn prepare_task(
     Ok(sets) => sets
     Err(e) => fail("task \{name}: transform rejected: \{e}")
   }
-  TaskDoc::{ name, spec, json: task_json(name, spec_json, function_sets, now), }
+  TaskDoc::{
+    name,
+    spec,
+    json: task_json(name, spec_json, function_sets, now, "on-failure"),
+    restart: "on-failure",
+  }
 }
 
 ///|
@@ -333,7 +339,8 @@ fn prepare_stored_task(
   TaskDoc::{
     name: doc.name,
     spec: doc.spec,
-    json: task_json(doc.name, spec_json, function_sets, now),
+    json: task_json(doc.name, spec_json, function_sets, now, doc.restart),
+    restart: doc.restart,
   }
 }
 

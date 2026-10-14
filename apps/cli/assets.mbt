@@ -99,7 +99,9 @@ fn ClusterAsset::load(data_dir : String) -> ClusterAsset {
             Some(Number(n)) => n.to_int64()
             _ => 0L
           }
-          cluster_document_of([task_json(name, spec, [], applied_at)])
+          cluster_document_of([
+            task_json(name, spec, [], applied_at, "on-failure"),
+          ])
         }
         None => ""
       }
@@ -285,11 +287,13 @@ fn parse_published_spec(text : String) -> Result[TaskDoc, String] {
   Ok(TaskDoc::{
     name: spec.metadata_name,
     spec,
+    restart: "on-failure",
     json: task_json(
       spec.metadata_name,
       json,
       [],
       @env.now().reinterpret_as_int64(),
+      "on-failure",
     ),
   })
 }

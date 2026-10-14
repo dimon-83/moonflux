@@ -220,7 +220,8 @@ fn main {
     text == "profile" ||
     text == "partition" ||
     text == "doctor" ||
-    text == "runner"
+    text == "runner" ||
+    text == "task"
   }
 
   let start = if args.length() > 0 && is_command(args[0]) {
@@ -258,6 +259,7 @@ fn main {
     "partition" => cmd_partition(rest)
     "doctor" => cmd_doctor(rest)
     "runner" => cmd_runner(rest)
+    "task" => cmd_task(rest)
     _ => usage()
   }
 }

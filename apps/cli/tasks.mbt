@@ -33,6 +33,10 @@ struct TaskDoc {
   name : String
   spec : @spec.PipelineSpec
   json : Json
+  /// Restart policy for this task (never|on-failure|always). Lives in the task
+  /// set document — the deployment concern — not in the PipelineSpec, which is
+  /// the dataflow. The runner reads it; `--restart` overrides it per run.
+  restart : String
 }
 
 ///|
@@ -46,6 +50,17 @@ struct TaskSet {
 
 ///|
 const TASK_SET_SCHEMA : Int32 = 2
+
+///|
+/// The restart policy a stored task document declares, or the default. Reading
+/// is lenient here because the set-document path (task_docs_from_pipelines)
+/// validates before storing; the runner validates again at spawn time.
+fn restart_of(json : Json) -> String {
+  match json.value("restart") {
+    Some(String(s)) => s
+    _ => "on-failure"
+  }
+}
 
 ///|
 /// Parses a task-set document. Shared by the file loader and by
@@ -96,7 +111,7 @@ fn parse_task_set_text(
         return Err(sb.to_string())
       }
     }
-    tasks.push(TaskDoc::{ name, spec, json: item, })
+    tasks.push(TaskDoc::{ name, spec, json: item, restart: restart_of(item), })
   }
   Ok(TaskSet::{ tasks: sort_tasks(tasks), revision, })
 }
@@ -177,10 +192,12 @@ fn task_json(
   spec_json : Json,
   function_sets : Array[(String, Int64)],
   applied_at : Int64,
+  restart : String,
 ) -> Json {
   let doc : Map[String, Json] = {}
   doc["pipeline"] = Json::string(name)
   doc["applied_at"] = Json::number(applied_at.to_double())
+  doc["restart"] = Json::string(restart)
   let set_items : Array[Json] = []
   for pair in function_sets {
     let (set_name, revision) = pair
@@ -387,10 +404,18 @@ fn task_docs_from_pipelines(
     // {pipeline, applied_at, functions, spec}. Leaving it bare would make the
     // stored document depend on how it arrived, and a later reader that wants
     // applied_at/functions would find neither.
+    let restart = restart_of(item)
     out.push(TaskDoc::{
       name,
       spec,
-      json: task_json(name, spec_json, [], @env.now().reinterpret_as_int64()),
+      json: task_json(
+        name,
+        spec_json,
+        [],
+        @env.now().reinterpret_as_int64(),
+        restart,
+      ),
+      restart,
     })
   }
   Ok(out)

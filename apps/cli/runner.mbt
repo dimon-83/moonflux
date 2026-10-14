@@ -19,6 +19,7 @@
 struct Child {
   name : String
   pid : Int32
+  restart : String
 }
 
 ///|
@@ -85,15 +86,9 @@ fn cmd_runner(argv : Array[String]) -> Unit {
           )
       }
   }
-  let restart = match flags.get("restart") {
-    None => "on-failure"
-    Some(s) => s
-  }
-  if restart != "never" && restart != "on-failure" && restart != "always" {
-    fail(
-      "runner --restart must be one of never|on-failure|always (got \{restart})",
-    )
-  }
+  // `--restart` is an override for the whole run; without it, each task uses
+  // the policy its own task-set document declares (default on-failure)
+  let flag_restart = flags.get("restart")
   let control = flags.get("control")
   let want = flags.get("name")
 
@@ -117,12 +112,21 @@ fn cmd_runner(argv : Array[String]) -> Unit {
 
   let children : Array[Child] = []
   for task in chosen {
+    let policy = match flag_restart {
+      Some(r) => r
+      None => task.restart
+    }
+    if policy != "never" && policy != "on-failure" && policy != "always" {
+      fail(
+        "task \{task.name}: restart must be never|on-failure|always (got \{policy})",
+      )
+    }
     let pid = spawn_task(cli, task.name, data_dir, control)
     if pid < 0 {
       fail("runner: could not spawn task \{task.name}")
     }
     warn("runner: started \{task.name} (pid \{pid})\n")
-    children.push(Child::{ name: task.name, pid, })
+    children.push(Child::{ name: task.name, pid, restart: policy, })
   }
 
   while true {
@@ -138,19 +142,19 @@ fn cmd_runner(argv : Array[String]) -> Unit {
       let reap = cli_reap(c.pid)
       if reap > 0L {
         let code = reap - 1L
-        if should_restart(restart, code) {
+        if should_restart(c.restart, code) {
           let pid = spawn_task(cli, c.name, data_dir, control)
           if pid >= 0 {
             warn("runner: \{c.name} exited (\{code}), restarted (pid \{pid})\n")
-            children[i] = Child::{ name: c.name, pid, }
+            children[i] = Child::{ name: c.name, pid, restart: c.restart, }
           } else {
             warn("runner: \{c.name} exited (\{code}), respawn failed\n")
           }
         } else {
           warn(
-            "runner: \{c.name} exited (\{code}), left stopped (restart=\{restart})\n",
+            "runner: \{c.name} exited (\{code}), left stopped (restart=\{c.restart})\n",
           )
-          children[i] = Child::{ name: c.name, pid: -1, }
+          children[i] = Child::{ name: c.name, pid: -1, restart: c.restart, }
         }
       }
     }
@@ -166,7 +170,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
       let c = children[i]
       if c.pid > 0 {
         if cli_reap(c.pid) > 0L {
-          children[i] = Child::{ name: c.name, pid: -1, }
+          children[i] = Child::{ name: c.name, pid: -1, restart: c.restart, }
         } else {
           all_done = false
         }
