@@ -13,7 +13,7 @@
 | 部署-a | **SDF 例子的 native 部署**（独立目标，决策 86） | ✅ 2026-10-13：`scripts/deploy-sdf.sh`（start/status/verify/logs/list/stop）+ 部署根（每用例自己的数据目录 + 共享运行登记 broker + 日志 + pids + catalog）；三种模式逐行写明（无静默跳过）；**跨用例主题冲突**（sentence/cars）由"每用例一个数据目录"化解。门禁 `e2e-p41-deploy.sh` **7 腿**；指南 [`docs/deployment.md`](../../../docs/deployment.md) | ✅ |
 | 部署-b | **SDF 例子的 Docker 部署**（独立目标，决策 87） | ✅ 2026-10-13：多阶段 `deploy/docker/Dockerfile`（保留仓库相对布局、非 root、`/data`、healthcheck `/healthz`）+ `deploy/docker/compose.yaml`（broker/console/一用例一容器/集群 profile）。门禁 `e2e-p42-docker.sh`：套件内 **3 静态腿**，CI `docker` 作业 **5 动态腿**（构建 + doctor + 视图模型 + broker `/healthz` + **容器内真实用例与 expected.txt 逐字节对拍**）。顺带修出仓库真 bug：**算子模块无法从干净树构建** | ✅ |
 | P37-4 | **每任务资产**：`tasks/<name>/spec.json`、`fns/*.json` + 修订绑定 + 漂移 | 往返一致、绑定修订、漂移可复现 | ⏳ |
-| P37-5 | **生命周期 + Docker**：runner（start/stop/status，优雅停止）+ Dockerfile/compose + `/healthz` healthcheck | start→登记→记录→汇输出；stop→消失且标记 stopped；真死报 offline | ⏳ |
+| P37-5 | **生命周期 + 调度 + Docker 集群** ✅ 2026-10-15（决策 95–98、100、104）：`moonflux runner` 常驻监督器 + `task status/logs/start/stop`（`--remote` 翻**集群** desired）+ 控制面对账（desired vs actual、pending 可见、心跳下放置、丢 worker 重分配）+ docker 集群测试 | **本地门禁**：p48（起/重启/优雅停）· p50（target+worker）· p51（start/stop+对账）· p52（对账表/pending/重分配）；**docker**：p49 动态 **9 腿**（调度/有输出/回收窗口/offline/重分配） | ✅ |
 | P37-6 | **浏览器 playground**：第三 host + 页内算子执行 | native vs 浏览器 **逐字节一致** | ⏳ |
 
 ## 已知边界（写进文档，别在实现里忘掉）
