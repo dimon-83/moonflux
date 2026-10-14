@@ -46,6 +46,14 @@ extern "C" fn cli_term_requested() -> Int32 = "mf_cli_term_requested"
 extern "C" fn cli_spawn(prog : Bytes, argv_flat : Bytes) -> Int32 = "mf_cli_spawn"
 
 ///|
+#borrow(prog, argv_flat, stderr_path)
+extern "C" fn cli_spawn_to(
+  prog : Bytes,
+  argv_flat : Bytes,
+  stderr_path : Bytes,
+) -> Int32 = "mf_cli_spawn_to"
+
+///|
 extern "C" fn cli_kill(pid : Int32, sig : Int32) -> Int32 = "mf_cli_kill"
 
 ///|

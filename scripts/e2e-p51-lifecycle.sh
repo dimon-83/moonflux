@@ -89,6 +89,17 @@ running_pid relay | grep -q . ||
   { runs; fail "1b: an IDLE task was reaped as offline (the idle heartbeat regressed)"; }
 pass "1b. 空闲任务过了 3s 回收窗口仍 running（idle 心跳，决策 105）"
 
+# ---- 1c. task logs shows the child's stderr as well as the run log ------
+# Two kinds of evidence in one place: the run-log says what the run decided, the
+# process's stderr says what the platform printed while doing it. The child
+# prints "opened <topic>[...]" on stderr, so its presence proves the second half.
+LOGS=$("$EXE" task logs --name relay --data-dir "$D" 2>/dev/null)
+echo "$LOGS" | grep -q "child stderr" ||
+  { echo "$LOGS" | head -5; fail "1c: task logs does not show the child's stderr"; }
+echo "$LOGS" | grep -q "run-log events" ||
+  { echo "$LOGS" | head -5; fail "1c: task logs no longer shows the run-log"; }
+pass "1c. task logs 同时给出子进程 stderr 与 run-log 事件（一个入口看两类证据）"
+
 # ---- 2. task stop stops it gracefully ----------------------------------
 "$EXE" task stop --name relay --data-dir "$D" > /dev/null 2>&1 ||
   fail "2: task stop failed"

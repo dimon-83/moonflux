@@ -15,6 +15,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <string.h>
+#include <fcntl.h>
 
 void mf_cli_flush(void) {
   fflush(stdout);
@@ -128,12 +129,27 @@ int mf_cli_term_requested(void) { return g_term_requested; }
  * ending with an empty entry, i.e. two consecutive NULs). Returns the child
  * pid, or -1 on failure. The child is exec'd directly — no shell — so a task
  * name or data dir never reaches a shell's interpretation. */
-int32_t mf_cli_spawn(const uint8_t *prog, const uint8_t *argv_flat) {
+/* Shared by the two spawn entry points: argv_flat is strings separated by NUL
+ * ending with an empty entry, and stderr_path (may be NULL) is where the child's
+ * standard error goes. Redirecting stderr is how a supervised task's diagnostics
+ * reach the operator: the runner keeps them per task, and `task logs` can then
+ * show a task's run-log events AND what the process itself said. */
+static int32_t mf_cli_spawn_common(const uint8_t *prog, const uint8_t *argv_flat,
+                                   const uint8_t *stderr_path) {
   pid_t pid = fork();
   if (pid < 0) {
     return -1;
   }
   if (pid == 0) {
+    if (stderr_path != NULL && stderr_path[0] != '\0') {
+      int fd = open((const char *)stderr_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+      if (fd >= 0) {
+        dup2(fd, 2);
+        if (fd != 2) {
+          close(fd);
+        }
+      }
+    }
     char *argv[16];
     int n = 0;
     const char *p = (const char *)argv_flat;
@@ -152,6 +168,15 @@ int32_t mf_cli_spawn(const uint8_t *prog, const uint8_t *argv_flat) {
     _exit(127); /* only reachable if exec failed */
   }
   return (int32_t)pid;
+}
+
+int32_t mf_cli_spawn(const uint8_t *prog, const uint8_t *argv_flat) {
+  return mf_cli_spawn_common(prog, argv_flat, NULL);
+}
+
+int32_t mf_cli_spawn_to(const uint8_t *prog, const uint8_t *argv_flat,
+                        const uint8_t *stderr_path) {
+  return mf_cli_spawn_common(prog, argv_flat, stderr_path);
 }
 
 int mf_cli_kill(int32_t pid, int sig) { return kill((pid_t)pid, sig); }

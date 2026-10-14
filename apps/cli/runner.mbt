@@ -40,6 +40,14 @@ fn flat_argv(parts : Array[String]) -> Bytes {
 }
 
 ///|
+/// Where a supervised task's standard error goes. Per task, under the data dir,
+/// so `task logs` can show what the PROCESS said as well as what the run-log
+/// recorded — the two are different evidence and the operator wants both.
+fn task_stderr_path(data_dir : String, name : String) -> String {
+  "\{data_dir}/logs/\{name}.stderr"
+}
+
+///|
 fn spawn_task(
   cli : String,
   name : String,
@@ -58,7 +66,11 @@ fn spawn_task(
       more
     }
   }
-  cli_spawn(@utf8.encode(cli), flat_argv(argv_parts))
+  cli_spawn_to(
+    @utf8.encode(cli),
+    flat_argv(argv_parts),
+    @utf8.encode(task_stderr_path(data_dir, name)),
+  )
 }
 
 ///|
@@ -251,6 +263,12 @@ fn cmd_runner(argv : Array[String]) -> Unit {
   // a runner is a long-lived process: a SIGTERM must stop its children
   // gracefully, not leave them orphaned
   cli_install_term_handler()
+  // per-task stderr files live here; a missing dir would make the redirect in
+  // the child silently do nothing, which is worse than failing
+  match @fs.mkdirs("\{data_dir}/logs") {
+    Ok(_) => ()
+    Err(e) => warn("runner: cannot create \{data_dir}/logs: \{e}\n")
+  }
 
   let children : Array[Child] = []
   for task in set.tasks {
