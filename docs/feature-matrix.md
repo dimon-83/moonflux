@@ -76,6 +76,7 @@
 | **`dedupe` primitive**（P31，决策 71） | ✅ | `apps/operator-dedupe`：每个键的第一条通过（1→0）；**期限 = 键的形状**（`keyfield → tumble → dedupe` ⇒ 每窗去重一次，无窗口 ⇒ 永久，且状态上界如实写明）；无键的链在**宿主**处按名拒绝 |
 | 窗口（hopping / 定时器触发 flush） | ⏳ | 未立项：与"算子不读时钟"的红线正面冲突，要做先定义事件时间水位的来源 | 未立项：需要"水位推进才产出"的语义，与"算子不读时钟"的红线冲突，要做就得先定义事件时间水位的来源 |
 | **SDF 例子的 native 部署**（决策 86） | ✅ | [`deploy-sdf.sh`](../scripts/deploy-sdf.sh)（start/status/verify/logs/list/stop）+ 部署根（每用例自己的数据目录、共享运行登记 broker、日志、pids、catalog）；三种模式逐行写明（**无静默跳过**）：5 个跑并逐字节验证、3 个跑了但无单一 golden、18 个 deploy-only 带理由；**跨用例主题冲突**（sentence/cars）由"每用例一个数据目录"化解。门禁 `e2e-p41-deploy.sh` 7 腿。指南 [`docs/deployment.md`](deployment.md)。**Docker 部署见下一行** |
+| **task start/stop + runner 对账**（决策 98） | ✅ | 任务文档带 `enabled`；`task stop/start` 翻位；runner 每 500ms 对账起停（被停的不按 restart 重启）。门禁 `e2e-p51-lifecycle.sh` 3 条。**未做**：控制面侧（--remote 改集群文档、pending、重分配、心跳下发） |
 | **调度到指定节点（target + worker）**（决策 97） | ✅ | 每任务 `target` 进文档；runner `--worker` 只跑自己的任务（absent/any 谁都能跑）；`pipeline list` 显示 target；worker 空闲是合法态。门禁 `e2e-p50-scheduling.sh` 3 条。**未做**：控制面对账循环（pending/重分配）、task start/stop |
 | **task status/logs + restart 进文档**（决策 96） | ✅ | `task status`=run list 投影、`task logs`=读 run-log（配 --data-dir）；每任务 restart 进任务集文档、runner 按任务读（--restart 覆盖）。**未做**：task start/stop 写半 + target 调度 |
 | **runner 常驻监督器**（决策 95） | ✅ | 按任务集文档起/监督/重启子进程；SIGTERM 优雅停（run-stop→stopped）、SIGKILL→offline；`pipeline run` 补信号处理（两个循环都改）；C 侧 spawn/kill/reap 原语。门禁 `e2e-p48-runner.sh` 4 条。**未做**：`task start/stop` 调度 + docker 集群测试 |

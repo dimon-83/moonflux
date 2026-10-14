@@ -75,6 +75,7 @@ fn persist_applied(
     @env.now().reinterpret_as_int64(),
     "on-failure",
     None,
+    true,
   )
   write_task_set(data_dir, [task], cluster_revision)
 }
@@ -304,9 +305,18 @@ fn prepare_task(
   TaskDoc::{
     name,
     spec,
-    json: task_json(name, spec_json, function_sets, now, "on-failure", None),
+    json: task_json(
+      name,
+      spec_json,
+      function_sets,
+      now,
+      "on-failure",
+      None,
+      true,
+    ),
     restart: "on-failure",
     target: None,
+    enabled: true,
   }
 }
 
@@ -348,9 +358,11 @@ fn prepare_stored_task(
       now,
       doc.restart,
       doc.target,
+      doc.enabled,
     ),
     restart: doc.restart,
     target: doc.target,
+    enabled: doc.enabled,
   }
 }
 

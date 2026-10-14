@@ -41,6 +41,11 @@ struct TaskDoc {
   /// the deployment concern (restart is the other half): the runner with
   /// `--worker <id>` runs the tasks whose target is that id (or absent/"any").
   target : String?
+  /// Whether the task should run. `task stop` flips it false and the runner
+  /// stops the child; `task start` flips it true and the runner picks it up.
+  /// Default true — a task in the document is desired-running until said
+  /// otherwise.
+  enabled : Bool
 }
 
 ///|
@@ -72,6 +77,15 @@ fn target_of(json : Json) -> String? {
   match json.value("target") {
     Some(String(s)) => Some(s)
     _ => None
+  }
+}
+
+///|
+/// Whether a stored task document says the task should run. Absent = true.
+fn enabled_of(json : Json) -> Bool {
+  match json.value("enabled") {
+    Some(v) => v == Json::boolean(true)
+    _ => true
   }
 }
 
@@ -130,6 +144,7 @@ fn parse_task_set_text(
       json: item,
       restart: restart_of(item),
       target: target_of(item),
+      enabled: enabled_of(item),
     })
   }
   Ok(TaskSet::{ tasks: sort_tasks(tasks), revision, })
@@ -213,11 +228,13 @@ fn task_json(
   applied_at : Int64,
   restart : String,
   target : String?,
+  enabled : Bool,
 ) -> Json {
   let doc : Map[String, Json] = {}
   doc["pipeline"] = Json::string(name)
   doc["applied_at"] = Json::number(applied_at.to_double())
   doc["restart"] = Json::string(restart)
+  doc["enabled"] = Json::boolean(enabled)
   match target {
     Some(t) => doc["target"] = Json::string(t)
     None => ()
@@ -233,6 +250,82 @@ fn task_json(
   doc["functions"] = Json::array(set_items)
   doc["spec"] = spec_json
   Json::object(doc)
+}
+
+///|
+/// Rebuilds a stored task object with `enabled` flipped, preserving the spec,
+/// applied_at, functions, restart and target that task_json wrote. The stdlib
+/// Json has no in-place field mutation, so "toggle one field" is "rebuild the
+/// object from what it already says" — and task_json is the single place that
+/// knows the stored shape.
+fn task_json_with_enabled(
+  task : TaskDoc,
+  enabled : Bool,
+) -> Result[Json, String] {
+  let spec = match task.json.value("spec") {
+    Some(spec) => spec
+    None => return Err("no spec stored for \{task.name}")
+  }
+  let applied_at = match task.json.value("applied_at") {
+    Some(Number(n)) => n.to_int64()
+    _ => 0L
+  }
+  let functions : Array[(String, Int64)] = match task.json.value("functions") {
+    Some(Array(items)) => {
+      let fs : Array[(String, Int64)] = []
+      for item in items {
+        match (item.value("name"), item.value("revision")) {
+          (Some(String(nm)), Some(Number(rev))) => fs.push((nm, rev.to_int64()))
+          _ => ()
+        }
+      }
+      fs
+    }
+    _ => []
+  }
+  Ok(
+    task_json(
+      task.name,
+      spec,
+      functions,
+      applied_at,
+      task.restart,
+      task.target,
+      enabled,
+    ),
+  )
+}
+
+///|
+/// `task start` / `task stop`: flip a task's `enabled` bit in the LOCAL document.
+/// The runner reconciles against this document on its next poll. (The `--remote`
+/// form — flipping the CLUSTER's document — is the control plane's next step;
+/// this is the write half the runner already reads.)
+fn task_set_enabled(argv : Array[String], enabled : Bool) -> Unit {
+  let flags = parse_flags(argv)
+  let name = flags.require("name")
+  let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
+  let set = load_task_set(data_dir)
+  let out : Array[Json] = []
+  let mut found = false
+  for task in set.tasks {
+    if task.name == name {
+      found = true
+      match task_json_with_enabled(task, enabled) {
+        Ok(json) => out.push(json)
+        Err(e) => fail("task \{name}: \{e}")
+      }
+    } else {
+      out.push(task.json)
+    }
+  }
+  if !found {
+    fail("no task named \{name} under \{data_dir}")
+  }
+  match write_task_set(data_dir, out, set.revision) {
+    Ok(_) => println("task \{name}: enabled=\{enabled}")
+    Err(e) => fail("task \{name}: \{e}")
+  }
 }
 
 ///|
@@ -434,6 +527,7 @@ fn task_docs_from_pipelines(
     // applied_at/functions would find neither.
     let restart = restart_of(item)
     let target = target_of(item)
+    let enabled = enabled_of(item)
     out.push(TaskDoc::{
       name,
       spec,
@@ -444,9 +538,11 @@ fn task_docs_from_pipelines(
         @env.now().reinterpret_as_int64(),
         restart,
         target,
+        enabled,
       ),
       restart,
       target,
+      enabled,
     })
   }
   Ok(out)

@@ -21,6 +21,8 @@ fn cmd_task(argv : Array[String]) -> Unit {
   }
   match argv[0] {
     "status" => run_list(argv[1:argv.length()].to_owned())
+    "start" => task_set_enabled(argv[1:argv.length()].to_owned(), true)
+    "stop" => task_set_enabled(argv[1:argv.length()].to_owned(), false)
     "logs" => {
       let flags = parse_flags(argv[1:argv.length()].to_owned())
       let name = flags.require("name")

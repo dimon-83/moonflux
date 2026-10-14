@@ -20,6 +20,10 @@ struct Child {
   name : String
   pid : Int32
   restart : String
+  /// True once the runner has asked this child to stop (its task is no longer
+  /// desired); the reap loop then reaps it WITHOUT restarting, even on a
+  /// non-zero exit.
+  stopping : Bool
 }
 
 ///|
@@ -72,6 +76,55 @@ fn should_restart(policy : String, exit_code : Int64) -> Bool {
 }
 
 ///|
+/// Whether a task is desired-running right now: enabled, and (when the runner
+/// declares a worker) pinned to it or to "any"/absent. The single source for
+/// both the initial selection and the periodic reconciliation.
+fn task_desired(task : TaskDoc, worker : String?, want : String?) -> Bool {
+  if !task.enabled {
+    return false
+  }
+  let name_match = match want {
+    None => true
+    Some(w) => task.name == w
+  }
+  let worker_match = match worker {
+    None => true
+    Some(id) =>
+      match task.target {
+        None => true
+        Some("any") => true
+        Some(t) => t == id
+      }
+  }
+  name_match && worker_match
+}
+
+///|
+fn child_running(children : Array[Child], name : String) -> Bool {
+  for c in children {
+    if c.name == name && c.pid > 0 {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn still_desired(
+  set : TaskSet,
+  name : String,
+  worker : String?,
+  want : String?,
+) -> Bool {
+  for task in set.tasks {
+    if task.name == name {
+      return task_desired(task, worker, want)
+    }
+  }
+  false
+}
+
+///|
 fn cmd_runner(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
   let data_dir = flags.require("data-dir")
@@ -100,20 +153,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
   let set = load_task_set(data_dir)
   let chosen : Array[TaskDoc] = []
   for task in set.tasks {
-    let name_match = match want {
-      None => true
-      Some(w) => task.name == w
-    }
-    let worker_match = match worker {
-      None => true
-      Some(id) =>
-        match task.target {
-          None => true
-          Some("any") => true
-          Some(t) => t == id
-        }
-    }
-    if name_match && worker_match {
+    if task_desired(task, worker, want) {
       chosen.push(task)
     }
   }
@@ -147,9 +187,15 @@ fn cmd_runner(argv : Array[String]) -> Unit {
       fail("runner: could not spawn task \{task.name}")
     }
     warn("runner: started \{task.name} (pid \{pid})\n")
-    children.push(Child::{ name: task.name, pid, restart: policy, })
+    children.push(Child::{
+      name: task.name,
+      pid,
+      restart: policy,
+      stopping: false,
+    })
   }
 
+  let mut last_sync_ms = 0L
   while true {
     if cli_term_requested() != 0 {
       warn("runner: signal received, stopping \{children.length()} task(s)\n")
@@ -158,16 +204,79 @@ fn cmd_runner(argv : Array[String]) -> Unit {
       }
       break
     }
+    // reconcile against the document every 500ms: start tasks that became
+    // desired, stop tasks that no longer are. This is what makes `task stop`
+    // actually stop a running child and `task start` bring it back.
+    let now_ms = @env.now().reinterpret_as_int64()
+    if now_ms - last_sync_ms >= 500L {
+      last_sync_ms = now_ms
+      let current = load_task_set(data_dir)
+      for i in 0..<children.length() {
+        let c = children[i]
+        if c.pid > 0 &&
+          !c.stopping &&
+          !still_desired(current, c.name, worker, want) {
+          warn("runner: \{c.name} is no longer desired; stopping\n")
+          let _ = cli_kill(c.pid, 15)
+          children[i] = Child::{
+            name: c.name,
+            pid: c.pid,
+            restart: c.restart,
+            stopping: true,
+          }
+        }
+      }
+      for task in current.tasks {
+        if task_desired(task, worker, want) &&
+          !child_running(children, task.name) {
+          let policy = match flag_restart {
+            Some(r) => r
+            None => task.restart
+          }
+          if policy != "never" && policy != "on-failure" && policy != "always" {
+            warn(
+              "runner: task \{task.name}: bad restart \{policy}; not started\n",
+            )
+          } else {
+            let pid = spawn_task(cli, task.name, data_dir, control)
+            if pid >= 0 {
+              warn("runner: started \{task.name} (pid \{pid})\n")
+              children.push(Child::{
+                name: task.name,
+                pid,
+                restart: policy,
+                stopping: false,
+              })
+            } else {
+              warn("runner: could not spawn \{task.name}\n")
+            }
+          }
+        }
+      }
+    }
     for i in 0..<children.length() {
       let c = children[i]
       let reap = cli_reap(c.pid)
       if reap > 0L {
         let code = reap - 1L
-        if should_restart(c.restart, code) {
+        if c.stopping {
+          warn("runner: \{c.name} stopped (pid \{c.pid})\n")
+          children[i] = Child::{
+            name: c.name,
+            pid: -1,
+            restart: c.restart,
+            stopping: false,
+          }
+        } else if should_restart(c.restart, code) {
           let pid = spawn_task(cli, c.name, data_dir, control)
           if pid >= 0 {
             warn("runner: \{c.name} exited (\{code}), restarted (pid \{pid})\n")
-            children[i] = Child::{ name: c.name, pid, restart: c.restart, }
+            children[i] = Child::{
+              name: c.name,
+              pid,
+              restart: c.restart,
+              stopping: false,
+            }
           } else {
             warn("runner: \{c.name} exited (\{code}), respawn failed\n")
           }
@@ -175,7 +284,12 @@ fn cmd_runner(argv : Array[String]) -> Unit {
           warn(
             "runner: \{c.name} exited (\{code}), left stopped (restart=\{c.restart})\n",
           )
-          children[i] = Child::{ name: c.name, pid: -1, restart: c.restart, }
+          children[i] = Child::{
+            name: c.name,
+            pid: -1,
+            restart: c.restart,
+            stopping: false,
+          }
         }
       }
     }
@@ -191,7 +305,12 @@ fn cmd_runner(argv : Array[String]) -> Unit {
       let c = children[i]
       if c.pid > 0 {
         if cli_reap(c.pid) > 0L {
-          children[i] = Child::{ name: c.name, pid: -1, restart: c.restart, }
+          children[i] = Child::{
+            name: c.name,
+            pid: -1,
+            restart: c.restart,
+            stopping: c.stopping,
+          }
         } else {
           all_done = false
         }
