@@ -134,6 +134,9 @@ write_spec "$WORK/down.json" \
   "{\"type\":\"stdout\"}"
 "$EXE" pipeline apply -f "$WORK/down.json" --data-dir "$WORK/down" > /dev/null ||
   fail "apply of the dead-broker spec failed"
+# A dead broker is a structured, VISIBLE error that the run RETRIES instead of
+# dying on (P19's own rule: "a broken connection is a structured error; retrying
+# is the caller's next round" — the run loop is the caller; decision 94).
 if "$EXE" pipeline run --data-dir "$WORK/down" > "$WORK/down.out" 2> "$WORK/down.err"; then
   fail "a dead broker produced a successful run"
 fi

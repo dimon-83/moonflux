@@ -1349,6 +1349,7 @@ pub fn kafka_source(url : String) -> Source {
   }
   Source::{
     name: "kafka:\{url}",
+    retryable: false,
     pull: fn() {
       let target = match parsed {
         Ok(target) => target

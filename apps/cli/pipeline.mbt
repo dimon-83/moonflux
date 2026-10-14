@@ -907,9 +907,13 @@ fn pipeline_run(argv : Array[String]) -> Unit {
         pull
       }
       Err(e) => {
-        // a failed fetch is not the end of a long-running poller
-        source_retry.wait("source \{source.name}", e)
-        continue
+        // a long-running source retries; a one-shot source's failure IS the
+        // job's failure (a file that is not there, a single http-get that 404s)
+        if source.retryable {
+          source_retry.wait("source \{source.name}", e)
+          continue
+        }
+        fail("source \{source.name}: \{e}")
       }
     }
     match pull {

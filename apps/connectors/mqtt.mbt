@@ -310,6 +310,7 @@ pub fn mqtt_source(url : String) -> Source {
   let state = MqttSourceState::{ stream: None, last_io_ms: 0L, }
   Source::{
     name: "mqtt:\{url}",
+    retryable: false,
     pull: fn() {
       let broker = match parsed {
         Ok(broker) => broker

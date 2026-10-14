@@ -33,6 +33,11 @@ pub(all) enum SourcePull {
 /// says there are none (yet), or that there will be no more.
 pub(all) struct Source {
   name : String
+  /// Whether a pull failure is retried by the RUN instead of ending it: true for
+  /// long-running sources (poller / subscription), false for one-shot ones
+  /// (file / stdin / a single http-get). A one-shot fetch that fails is a job
+  /// that failed; a poller that fails once is a poller doing its job.
+  retryable : Bool
   pull : () -> Result[SourcePull, String]
 }
 
@@ -163,6 +168,7 @@ pub fn file_source(path : String, timestamp : Int64) -> Source {
   let state = OnceState::{ delivered: false, }
   Source::{
     name: "file:\{path}",
+    retryable: false,
     pull: fn() {
       if state.delivered {
         return Ok(Exhausted)
@@ -185,6 +191,7 @@ pub fn stdin_source(timestamp : Int64) -> Source {
   let state = OnceState::{ delivered: false, }
   Source::{
     name: "stdin",
+    retryable: false,
     pull: fn() {
       if state.delivered {
         return Ok(Exhausted)
@@ -233,6 +240,7 @@ pub fn http_source(
     } else {
       "http-get:\{url}"
     },
+    retryable: polling,
     pull: fn() {
       let stamp = if polling {
         let now = @env.now().reinterpret_as_int64()
