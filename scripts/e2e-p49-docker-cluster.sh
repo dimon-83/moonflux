@@ -114,9 +114,12 @@ cat > "$WORK/relay.json" <<'JSON'
  "spec":{"source":{"type":"topic","name":"relay-in","from":"beginning"},"topic":{"name":"relay-in"},
  "transforms":[],"sink":{"type":"stdout"}}}
 JSON
+# the image's ENTRYPOINT is the moonflux binary, so a shell command needs
+# --entrypoint /bin/sh (the same shape p42 uses for its in-container case run)
 docker run -d --name mf-p49-runner --network moonflux-p49 --network-alias runner \
-  -v "$WORK/runner:/data" -v "$WORK/relay.json:/spec.json" "$TAG" \
-  sh -c '/usr/local/bin/moonflux pipeline apply -f /spec.json --data-dir /data && exec /usr/local/bin/moonflux runner --data-dir /data --control sc:19900 --cli /usr/local/bin/moonflux' \
+  -v "$WORK/runner:/data" -v "$WORK/relay.json:/spec.json" \
+  --entrypoint /bin/sh "$TAG" -lc \
+  '/usr/local/bin/moonflux pipeline apply -f /spec.json --data-dir /data && exec /usr/local/bin/moonflux runner --data-dir /data --control sc:19900 --cli /usr/local/bin/moonflux' \
   > /dev/null || fail "the runner container did not start"
 CONTAINERS="$CONTAINERS mf-p49-runner"
 
