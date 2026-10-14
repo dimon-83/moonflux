@@ -48,6 +48,7 @@
 | # | 项 | 优先级 | 说明 / 依据 |
 | :--- | :--- | :--- | :--- |
 | 0a | **P37-1 多任务地基（本地口径）** | ✅ 2026-10-13 | 决策 81：`topology.json` v2 集合 + 按名 upsert/`--set`/`delete`/`list` + **取数按 topic 选链** + v1 内存迁移 + `moonflux_tasks` 无标签 gauge；门禁 `e2e-p37-multi-task.sh` **10 腿**。顺带修：健康检查恒真、诊断走块缓冲 stdout、`--set` 吞参数（并加 `audit-flags.py` 门禁防这一类） |
+| 1b | **铁律落地：never + 运行表** | ✅ 2026-10-15 | 决策 108：`Child.done`（CI 抓出 never 被复活）+ 门禁竞态修 + `RunTable` 有界（活运行不淘汰）| 
 | 1a | **铁律：资源 + 文档语言** | ✅ 2026-10-15 | 决策 107：英文 `AGENT.md`（两条铁律）+ `AGENTS.md` 指针；双语副本后补 |
 | 0z | **task logs 两类证据** | ✅ 2026-10-15 | 决策 106：`mf_cli_spawn_to`（无 shell 的 stderr 重定向）+ 每任务 stderr 文件 + `task logs` 一并输出；p51 5/5 |
 | 0y | **空闲不是死亡（idle 心跳）** | ✅ 2026-10-15 | 决策 105：docker 门禁抓出"空闲任务被误判 offline"；`RunSession::idle` + 两循环；p49 7a/7b + p51 1b |

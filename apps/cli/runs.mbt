@@ -46,11 +46,74 @@ struct RunTable {
   /// "a run died" is an event an operator wants to see even after the entry is
   /// forgotten.
   mut reaped : Int64
+  /// How many settled entries have been evicted to stay under `cap`. A counter
+  /// for the same reason as `reaped`: the release is reported.
+  mut evicted : Int64
+  /// The ceiling on remembered runs. Without it this table grew by one entry per
+  /// run the cluster had EVER seen — unbounded memory, and every sweep and
+  /// listing walking a longer array, which is exactly the "does this make one
+  /// turn of the event loop longer" question P13 says to ask before adding
+  /// periodic work (iron rule 1, AGENT.md). Runs per cluster are few; a
+  /// long-lived control plane is not.
+  cap : Int32
 }
 
 ///|
+const RUN_TABLE_CAP : Int32 = 1024
+
+///|
 fn RunTable::new(timeout_ms : Int64) -> RunTable {
-  RunTable::{ entries: [], timeout_ms, reaped: 0L, }
+  RunTable::{
+    entries: [],
+    timeout_ms,
+    reaped: 0L,
+    evicted: 0L,
+    cap: RUN_TABLE_CAP,
+  }
+}
+
+///|
+/// Keeps the table bounded. LIVE runs are never evicted — forgetting a running
+/// task to satisfy a budget trades a visible memory bound for an invisible wrong
+/// answer — so the ceiling may be exceeded while everything in the table is
+/// live; that is the honest trade. Settled entries go oldest first, and the
+/// eviction is REPORTED: a released resource nobody mentions is how a leak hides
+/// (iron rule 1, AGENT.md).
+fn RunTable::evict_over_cap(self : RunTable) -> Unit {
+  if self.entries.length() <= self.cap {
+    return
+  }
+  let settled : Array[Int32] = []
+  for i = 0; i < self.entries.length(); i = i + 1 {
+    if !(self.entries[i].state is Running) {
+      settled.push(i)
+    }
+  }
+  let want = self.entries.length() - self.cap
+  let drop_count = if settled.length() < want { settled.length() } else { want }
+  if drop_count == 0 {
+    return
+  }
+  let kept : Array[RunEntry] = []
+  for i = 0; i < self.entries.length(); i = i + 1 {
+    let mut drop = false
+    for k = 0; k < drop_count; k = k + 1 {
+      if settled[k] == i {
+        drop = true
+      }
+    }
+    if !drop {
+      kept.push(self.entries[i])
+    }
+  }
+  self.entries.clear()
+  for entry in kept {
+    self.entries.push(entry)
+  }
+  self.evicted = self.evicted + drop_count.to_int64()
+  note(
+    "run table: evicted \{drop_count} settled run entries (cap \{self.cap}; \{self.evicted} evicted so far)",
+  )
 }
 
 ///|
@@ -85,6 +148,7 @@ fn RunTable::observe(
       Running
     },
   })
+  self.evict_over_cap()
   true
 }
 

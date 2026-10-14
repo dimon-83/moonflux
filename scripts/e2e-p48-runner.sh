@@ -117,13 +117,26 @@ PIDS="$(echo "$PIDS" | tr ' ' '\n' | grep -v "^$RUNNER_PID$" | tr '\n' ' ')"
   > "$WORK/runner2.out" 2> "$WORK/runner2.err" &
 RUNNER2=$!
 PIDS="$PIDS $RUNNER2"
-wait_run "task=relay	state=running" 120 ||
-  { runs; cat "$WORK/runner2.err"; fail "4: the never-runner did not start the task"; }
-PID3=$(task_pid relay)
+# Take the child's pid from THIS runner's own report, not from "the first
+# running line in the run list": that line can name an entry an earlier runner
+# left behind, and killing the wrong process makes this leg lie (measured — the
+# leg failed while the runner's own log said "left stopped (restart=never)").
+i=0
+PID3=""
+while [ "$i" -lt 150 ]; do
+  PID3=$(sed -n 's/.*started relay (pid \([0-9]*\)).*/\1/p' "$WORK/runner2.err" | tail -1)
+  [ -n "$PID3" ] && break
+  sleep 0.1
+  i=$((i + 1))
+done
+[ -n "$PID3" ] ||
+  { runs; cat "$WORK/runner2.err"; fail "4: the never-runner never announced a child"; }
+wait_run "task=relay	state=running" 150 ||
+  { runs; cat "$WORK/runner2.err"; fail "4: the never-runner's task is not running"; }
 kill -9 "$PID3" 2>/dev/null
 sleep "$((REAP_MS / 1000 + 1))"
 runs | grep -q "task=relay	state=running" &&
-  { runs; fail "4: --restart never still restarted the killed task"; }
+  { runs; cat "$WORK/runner2.err"; fail "4: --restart never still restarted the killed task"; }
 pass "4. --restart never：kill -9 后不重启，任务停在 offline"
 kill -TERM "$RUNNER2" 2>/dev/null
 

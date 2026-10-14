@@ -24,6 +24,13 @@ struct Child {
   /// desired); the reap loop then reaps it WITHOUT restarting, even on a
   /// non-zero exit.
   stopping : Bool
+  /// True once this task exited and the restart policy said to leave it stopped.
+  /// The reconcile must NOT resurrect it: "restart: never" means the task stays
+  /// dead until the DESIRED state changes (the operator starts it, or a new
+  /// placement assigns it here). Without this, "desired but not running" and
+  /// "died and should stay dead" are the same thing to the reconcile, and
+  /// restart: never becomes a no-op — caught by CI on p48's leg 4.
+  done : Bool
 }
 
 ///|
@@ -115,6 +122,19 @@ fn task_desired(task : TaskDoc, worker : String?, want : String?) -> Bool {
 fn child_running(children : Array[Child], name : String) -> Bool {
   for c in children {
     if c.name == name && c.pid > 0 {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// Whether this task already exited under a policy that says "leave it stopped".
+/// The reconcile consults this so a dead task stays dead until its desired state
+/// changes (see Child.done).
+fn child_done(children : Array[Child], name : String) -> Bool {
+  for c in children {
+    if c.name == name && c.pid <= 0 && c.done {
       return true
     }
   }
@@ -292,6 +312,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
         pid,
         restart: policy,
         stopping: false,
+        done: false,
       })
     }
   }
@@ -364,17 +385,22 @@ fn cmd_runner(argv : Array[String]) -> Unit {
         if c.pid > 0 && !c.stopping && !contains_string(desired, c.name) {
           warn("runner: \{c.name} is no longer desired; stopping\n")
           let _ = cli_kill(c.pid, 15)
+          // clearing `done` here is what keeps restart:never from becoming
+          // "never again": a task the operator later re-enables must be able to
+          // start (the desired state changed, which is what Child.done waits for)
           children[i] = Child::{
             name: c.name,
             pid: c.pid,
             restart: c.restart,
             stopping: true,
+            done: false,
           }
         }
       }
       for task in current.tasks {
         if contains_string(desired, task.name) &&
-          !child_running(children, task.name) {
+          !child_running(children, task.name) &&
+          !child_done(children, task.name) {
           let policy = match flag_restart {
             Some(r) => r
             None => task.restart
@@ -403,6 +429,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
                     pid,
                     restart: policy,
                     stopping: false,
+                    done: false,
                   }
                   reused = true
                 }
@@ -413,6 +440,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
                   pid,
                   restart: policy,
                   stopping: false,
+                  done: false,
                 })
               }
             } else {
@@ -434,6 +462,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
             pid: -1,
             restart: c.restart,
             stopping: false,
+            done: false,
           }
         } else if should_restart(c.restart, code) {
           let pid = spawn_task(cli, c.name, data_dir, control)
@@ -444,6 +473,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
               pid,
               restart: c.restart,
               stopping: false,
+              done: false,
             }
           } else {
             warn("runner: \{c.name} exited (\{code}), respawn failed\n")
@@ -457,6 +487,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
             pid: -1,
             restart: c.restart,
             stopping: false,
+            done: true,
           }
         }
       }
@@ -478,6 +509,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
             pid: -1,
             restart: c.restart,
             stopping: c.stopping,
+            done: c.done,
           }
         } else {
           all_done = false
