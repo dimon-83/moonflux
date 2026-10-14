@@ -244,7 +244,14 @@ pass "8. 丢 worker → 浮动任务重分配到 ${SURVIVOR}；钉在死 worker 
 # ---- 9. a runner container stopped gracefully → its task says stopped ------
 SURVIVOR_CONTAINER=$([ "$SURVIVOR" = "worker-a" ] && echo "$RA" || echo "$RB")
 if docker ps --format '{{.Names}}' | grep -qx "$SURVIVOR_CONTAINER"; then
-  OWNED=$(sched | grep "owner=$SURVIVOR" | head -1 | cut -f1)
+  # Pick a task the survivor owns AND that is actually RUNNING. "The first task
+  # owned by the survivor" can be one whose run is already offline (never-b was
+  # killed in leg 7b) or pending, and waiting for THAT to say "stopped" is
+  # waiting for something that will never happen — measured: this leg failed on
+  # never-b after leg 7b had already killed it.
+  OWNED=$(sched | grep "owner=$SURVIVOR" | grep "state=running" | head -1 | cut -f1)
+  [ -n "$OWNED" ] ||
+    { sched; fail "9: the surviving worker owns no running task to stop"; }
   docker stop "$SURVIVOR_CONTAINER" > /dev/null 2>&1 || fail "9: docker stop of the runner failed"
   CONTAINERS="$(echo "$CONTAINERS" | tr ' ' '\n' | grep -v "^$SURVIVOR_CONTAINER$" | tr '\n' ' ')"
   wait_for 300 runs_has "task=$OWNED	state=stopped" ||
