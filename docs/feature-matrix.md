@@ -76,6 +76,7 @@
 | **`dedupe` primitive**（P31，决策 71） | ✅ | `apps/operator-dedupe`：每个键的第一条通过（1→0）；**期限 = 键的形状**（`keyfield → tumble → dedupe` ⇒ 每窗去重一次，无窗口 ⇒ 永久，且状态上界如实写明）；无键的链在**宿主**处按名拒绝 |
 | 窗口（hopping / 定时器触发 flush） | ⏳ | 未立项：与"算子不读时钟"的红线正面冲突，要做先定义事件时间水位的来源 | 未立项：需要"水位推进才产出"的语义，与"算子不读时钟"的红线冲突，要做就得先定义事件时间水位的来源 |
 | **SDF 例子的 native 部署**（决策 86） | ✅ | [`deploy-sdf.sh`](../scripts/deploy-sdf.sh)（start/status/verify/logs/list/stop）+ 部署根（每用例自己的数据目录、共享运行登记 broker、日志、pids、catalog）；三种模式逐行写明（**无静默跳过**）：5 个跑并逐字节验证、3 个跑了但无单一 golden、18 个 deploy-only 带理由；**跨用例主题冲突**（sentence/cars）由"每用例一个数据目录"化解。门禁 `e2e-p41-deploy.sh` 7 腿。指南 [`docs/deployment.md`](deployment.md)。**Docker 部署见下一行** |
+| **带监控跑：真因是"前台跑"**（决策 103） | ✅ | `resource-watch.sh` 脱离式采样（含客户端 RSS）；**实测**：p52 = 3 进程/11MB ✓、整套 = **75 passed, 0 failed**、工作负载峰值 5 进程/116MB、客户端 +151MB、swap 0 ✓ ⇒ 功能与门禁都不是资源杀手，崩溃来自前台跑时的**管道继承**（101） |
 | **门禁卫生审计（静态）**（决策 102） | ✅ | `audit-gate-hygiene.py`：读继承 stdin / 无界 wait / 无清理 trap / 无范围 pkill 四类；**59 门禁全清**；修了 p33（在套件里）等 3 处清理 + runner 的 children 无界增长。**排查结论**：MoonBit 版本**不是**原因（工具链 10-12 装、崩溃 10-14 后）、非系统 OOM（48G/92% 空闲） |
 | **门禁不拖死调用方（进程/管道）**（决策 101） | ✅ | `gates-bg.sh` 全脱离启动（实测 0.46s 返回）；`gates.sh` 每步独立进程组 + 看门狗（超时整组收掉）。**证伪**：超时压 1s → 4 步被捕获、泄漏进程 0 |
 | **控制面对账 + 远程启停**（决策 100） | ✅ | 控制面 desired(集群文档) vs actual(运行注册表) 对成表：`disabled`/`pending`(说明原因)/`assigned`/`running`；放置随**心跳应答**下发（不主动拨号）；钉住先放、浮动给最不忙、**pin 目标死了不重分配**；只在所有权变化时出声。`task start/stop --remote`（Root）、`task schedule --remote`（只读）。门禁 `e2e-p52-control-reconcile.sh` 4 条。**首期不做**：副本/扩缩容/滚动升级/亲和 |
