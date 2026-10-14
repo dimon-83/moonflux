@@ -110,18 +110,62 @@ fn child_running(children : Array[Child], name : String) -> Bool {
 }
 
 ///|
-fn still_desired(
+/// One beat: announce this worker and take the placement back. One request on
+/// the control channel the runner already dials; the reply is the scheduler's
+/// decision for THIS worker (decision 20 in reverse — the control plane never
+/// dials the worker, the worker asks).
+fn send_worker_beat(
+  worker : String,
+  control : String,
+  data_dir : String,
+  link : PeerLink,
+) -> Result[@client.WorkerPlacement, String] {
+  let payload = @client.encode_worker_beat(@client.WorkerBeat::{
+    worker,
+    address: runner_host(),
+    data_dir,
+  })
+  match
+    control_call_secure(control, @client.CMD_WORKER_HEARTBEAT, payload, link) {
+    Ok(reply) => @client.decode_worker_placement(reply)
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// The tasks that should be running right now, from one reconcile cycle's
+/// inputs. Two shapes reduce to one list so the start/stop machinery below
+/// has a single thing to act on:
+///
+///   * placement = None  — the local shape: the document decides, filtered by
+///     `--worker`/`--name` (decisions 97/98, unchanged);
+///   * placement = Some  — the scheduled shape: the control plane decided.
+///     The names ARE the decision; the document is only consulted for
+///     `--name` and as a sanity check on enabled, because the scheduler
+///     already excludes disabled tasks and tasks pinned elsewhere.
+fn desired_names(
   set : TaskSet,
-  name : String,
+  placement : @client.WorkerPlacement?,
   worker : String?,
   want : String?,
-) -> Bool {
+) -> Array[String] {
+  let out : Array[String] = []
   for task in set.tasks {
-    if task.name == name {
-      return task_desired(task, worker, want)
+    let ok = match placement {
+      None => task_desired(task, worker, want)
+      Some(p) => {
+        let name_match = match want {
+          None => true
+          Some(w) => task.name == w
+        }
+        name_match && task.enabled && contains_string(p.tasks, task.name)
+      }
+    }
+    if ok {
+      out.push(task.name)
     }
   }
-  false
+  out
 }
 
 ///|
@@ -150,13 +194,50 @@ fn cmd_runner(argv : Array[String]) -> Unit {
   // is a legitimate idle state, not an error: the scheduler may assign later.
   let worker = flags.get("worker")
 
-  let set = load_task_set(data_dir)
-  let chosen : Array[TaskDoc] = []
-  for task in set.tasks {
-    if task_desired(task, worker, want) {
-      chosen.push(task)
+  // A runner with BOTH --worker and --control is a SCHEDULED WORKER (P37-5b):
+  // the control plane's scheduler decides what it runs, the worker's local
+  // document is an adopted copy of the cluster's, and the beat keeps both
+  // fresh. `--worker` alone stays the local placement filter (decision 97);
+  // `--control` alone stays the single-node shape (decision 98). Neither of
+  // those beats.
+  let scheduled = match (worker, control) {
+    (Some(_), Some(_)) => true
+    _ => false
+  }
+  let link = peer_link(flags)
+  // adoption bookkeeping for the cluster document — P11's machinery, reused
+  // verbatim: assets first, then validate, then ONE write for the whole set
+  let adoption = AdoptionState::{ failed_revision: 0L, reported: false, }
+  // transition-only warnings: a warning every 500ms forever is how a log
+  // stops being read; the first failure and the recovery are the events
+  let mut beat_healthy = true
+  // the last placement the scheduler gave this worker. Kept across a failed
+  // beat (P11: a failed fetch keeps what runs); cleared when the control
+  // plane answers that it has no opinion (no task set), which hands the
+  // decision back to the local document.
+  let mut placement : @client.WorkerPlacement? = None
+  if scheduled {
+    let id = match worker {
+      Some(id) => id
+      None => "" // unreachable: scheduled means worker is Some
+    }
+    let addr = match control {
+      Some(addr) => addr
+      None => "" // unreachable: scheduled means control is Some
+    }
+    match send_worker_beat(id, addr, data_dir, link) {
+      Ok(first) => placement = if first.has_set { Some(first) } else { None }
+      Err(e) =>
+        // startup honesty: a scheduled worker that cannot ask its scheduler
+        // must not guess from a possibly-stale local copy
+        fail(
+          "worker \{id}: the control plane at \{addr} did not answer the first beat (\{e}); not guessing what to run",
+        )
     }
   }
+
+  let set = load_task_set(data_dir)
+  let chosen : Array[String] = desired_names(set, placement, worker, want)
   if chosen.length() == 0 {
     match worker {
       None =>
@@ -172,27 +253,29 @@ fn cmd_runner(argv : Array[String]) -> Unit {
   cli_install_term_handler()
 
   let children : Array[Child] = []
-  for task in chosen {
-    let policy = match flag_restart {
-      Some(r) => r
-      None => task.restart
+  for task in set.tasks {
+    if contains_string(chosen, task.name) {
+      let policy = match flag_restart {
+        Some(r) => r
+        None => task.restart
+      }
+      if policy != "never" && policy != "on-failure" && policy != "always" {
+        fail(
+          "task \{task.name}: restart must be never|on-failure|always (got \{policy})",
+        )
+      }
+      let pid = spawn_task(cli, task.name, data_dir, control)
+      if pid < 0 {
+        fail("runner: could not spawn task \{task.name}")
+      }
+      warn("runner: started \{task.name} (pid \{pid})\n")
+      children.push(Child::{
+        name: task.name,
+        pid,
+        restart: policy,
+        stopping: false,
+      })
     }
-    if policy != "never" && policy != "on-failure" && policy != "always" {
-      fail(
-        "task \{task.name}: restart must be never|on-failure|always (got \{policy})",
-      )
-    }
-    let pid = spawn_task(cli, task.name, data_dir, control)
-    if pid < 0 {
-      fail("runner: could not spawn task \{task.name}")
-    }
-    warn("runner: started \{task.name} (pid \{pid})\n")
-    children.push(Child::{
-      name: task.name,
-      pid,
-      restart: policy,
-      stopping: false,
-    })
   }
 
   let mut last_sync_ms = 0L
@@ -204,18 +287,63 @@ fn cmd_runner(argv : Array[String]) -> Unit {
       }
       break
     }
-    // reconcile against the document every 500ms: start tasks that became
-    // desired, stop tasks that no longer are. This is what makes `task stop`
-    // actually stop a running child and `task start` bring it back.
+    // reconcile every 500ms: what is desired right now, and what is running.
+    // In the scheduled shape the beat asks first — the placement (and the
+    // adopted document that backs it) is this cycle's desired state; in the
+    // local shape the document alone decides (decision 98, unchanged).
     let now_ms = @env.now().reinterpret_as_int64()
     if now_ms - last_sync_ms >= 500L {
       last_sync_ms = now_ms
+      if scheduled {
+        let id = match worker {
+          Some(id) => id
+          None => "" // unreachable
+        }
+        let addr = match control {
+          Some(addr) => addr
+          None => "" // unreachable
+        }
+        match send_worker_beat(id, addr, data_dir, link) {
+          Ok(p) => {
+            if !beat_healthy {
+              warn(
+                "runner: the control plane answered again; placement resumes\n",
+              )
+              beat_healthy = true
+            }
+            placement = if p.has_set {
+              if p.revision > local_cluster_revision(data_dir) {
+                // the desired state moved: adopt the whole set, or keep
+                // running what we have (P11 — a failed adoption warns once
+                // per revision and never half-adopts)
+                let _ = adopt_cluster_pipeline(
+                  data_dir,
+                  addr,
+                  file_metadata_store(data_dir),
+                  p.revision,
+                  adoption,
+                  link,
+                )
+              }
+              Some(p)
+            } else {
+              None
+            }
+          }
+          Err(e) =>
+            if beat_healthy {
+              warn(
+                "runner: beat to \{addr} failed (\{e}); keeping the running tasks\n",
+              )
+              beat_healthy = false
+            }
+        }
+      }
       let current = load_task_set(data_dir)
+      let desired = desired_names(current, placement, worker, want)
       for i in 0..<children.length() {
         let c = children[i]
-        if c.pid > 0 &&
-          !c.stopping &&
-          !still_desired(current, c.name, worker, want) {
+        if c.pid > 0 && !c.stopping && !contains_string(desired, c.name) {
           warn("runner: \{c.name} is no longer desired; stopping\n")
           let _ = cli_kill(c.pid, 15)
           children[i] = Child::{
@@ -227,7 +355,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
         }
       }
       for task in current.tasks {
-        if task_desired(task, worker, want) &&
+        if contains_string(desired, task.name) &&
           !child_running(children, task.name) {
           let policy = match flag_restart {
             Some(r) => r

@@ -121,6 +121,32 @@ fn RunTable::count(self : RunTable, state : RunState) -> Int32 {
 }
 
 ///|
+/// The names of the tasks that have a RUNNING run right now, in first-seen
+/// order and deduplicated (two runs of one task — a restart racing its
+/// predecessor's reap — must not make the scheduler count two tasks). This is
+/// the ACTUAL half of the scheduling table: desired comes from the task set,
+/// and "running" comes from here, so the table can say `assigned` when a
+/// worker owns a task nothing has reported yet.
+fn RunTable::running_tasks(self : RunTable) -> Array[String] {
+  let out : Array[String] = []
+  for entry in self.entries {
+    if entry.state is Running {
+      let mut seen = false
+      for name in out {
+        if name == entry.record.task {
+          seen = true
+          break
+        }
+      }
+      if !seen {
+        out.push(entry.record.task)
+      }
+    }
+  }
+  out
+}
+
+///|
 /// The rows, in id order — a listing that reorders itself between calls is a
 /// listing nobody can diff. The `state` field is filled from the TABLE's view
 /// (including the derived `offline`), because a runner does not get to declare

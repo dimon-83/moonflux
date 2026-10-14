@@ -16,3 +16,6 @@ uncovered.log
 # source, and a deployment that got committed would be a deployment nobody
 # could reproduce.
 _deploy/
+
+# agent scratch/memory directories are not part of the repository
+.workbuddy/

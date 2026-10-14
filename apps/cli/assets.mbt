@@ -266,6 +266,58 @@ fn ClusterAsset::delete_task(
 }
 
 ///|
+/// Flips one task's `enabled` bit in the CLUSTER's set (`task start/stop
+/// --remote`, P37-5b). The spec itself does not change, so there is nothing
+/// to recompile — this is the same flip the local `task stop` performs on a
+/// data dir, one level up, and it bumps the revision for the same reason
+/// every other write here does: a worker that has adopted revision N must
+/// learn that the desired state moved. An unknown name is refused by name
+/// (delete_task's rule: a flip that silently does nothing hides typos and,
+/// worse, hides "you are talking to the wrong cluster").
+fn ClusterAsset::set_task_enabled(
+  self : ClusterAsset,
+  name : String,
+  enabled : Bool,
+) -> Result[(Int64, Array[String]), String] {
+  let tasks = match cluster_tasks_of(self.document, "the stored task set") {
+    Ok(tasks) => tasks
+    Err(e) => return Err(e)
+  }
+  let items : Array[Json] = []
+  let names : Array[String] = []
+  let mut found = false
+  for task in tasks {
+    if task.name == name {
+      found = true
+      match task_json_with_enabled(task, enabled) {
+        Ok(json) => {
+          items.push(json)
+          names.push(task.name)
+        }
+        Err(e) => return Err(e)
+      }
+    } else {
+      items.push(task.json)
+      names.push(task.name)
+    }
+  }
+  if !found {
+    let known = if tasks.length() == 0 {
+      "none"
+    } else {
+      task_names(TaskSet::{ tasks, revision: None, }).join(", ")
+    }
+    return Err("no task named \{name} on this cluster (tasks: \{known})")
+  }
+  self.revision = self.revision + 1L
+  self.document = cluster_document_of(items)
+  match self.save() {
+    Ok(_) => Ok((self.revision, names))
+    Err(e) => Err(e)
+  }
+}
+
+///|
 /// One published spec document, as a task.
 fn parse_published_spec(text : String) -> Result[TaskDoc, String] {
   let spec = match @spec.parse_spec(text) {

@@ -297,13 +297,44 @@ fn task_json_with_enabled(
 }
 
 ///|
-/// `task start` / `task stop`: flip a task's `enabled` bit in the LOCAL document.
-/// The runner reconciles against this document on its next poll. (The `--remote`
-/// form — flipping the CLUSTER's document — is the control plane's next step;
-/// this is the write half the runner already reads.)
+/// `task start` / `task stop`: flip a task's `enabled` bit. Two 口径, one
+/// verb: `--remote <sc>` flips the CLUSTER's document (the write half of the
+/// scheduling loop — the reconciliation stops or starts the child; P37-5b),
+/// `--data-dir` flips the LOCAL document the runner reconciles against
+/// (decision 98, unchanged). The two are mutually exclusive by name —
+/// "which truth am I writing" is not a question to guess at.
 fn task_set_enabled(argv : Array[String], enabled : Bool) -> Unit {
   let flags = parse_flags(argv)
   let name = flags.require("name")
+  match flags.get("remote") {
+    Some(addr) => {
+      if flags.get("data-dir") is Some(_) {
+        fail(
+          "--remote and --data-dir are mutually exclusive: one flips the cluster's task set, the other a data dir's",
+        )
+      }
+      let payload = @client.encode_task_enabled(name, enabled)
+      let reply = match
+        control_call_secure(
+          addr,
+          @client.CMD_TASK_ENABLED,
+          payload,
+          peer_link(flags),
+        ) {
+        Ok(reply) => reply
+        Err(e) => fail("task \{name}: \{e}")
+      }
+      match @client.decode_cluster_pipeline(reply) {
+        Ok(pipeline) =>
+          println(
+            "task \{name}: enabled=\{enabled} (cluster task set revision \{pipeline.revision})",
+          )
+        Err(e) => fail("task \{name}: unreadable reply: \{e}")
+      }
+      cli_exit(0)
+    }
+    None => ()
+  }
   let data_dir = flags.get("data-dir") |> unwrap_or(".moonflux-data")
   let set = load_task_set(data_dir)
   let out : Array[Json] = []

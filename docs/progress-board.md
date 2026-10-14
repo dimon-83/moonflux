@@ -48,6 +48,7 @@
 | # | 项 | 优先级 | 说明 / 依据 |
 | :--- | :--- | :--- | :--- |
 | 0a | **P37-1 多任务地基（本地口径）** | ✅ 2026-10-13 | 决策 81：`topology.json` v2 集合 + 按名 upsert/`--set`/`delete`/`list` + **取数按 topic 选链** + v1 内存迁移 + `moonflux_tasks` 无标签 gauge；门禁 `e2e-p37-multi-task.sh` **10 腿**。顺带修：健康检查恒真、诊断走块缓冲 stdout、`--set` 吞参数（并加 `audit-flags.py` 门禁防这一类） |
+| 0t | **控制面对账 + 远程启停** | ✅ 2026-10-14 | 决策 100（P37-5b 收口）：对账表 + 心跳下放置 + start/stop --remote；门禁 4 条 |
 | 0s | **输出预算（资源）** | ✅ 2026-10-14 | 决策 99：门禁默认摘要、全文落盘；**实测 fast 15451 行 → 126 行**；`quiet-run.sh` |
 | 0r | **task start/stop + runner 对账** | ✅ 2026-10-13 | 决策 98：enabled 进文档、task stop/start、runner 500ms 对账；门禁 3 条。**未做**：控制面侧对账循环 |
 | 0q | **调度：target + worker 过滤** | ✅ 2026-10-13 | 决策 97：每任务 target 进文档、runner --worker 只跑自己的任务；门禁 3 条。**未做**：控制面对账循环、task start/stop |

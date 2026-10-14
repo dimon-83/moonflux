@@ -1407,6 +1407,34 @@ pub const CMD_RUN_LIST = 39
 pub const CMD_CLUSTER_PIPELINE_FETCH = 33
 
 ///|
+/// A runner announcing itself as a worker (P37-5b). Distinct from
+/// `CMD_RUN_REPORT`: a run says "this task's process is alive", while this
+/// says "this worker exists and is available" — a worker with nothing
+/// assigned to it is still a worker, and the scheduler cannot place anything
+/// on a worker it has never heard from. The REPLY is this worker's placement
+/// (which task names it should run), so placement rides a channel the worker
+/// already polls — the same shape partition placement uses (决策 20/29).
+/// A NODE command in the role table: a forged beat is a claimed capacity.
+pub const CMD_WORKER_HEARTBEAT = 40
+
+///|
+/// The scheduling table (P37-5b): desired (the cluster's task set) against
+/// actual (the run table), one row per task. A data READ — watching the
+/// reconciliation is not a change to the cluster's state.
+pub const CMD_SCHEDULE_LIST = 41
+
+///|
+/// `task start/stop --remote` (P37-5b): flips one task's `enabled` bit in the
+/// CLUSTER's task set — the same write the local `task stop` does to a data
+/// dir, one level up. The scheduler picks the flip up on its next tick and
+/// the owning worker stops (or starts) the child; nobody is dialed (决策 20).
+/// Root-only by omission from both closed tables (`auth.permit` denies any
+/// command it does not list for everyone but Root) — changing what runs on
+/// every worker is an operator's action, the same class as publishing the
+/// task set itself.
+pub const CMD_TASK_ENABLED = 42
+
+///|
 /// Fetch one function set by name (P11/T54). The control plane holds
 /// the authoritative copy; a node that needs one pulls it and validates
 /// it locally, so the publish-time check runs where the asset runs.
@@ -1983,4 +2011,204 @@ pub fn decode_partition_ref_opt(
     return Ok(PartitionRef::{ topic: "", partition: 0, })
   }
   decode_partition_ref(payload)
+}
+
+// ---------------------------------------------------------------------
+// Worker scheduling (P37-5b): a runner's availability claim, and the
+// placement the control plane answers it with.
+
+///|
+/// One worker's beat: who it is and where it lives. There is no "state"
+/// field — a beat IS the claim "I am here and I am available", and silence
+/// is the only way to say otherwise (the control plane derives absence by
+/// sweeping, exactly as it does for nodes and runs).
+pub(all) struct WorkerBeat {
+  /// The worker id this runner was started with (`--worker`), which is the
+  /// name a task's `target` is matched against.
+  worker : String
+  address : String
+  data_dir : String
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_worker_beat(beat : WorkerBeat) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, beat.worker)
+  write_field(buf, beat.address)
+  write_field(buf, beat.data_dir)
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_worker_beat(payload : Bytes) -> Result[WorkerBeat, String] {
+  let reader = @codec.Reader::new(payload)
+  let worker = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if worker.length() == 0 || worker.length() > 64 {
+    return Err("worker id must be 1..64 chars")
+  }
+  let address = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  let data_dir = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  Ok(WorkerBeat::{ worker, address, data_dir, })
+}
+
+///|
+/// What a worker is told to run, in the reply to its beat.
+///
+/// `has_set` is the whole reason this is a struct and not a bare list: a
+/// control plane with no task set has nothing to reconcile, and an empty
+/// task list in that case means "I have no opinion", not "run nothing".
+/// A worker that cannot tell those apart would stop running a locally
+/// applied set the moment it was pointed at a fresh control plane.
+pub(all) struct WorkerPlacement {
+  has_set : Bool
+  revision : Int64
+  tasks : Array[String]
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_worker_placement(placement : WorkerPlacement) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_byte(if placement.has_set { b'\x01' } else { b'\x00' })
+  buf.write_leb128(placement.revision)
+  buf.write_leb128(placement.tasks.length())
+  for task in placement.tasks {
+    write_field(buf, task)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_worker_placement(
+  payload : Bytes,
+) -> Result[WorkerPlacement, String] {
+  let reader = @codec.Reader::new(payload)
+  let has_set = match reader.read_byte() {
+    Ok(b) => b == b'\x01'
+    Err(_) => return Err("truncated placement flag")
+  }
+  let revision = match reader.read_uleb128() {
+    Ok(v) => v.reinterpret_as_int64()
+    Err(_) => return Err("truncated placement revision")
+  }
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated placement task count")
+  }
+  let tasks : Array[String] = []
+  for _ in 0..<count {
+    match read_field(reader) {
+      Ok(name) => tasks.push(name)
+      Err(e) => return Err(e)
+    }
+  }
+  Ok(WorkerPlacement::{ has_set, revision, tasks, })
+}
+
+///|
+/// One row of the scheduling table: a task, where it declared it wants to
+/// run, who the control plane gave it to, and what is actually happening.
+pub(all) struct ScheduleRow {
+  task : String
+  /// Where the task declared it wants to run: a node id, or "any".
+  target : String
+  /// The worker the control plane assigned it to, or "" when nothing could
+  /// take it.
+  owner : String
+  /// `pending` (no live worker can take it), `assigned` (given to a worker,
+  /// no run reporting yet) or `running` (a run is reporting).
+  state : String
+  /// Why a row is not running. Empty when it is — a reason that has to be
+  /// filled in is a reason that gets written.
+  reason : String
+} derive(Debug, Eq, Show)
+
+///|
+pub fn encode_schedule_rows(rows : Array[ScheduleRow]) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  buf.write_leb128(rows.length())
+  for row in rows {
+    write_field(buf, row.task)
+    write_field(buf, row.target)
+    write_field(buf, row.owner)
+    write_field(buf, row.state)
+    write_field(buf, row.reason)
+  }
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_schedule_rows(
+  payload : Bytes,
+) -> Result[Array[ScheduleRow], String] {
+  let reader = @codec.Reader::new(payload)
+  let count = match reader.read_uleb128_len() {
+    Ok(count) => count
+    Err(_) => return Err("truncated schedule row count")
+  }
+  let out : Array[ScheduleRow] = []
+  for _ in 0..<count {
+    let task = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let target = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let owner = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let state = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    let reason = match read_field(reader) {
+      Ok(v) => v
+      Err(e) => return Err(e)
+    }
+    out.push(ScheduleRow::{ task, target, owner, state, reason, })
+  }
+  Ok(out)
+}
+
+///|
+/// `task start/stop --remote`: which task, and what it should become. One
+/// field plus one byte — a flip is not a document, and shipping the whole
+/// set back would let a stale client overwrite its neighbours' tasks.
+pub fn encode_task_enabled(name : String, enabled : Bool) -> Bytes {
+  let buf = @buffer.Buffer::Buffer()
+  write_field(buf, name)
+  buf.write_byte(if enabled { b'\x01' } else { b'\x00' })
+  buf.to_bytes()
+}
+
+///|
+pub fn decode_task_enabled(payload : Bytes) -> Result[(String, Bool), String] {
+  let reader = @codec.Reader::new(payload)
+  let name = match read_field(reader) {
+    Ok(v) => v
+    Err(e) => return Err(e)
+  }
+  if name.length() == 0 {
+    return Err("task name must not be empty")
+  }
+  let byte = match reader.read_byte() {
+    Ok(b) => b
+    Err(_) => return Err("truncated enabled flag")
+  }
+  match byte {
+    0 => Ok((name, false))
+    1 => Ok((name, true))
+    _ => Err("enabled flag must be 0 or 1")
+  }
 }

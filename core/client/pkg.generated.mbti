@@ -72,11 +72,15 @@ pub const CMD_RUN_LIST : Int = 39
 
 pub const CMD_RUN_REPORT : Int = 38
 
+pub const CMD_SCHEDULE_LIST : Int = 41
+
 pub const CMD_SEGMENTS : Int = 26
 
 pub const CMD_SYNC_ACK : Int = 12
 
 pub const CMD_SYNC_FETCH : Int = 11
+
+pub const CMD_TASK_ENABLED : Int = 42
 
 pub const CMD_TOPIC_CREATE : Int = 15
 
@@ -85,6 +89,8 @@ pub const CMD_TOPIC_DELETE : Int = 17
 pub const CMD_TOPIC_LIST : Int = 16
 
 pub const CMD_WELCOME : Int = 2
+
+pub const CMD_WORKER_HEARTBEAT : Int = 40
 
 pub const ERR_AUTH_REQUIRED : Int = 9
 
@@ -160,11 +166,15 @@ pub fn decode_run(Bytes) -> Result[RunRecord, String]
 
 pub fn decode_runs(Bytes) -> Result[Array[RunRecord], String]
 
+pub fn decode_schedule_rows(Bytes) -> Result[Array[ScheduleRow], String]
+
 pub fn decode_sync_ack(Bytes) -> Result[SyncAck, String]
 
 pub fn decode_sync_request(Bytes) -> Result[SyncRequest, String]
 
 pub fn decode_sync_response(Bytes) -> Result[SyncResponse, String]
+
+pub fn decode_task_enabled(Bytes) -> Result[(String, Bool), String]
 
 pub fn decode_wire_compactions(Bytes) -> Result[Array[WireCompaction], String]
 
@@ -173,6 +183,10 @@ pub fn decode_wire_segments(Bytes) -> Result[Array[WireSegment], String]
 pub fn decode_wire_topic(Bytes) -> Result[WireTopic, String]
 
 pub fn decode_wire_topics(Bytes) -> Result[Array[WireTopic], String]
+
+pub fn decode_worker_beat(Bytes) -> Result[WorkerBeat, String]
+
+pub fn decode_worker_placement(Bytes) -> Result[WorkerPlacement, String]
 
 pub fn encode_assignments(Array[AssignmentView]) -> Bytes
 
@@ -222,11 +236,15 @@ pub fn encode_run(RunRecord) -> Bytes
 
 pub fn encode_runs(Array[RunRecord]) -> Bytes
 
+pub fn encode_schedule_rows(Array[ScheduleRow]) -> Bytes
+
 pub fn encode_sync_ack(SyncAck) -> Bytes
 
 pub fn encode_sync_request(SyncRequest) -> Bytes
 
 pub fn encode_sync_response(SyncResponse) -> Bytes
+
+pub fn encode_task_enabled(String, Bool) -> Bytes
 
 pub fn encode_wire_compactions(Array[WireCompaction]) -> Bytes
 
@@ -235,6 +253,10 @@ pub fn encode_wire_segments(Array[WireSegment]) -> Bytes
 pub fn encode_wire_topic(WireTopic) -> Bytes
 
 pub fn encode_wire_topics(Array[WireTopic]) -> Bytes
+
+pub fn encode_worker_beat(WorkerBeat) -> Bytes
+
+pub fn encode_worker_placement(WorkerPlacement) -> Bytes
 
 pub fn handshake_with(Conn, String?) -> Result[(Int, Int), ClientError]
 
@@ -406,6 +428,14 @@ pub(all) struct RunRecord {
   state : String
 } derive(Eq, Show, @debug.Debug)
 
+pub(all) struct ScheduleRow {
+  task : String
+  target : String
+  owner : String
+  state : String
+  reason : String
+} derive(Eq, Show, @debug.Debug)
+
 pub(all) struct SyncAck {
   partition : PartitionRef
   from : String
@@ -456,6 +486,18 @@ pub(all) struct WireTopic {
   name : String
   partitions : Int
   replication_factor : Int
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct WorkerBeat {
+  worker : String
+  address : String
+  data_dir : String
+} derive(Eq, Show, @debug.Debug)
+
+pub(all) struct WorkerPlacement {
+  has_set : Bool
+  revision : Int64
+  tasks : Array[String]
 } derive(Eq, Show, @debug.Debug)
 
 // Type aliases

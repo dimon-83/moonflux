@@ -94,20 +94,29 @@
 
 | 期 | 内容 | 门禁（可证伪） |
 | :--- | :--- | :--- |
-| **P37-5a** | 生命周期命令面 + runner 角色：`task start/stop/status/logs`；节点起/停子进程、SIGTERM 优雅停、退出上报 | 起→登记→有输出；停→列表变 `stopped` 且**扛过回收窗口**；`kill -9`→`offline`；logs 能看到 run-log + stderr；权限（ReadOnly 不能 start/stop） |
-| **P37-5b** | 调度与对账：`target: node|any` + restart 策略；控制面 desired/actual 对账、故障节点重分配 | 把任务许给指定节点并在该节点起；停掉节点→其任务被判 offline→按策略重启/重分配到活节点；pending 状态可见；文档变更触发停旧起新 |
+| **P37-5a** ✅ 已实现（决策 95/96/98） | 生命周期命令面 + runner：`task status/logs/start/stop`；runner 起/停子进程、SIGTERM 优雅停、按 restart 策略重启、回收子进程 | 起→登记；停→`stopped`（不是 offline）；`kill -9`→按策略重启或 `offline`；`task start/stop` 真的起停；**门禁 p48/p51** |
+| **P37-5b** ✅ 已实现（决策 97/98/100） | 调度与对账：`target: node\|any` + restart 进文档；控制面 desired(集群文档) vs actual(运行注册表) 对成表；放置随**心跳应答**下发；故障 worker 重分配 | **门禁 p50/p52**：表含 `disabled`/`pending`(说明原因)/`assigned`/`running`；停 worker→浮动任务重分配、**pin 不动**；`task stop/start --remote` 翻转并生效 |
 | **P37-5c** | 控制台操作面板：节点视图 + 生命周期按钮 + 日志侧栏 + 指标 | 页面按钮真的发出命令（对端断言 ✓）；页面状态 == `run list`/`task list` 同源；不做像素门禁 |
 | 之后 | 任务副本 / 滚动升级 / 亲和 / 自动扩缩容 | 各自立项 |
 
 每期都遵守：**门禁纳入 `gates.sh`、文档同步（README 决策 / feature-matrix / roadmap / board /
 本稿 / ticket）、CI 四条腿全绿、边界如实写下**。
 
+## 5.1 实现回填（2026-10-14）：与原设计的偏离，如实记下
+
+1. **runner 是独立命令 `moonflux runner`，不是"节点的一个角色"** ✗（§4 第 1 条原本主张并入 spu/serve ✓）。理由：独立命令更小、更可测，先证"监督语义" ✓（决策 95 ✓）；**代价**：任务子进程的 run-log 落在**本地数据目录** ✗，所以 `task logs` 要配 `--data-dir`（决策 96 的边界 ✓）；"runner 并入节点、run-log 进集群数据面"仍是后续 ✓。
+2. **决定权在控制面、执行权在 worker** ✓：控制面的对账循环算出 `owner` 并**随心跳应答**回给 worker ✓（不主动拨号 ✓）；worker（runner）采纳**放置 + 修订**，且只在**修订前进**时拉整份文档 ✓（P11 契约 ✓）。
+3. **pin 的目标死了不重分配** ✓——刻意的：pin 是声明不是偏好；控制面替操作员改主意，与"恰好放对"在观感上无法区分 ✓。
+4. **首期不做**（如实 ✓）：任务副本、自动扩缩容、滚动升级、亲和/反亲和 ✓。
+
 ## 6. 一句给操作员的画面（做完全貌后）
 
 ```bash
-moonflux task start --remote sc --name inlet-cod-stuck      # 或"文档一 apply，调度器自己起"
-moonflux task status --remote sc                            # 哪些 running / stopped / offline / pending
-moonflux task logs  --remote sc --name inlet-cod-stuck      # run-log + stderr，一处看全
+moonflux task schedule --remote sc                          # desired vs actual：disabled/pending/assigned/running
+moonflux task start --remote sc --name inlet-cod-stuck      # 翻集群 desired；worker 下一拍采纳
+moonflux task stop  --remote sc --name inlet-cod-stuck      # 优雅停（run-stop → stopped）
+moonflux task status --remote sc                            # run list 投影（哪些 running/stopped/offline）
+moonflux task logs  --data-dir D --name inlet-cod-stuck     # run-log（本地数据目录；见 §5.1 的偏离）
 # 控制台：任务清单上点"启动/停止"，运行表实时变，异常离线高亮，日志侧栏可读
 ```
 

@@ -227,6 +227,7 @@ step "e2e-p48-runner.sh" scripts/e2e-p48-runner.sh
 step "e2e-p49-docker-cluster.sh" scripts/e2e-p49-docker-cluster.sh
 step "e2e-p50-scheduling.sh" scripts/e2e-p50-scheduling.sh
 step "e2e-p51-lifecycle.sh" scripts/e2e-p51-lifecycle.sh
+step "e2e-p52-control-reconcile.sh" scripts/e2e-p52-control-reconcile.sh
   step "audit-sdf-coverage.sh --selftest" scripts/audit-sdf-coverage.sh --selftest
 fi
 step "crosscheck-operators.sh" scripts/crosscheck-operators.sh

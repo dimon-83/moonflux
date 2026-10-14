@@ -624,6 +624,12 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     Err(e) => fail(e)
   }
   let placement = PlacementState::new(data_dir)
+  // scheduling (P37-5b): the workers that beat, and the reconciliation table
+  // built from desired (the cluster's task set) vs actual (the run table).
+  // The worker sweep rides the SAME liveness clock as nodes and runs, so
+  // "silent" means one thing across the whole control plane.
+  let workers = WorkerRegistry::new(NODE_TIMEOUT_MS.to_int64())
+  let scheduler = Scheduler::new()
   // The control plane is served by the same hub as the data plane (P13).
   // It used to accept one connection at a time and serve it to
   // completion, which made a single slow peer everyone's problem — and
@@ -660,7 +666,8 @@ fn cmd_sc(argv : Array[String]) -> Unit {
       }
       metrics.inc(command_counter(frame.cmd))
       let reply = dispatch_control_frame(
-        frame, data_dir, table, placement, store, groups, asset, runs, identity,
+        frame, data_dir, table, placement, store, groups, asset, runs, workers, scheduler,
+        identity,
       )
       // the control plane puts the CODE in the reply's cmd field (P12's
       // shape), so anything that is not CMD_OK is an error code here
@@ -770,7 +777,23 @@ fn cmd_sc(argv : Array[String]) -> Unit {
     for run in reaped {
       note("run \{run} is offline (no report within \{NODE_TIMEOUT_MS}ms)")
     }
+    let gone_workers = workers.sweep(now_ms())
+    for worker in gone_workers {
+      // the event that makes a lost owner's tasks REASSIGNABLE: the next
+      // reconciliation cannot place work on a worker that is no longer here
+      note("worker \{worker} is offline (no beat within \{NODE_TIMEOUT_MS}ms)")
+    }
     placement.tick(table)
+    // the reconciliation itself: desired (the cluster's task set) against
+    // actual (the run table), recomputed every round. Placement replies do
+    // not wait for this tick — the dispatch path re-ticks before answering a
+    // beat — so a worker's question is answered with the freshest table.
+    scheduler.tick(
+      asset.document,
+      asset.revision,
+      workers,
+      runs.running_tasks(),
+    )
   }
 }
 
@@ -1030,6 +1053,8 @@ fn dispatch_control_frame(
   groups : GroupRegistry,
   asset : ClusterAsset,
   runs : RunTable,
+  workers : WorkerRegistry,
+  scheduler : Scheduler,
   identity : @auth.Identity?,
 ) -> (Int32, Bytes) {
   // one permission check for every control command (P12), before the
@@ -1250,6 +1275,70 @@ fn dispatch_control_frame(
         }
       }
     @client.CMD_RUN_LIST => Ok(@client.encode_runs(runs.rows()))
+    // a worker's beat (P37-5b): capacity, not liveness of any one run. The
+    // table is re-ticked BEFORE the reply so the answer is the freshest
+    // reconciliation, not the last round's — a worker that just asked should
+    // not have to wait a tick to learn what changed.
+    @client.CMD_WORKER_HEARTBEAT =>
+      match @client.decode_worker_beat(frame.payload) {
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        Ok(beat) => {
+          let first = workers.observe(beat.worker, now_ms())
+          if first {
+            note(
+              "worker \{beat.worker} announced (address \{beat.address}, data dir \{beat.data_dir})",
+            )
+          }
+          scheduler.tick(
+            asset.document,
+            asset.revision,
+            workers,
+            runs.running_tasks(),
+          )
+          Ok(
+            @client.encode_worker_placement(
+              scheduler.placement_for(beat.worker),
+            ),
+          )
+        }
+      }
+    @client.CMD_SCHEDULE_LIST =>
+      Ok(@client.encode_schedule_rows(scheduler.rows))
+    // task start/stop --remote (P37-5b): the write half, one level up. The
+    // flip lands in the cluster's document, the revision moves, and the
+    // reconciliation does the rest — no worker is dialed (决策 20).
+    @client.CMD_TASK_ENABLED =>
+      match @client.decode_task_enabled(frame.payload) {
+        Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+        Ok((name, enabled)) =>
+          match asset.set_task_enabled(name, enabled) {
+            Ok((revision, names)) => {
+              note(
+                "task \{name}: enabled=\{enabled}; cluster task set now revision \{revision} (\{names.length()} task(s))",
+              )
+              audit_topic(
+                data_dir,
+                match identity {
+                  Some(identity) => Some(identity.name)
+                  None => None
+                },
+                name,
+                if enabled {
+                  "task start"
+                } else {
+                  "task stop"
+                },
+              )
+              Ok(
+                @client.encode_cluster_pipeline(@client.ClusterPipeline::{
+                  revision,
+                  document: "",
+                }),
+              )
+            }
+            Err(e) => Err((@client.ERR_BAD_PAYLOAD, e))
+          }
+      }
     @client.CMD_CLUSTER_PIPELINE_FETCH =>
       // the empty payload asks "which revision?"; anything else asks
       // for the document. The revision rides every heartbeat; the

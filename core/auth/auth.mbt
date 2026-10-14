@@ -108,7 +108,10 @@ fn is_data_read(cmd : Int32) -> Bool {
   cmd == @client.CMD_SEGMENTS ||
   cmd == @client.CMD_LEADER ||
   // the run table is observability, not control: watching what runs is a read
-  cmd == @client.CMD_RUN_LIST
+  cmd == @client.CMD_RUN_LIST ||
+  // the scheduling table is the same kind of read: desired against actual,
+  // which an operator watching a cluster is entitled to see (P37-5b)
+  cmd == @client.CMD_SCHEDULE_LIST
 }
 
 ///|
@@ -128,12 +131,23 @@ fn is_group_member_command(cmd : Int32) -> Bool {
 /// the high watermark every committed read is built on, and a fake
 /// `REGISTER` puts a phantom replica in a set whose minimum defines that
 /// watermark.
+///
+/// Explicitly NOT here, and Root-only by omission: `CMD_TASK_ENABLED`
+/// (`task start/stop --remote`, P37-5b) changes what runs on every
+/// worker — an operator action, the same class as publishing the task
+/// set. The closed table's direction makes the omission the
+/// classification: unlisted commands fail closed for every non-Root
+/// role, which is the loud kind of mistake, not the silent kind.
 pub fn is_node_command(cmd : Int32) -> Bool {
   cmd == @client.CMD_REGISTER ||
   // a run report is a liveness claim about a process, exactly like a node
   // heartbeat: a read-only client must not be able to write the platform's
   // answer to "what is running" (P37-2)
   cmd == @client.CMD_RUN_REPORT ||
+  // a worker beat claims capacity ("I am here, place work on me"), which is
+  // the scheduling input a run report cannot carry: a worker with nothing
+  // assigned to it has no run to report, and must still be visible
+  cmd == @client.CMD_WORKER_HEARTBEAT ||
   cmd == @client.CMD_HEARTBEAT ||
   cmd == @client.CMD_SYNC_FETCH ||
   cmd == @client.CMD_SYNC_ACK ||
