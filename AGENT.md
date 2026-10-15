@@ -40,9 +40,14 @@ What that means concretely, with the failure each item has already caused here:
    clients are released on every path; a failure to release is reported, never
    swallowed. A redirect into a missing directory fails silently, which is worse
    than failing.
-7. **Run heavy work detached.** One long foreground command is what exposes the
-   caller to every pipe the work spawns. Heavy work is launched detached, and its
-   log is polled in short commands.
+7. **Run heavy work detached — and never in the same command that waits for it.**
+   One long foreground command is what exposes the caller to every pipe the work
+   spawns. Heavy work is launched detached and its log is polled in SHORT
+   commands. Measured twice, in two shapes: a launch that then sleeps in the same
+   command is reaped with its process group when the call ends, and a detached
+   launch can still be interrupted *inside its own cleanup*, leaving a child
+   alive. So: poll in a separate short command, verify the release afterwards,
+   and clean up explicitly when verification fails.
 8. **Prefer bounded to patient.** A timeout is a budget: a step that hangs must
    be reaped whole (its own process group), recorded as failed, and explained.
 
