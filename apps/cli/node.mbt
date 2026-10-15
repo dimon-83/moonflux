@@ -793,6 +793,12 @@ fn cmd_sc(argv : Array[String]) -> Unit {
       asset.revision,
       workers,
       runs.running_tasks(),
+      runs.crash_loops(
+        now_ms(),
+        CRASH_LOOP_WINDOW_MS,
+        CRASH_LOOP_MAX_LIFESPAN_MS,
+        CRASH_LOOP_MIN_RUNS,
+      ),
     )
   }
 }
@@ -1309,6 +1315,12 @@ fn dispatch_control_frame(
             asset.revision,
             workers,
             runs.running_tasks(),
+            runs.crash_loops(
+              now_ms(),
+              CRASH_LOOP_WINDOW_MS,
+              CRASH_LOOP_MAX_LIFESPAN_MS,
+              CRASH_LOOP_MIN_RUNS,
+            ),
           )
           Ok(
             @client.encode_worker_placement(

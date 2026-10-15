@@ -31,7 +31,19 @@ fn sched_tick(
   workers : WorkerRegistry,
   running : Array[String],
 ) -> Unit {
-  scheduler.tick(doc, 7L, workers, running)
+  scheduler.tick(doc, 7L, workers, running, [])
+}
+
+///|
+/// The same tick, with the crash-loop half of the actual state supplied.
+fn sched_tick_loops(
+  scheduler : Scheduler,
+  doc : String,
+  workers : WorkerRegistry,
+  running : Array[String],
+  crash_loops : Array[(String, Int64)],
+) -> Unit {
+  scheduler.tick(doc, 7L, workers, running, crash_loops)
 }
 
 ///|
@@ -172,4 +184,51 @@ test "no document means no opinion, not an empty placement" {
   // the revision rides along: this is the number the runner keys adoption on
   assert_eq(placement.revision, 7L)
   assert_eq(placement.tasks.length(), 0)
+}
+
+///|
+/// "UP SOMETIMES, dying constantly" must not hide behind `running`. A task in a
+/// restart storm reports occasionally, and reporting occasionally is exactly the
+/// state that would otherwise look healthy (P0-3). The mark OVERRIDES running
+/// and carries the count, because "it is crash-looping" without "how often" is a
+/// sentence an operator cannot act on.
+test "a crash-looping task overrides running and says how often" {
+  let scheduler = Scheduler::new()
+  let workers = WorkerRegistry::new(3000L)
+  let _ = workers.observe("worker-a", 0L)
+  let doc = sched_doc([("relay-a", "worker-a", true)])
+  sched_tick_loops(scheduler, doc, workers, ["relay-a"], [("relay-a", 5L)])
+  let row = sched_row(scheduler.rows, "relay-a")
+  assert_eq(row.state, "crash-loop")
+  assert_true(row.reason.contains("5 run(s)"))
+  assert_true(row.reason.contains("cannot stay up"))
+  // and a healthy sibling is untouched: the mark is per task, not per cluster
+  sched_tick_loops(
+    scheduler,
+    sched_doc([("relay-a", "worker-a", true), ("relay-b", "worker-a", true)]),
+    workers,
+    ["relay-a", "relay-b"],
+    [("relay-a", 5L)],
+  )
+  assert_eq(sched_row(scheduler.rows, "relay-b").state, "running")
+}
+
+///|
+/// An operator who STOPPED the task has already said what they want: a stopped
+/// task is `disabled`, not `crash-loop`. Precedence is part of the contract, so
+/// it is pinned rather than assumed.
+test "disabled wins over a crash loop" {
+  let scheduler = Scheduler::new()
+  let workers = WorkerRegistry::new(3000L)
+  let _ = workers.observe("worker-a", 0L)
+  sched_tick_loops(
+    scheduler,
+    sched_doc([("relay-a", "worker-a", false)]),
+    workers,
+    [],
+    [("relay-a", 9L)],
+  )
+  let row = sched_row(scheduler.rows, "relay-a")
+  assert_eq(row.state, "disabled")
+  assert_true(row.reason.contains("enabled=false"))
 }

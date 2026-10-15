@@ -147,6 +147,7 @@ fn Scheduler::tick(
   revision : Int64,
   workers : WorkerRegistry,
   running : Array[String],
+  crash_loops : Array[(String, Int64)],
 ) -> Unit {
   self.has_set = document.length() > 0
   self.revision = revision
@@ -172,13 +173,13 @@ fn Scheduler::tick(
   for task in tasks {
     match task.target {
       None | Some("any") => ()
-      Some(_) => rows.push(place(task, live, load, running))
+      Some(_) => rows.push(place(task, live, load, running, crash_loops))
     }
   }
   for task in tasks {
     match task.target {
       Some(t) if t != "any" => ()
-      _ => rows.push(place(task, live, load, running))
+      _ => rows.push(place(task, live, load, running, crash_loops))
     }
   }
   self.rows = rows
@@ -195,6 +196,7 @@ fn place(
   live : Array[String],
   load : Map[String, Int32],
   running : Array[String],
+  crash_loops : Array[(String, Int64)],
 ) -> @client.ScheduleRow {
   let target = match task.target {
     Some(t) => t
@@ -242,19 +244,40 @@ fn place(
         Some(n) => n + 1
         None => 1
       }
-      let state = if contains_string(running, task.name) {
+      // A task in a restart storm is UP SOMETIMES and dying constantly, so
+      // "crash-loop" OVERRIDES running: reporting occasionally is exactly the
+      // state this must not be allowed to hide in (P0-3). `disabled` still wins
+      // - an operator who stopped the task has already said what they want.
+      let looping = {
+        let mut found = -1L
+        for pair in crash_loops {
+          let (name, count) = pair
+          if name == task.name {
+            found = count
+          }
+        }
+        found
+      }
+      let state = if looping >= 0L {
+        "crash-loop"
+      } else if contains_string(running, task.name) {
         "running"
       } else {
         // desired says it should run, a worker owns it, nothing is reporting
         // yet: that gap is the point of the table, and it is not silence
         "assigned"
       }
+      let reason = if looping >= 0L {
+        "\{looping} run(s) ended silently within \{CRASH_LOOP_WINDOW_MS / 1000L}s (each under \{CRASH_LOOP_MAX_LIFESPAN_MS / 1000L}s): the task cannot stay up"
+      } else {
+        ""
+      }
       @client.ScheduleRow::{
         task: task.name,
         target,
         owner: id,
         state,
-        reason: "",
+        reason,
       }
     }
   }

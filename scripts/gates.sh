@@ -284,6 +284,8 @@ if [ "$MODE" != "fast" ]; then
   # the deployment plane (P0-2): one runner over a whole task set, and the
   # restart that must not repeat a side effect
   step "e2e-p54-deployment-plane.sh" scripts/e2e-p54-deployment-plane.sh
+  # a task that cannot stay up must be a FACT in the table, not a log line
+  step "e2e-p55-crash-loop.sh" scripts/e2e-p55-crash-loop.sh
   step "e2e-p41-deploy.sh" scripts/e2e-p41-deploy.sh
   step "e2e-p42-docker.sh" scripts/e2e-p42-docker.sh
   step "e2e-p43-stuck.sh" scripts/e2e-p43-stuck.sh

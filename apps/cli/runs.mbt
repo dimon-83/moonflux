@@ -33,6 +33,10 @@ pub(all) enum RunState {
 /// One run's row.
 struct RunEntry {
   record : @client.RunRecord
+  /// When this run FIRST reported. With `last_seen_ms` it gives the run's
+  /// lifespan, which is what tells "died after hours" apart from "died again,
+  /// immediately" — the difference between a crash and a restart storm.
+  first_seen_ms : Int64
   last_seen_ms : Int64
   mut state : RunState
 }
@@ -117,6 +121,66 @@ fn RunTable::evict_over_cap(self : RunTable) -> Unit {
 }
 
 ///|
+/// A task that cannot stay up: how long a run may live and still count as a
+/// failed attempt, how many such attempts make it a LOOP, and over what window.
+/// Constants rather than flags: three numbers an operator would tune are three
+/// numbers a gate would have to pin twice.
+const CRASH_LOOP_MAX_LIFESPAN_MS : Int64 = 10000L
+
+///|
+const CRASH_LOOP_MIN_RUNS : Int64 = 3L
+
+///|
+const CRASH_LOOP_WINDOW_MS : Int64 = 60000L
+
+///|
+/// Tasks whose runs keep ending in SILENCE, quickly, and recently: a restart
+/// storm. The runner already logs every restart, but "line by line in a log" is
+/// not a thing an operator sees — a task that is up-but-not-staying-up must be a
+/// fact in the table, the way `pending` is (P0-3, decision 113).
+///
+/// The judgment is deliberately about what the CONTROL PLANE can see by itself:
+/// a run that ended `Offline` (silent — killed or crashed, not a graceful stop),
+/// lived less than `max_lifespan_ms`, and did so within `window_ms`. Nothing here
+/// guesses at exit codes the control plane never receives.
+fn RunTable::crash_loops(
+  self : RunTable,
+  now : Int64,
+  window_ms : Int64,
+  max_lifespan_ms : Int64,
+  min_runs : Int64,
+) -> Array[(String, Int64)] {
+  let names : Array[String] = []
+  let counts : Array[Int64] = []
+  for entry in self.entries {
+    if entry.state is Offline {
+      let lifespan = entry.last_seen_ms - entry.first_seen_ms
+      if lifespan <= max_lifespan_ms && now - entry.last_seen_ms <= window_ms {
+        let mut at = -1
+        for i = 0; i < names.length(); i = i + 1 {
+          if names[i] == entry.record.task {
+            at = i
+          }
+        }
+        if at >= 0 {
+          counts[at] = counts[at] + 1L
+        } else {
+          names.push(entry.record.task)
+          counts.push(1L)
+        }
+      }
+    }
+  }
+  let out : Array[(String, Int64)] = []
+  for i = 0; i < names.length(); i = i + 1 {
+    if counts[i] >= min_runs {
+      out.push((names[i], counts[i]))
+    }
+  }
+  out
+}
+
+///|
 /// Reports a run: the first report registers, every later one is a heartbeat,
 /// and a report with `stopped` is the runner's last word. Returns true when
 /// this is a run the table had not seen (a registration, for the log line).
@@ -129,6 +193,7 @@ fn RunTable::observe(
     if self.entries[i].record.id == record.id {
       self.entries[i] = RunEntry::{
         record,
+        first_seen_ms: self.entries[i].first_seen_ms,
         last_seen_ms: now,
         state: if record.stopped {
           Stopped
@@ -141,6 +206,7 @@ fn RunTable::observe(
   }
   self.entries.push(RunEntry::{
     record,
+    first_seen_ms: now,
     last_seen_ms: now,
     state: if record.stopped {
       Stopped

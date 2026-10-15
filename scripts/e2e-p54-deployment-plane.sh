@@ -42,6 +42,13 @@ cleanup() {
   pkill -9 -f "$WORK" 2>/dev/null
   wait 2>/dev/null
   sleep 0.3
+  # VERIFY the release, and say so when it did not happen: a survivor keeps
+  # heartbeating a worker into whatever control plane listens on that port next,
+  # so the honest failure mode is a loud line here, not a mystery in the next run
+  if pgrep -f "$WORK" > /dev/null 2>&1; then
+    echo "E2E-P54-DEPLOYMENT-PLANE: WARNING: process(es) survived cleanup, still referencing $WORK:" >&2
+    pgrep -fl "$WORK" >&2
+  fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT
