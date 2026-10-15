@@ -298,6 +298,9 @@ if [ "$MODE" != "fast" ]; then
   # a task that lives entirely on cluster topics: source and sink both hosted by
   # the data plane, with the end-of-topic semantics a restart depends on
   step "e2e-p59-cluster-pipeline.sh" scripts/e2e-p59-cluster-pipeline.sh
+  # durable progress: a group member that survives a restart without losing what
+  # arrived while it was down and without replaying what it already delivered
+  step "e2e-p60-group-source.sh" scripts/e2e-p60-group-source.sh
   step "e2e-p41-deploy.sh" scripts/e2e-p41-deploy.sh
   step "e2e-p42-docker.sh" scripts/e2e-p42-docker.sh
   step "e2e-p43-stuck.sh" scripts/e2e-p43-stuck.sh

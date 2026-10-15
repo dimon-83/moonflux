@@ -58,6 +58,13 @@ pub(all) enum SourceSpec {
   /// inventing a second progress store here would be a second answer to a
   /// question that already has one.
   TopicSource(String, String)
+  /// Consume this node's topic AS A CONSUMER-GROUP MEMBER (P1-2c): the topic name
+  /// and the group. Progress is the group's committed offsets — durable, and the
+  /// only answer to "a task that must not lose what arrived while it was down"
+  /// (a topic source commits nothing; `from: end` therefore drops the downtime).
+  /// The semantics stay AT LEAST ONCE: the coordinator can hand the same
+  /// partition to another member, and a window can be delivered twice.
+  GroupSource(String, String)
 } derive(Debug, Eq, Show)
 
 ///|
@@ -956,7 +963,10 @@ fn parse_body(
       reject_unknown_keys(
         "$.spec.source",
         src,
-        ["type", "path", "url", "interval_ms", "name", "from", "headers", "ca"],
+        [
+          "type", "path", "url", "interval_ms", "name", "from", "group", "headers",
+          "ca",
+        ],
         errors,
       )
       match (src.get("type"), src.get("path"), src.get("url")) {
@@ -1039,6 +1049,35 @@ fn parse_body(
                 path: "$.spec.source.name",
                 code: "missing-field",
                 message: "topic sources require a name (the topic to read)",
+              })
+              None
+            }
+          }
+        (Some(String("group")), _, _) =>
+          match (src.get("name"), src.get("group")) {
+            (Some(String(name)), Some(String(group))) =>
+              if !valid_topic_name(name) {
+                errors.push(SpecError::{
+                  path: "$.spec.source.name",
+                  code: "bad-name",
+                  message: "must be 1..128 of [a-z0-9._-] (ASCII)",
+                })
+                None
+              } else if !valid_topic_name(group) {
+                errors.push(SpecError::{
+                  path: "$.spec.source.group",
+                  code: "bad-name",
+                  message: "must be 1..128 of [a-z0-9._-] (ASCII)",
+                })
+                None
+              } else {
+                Some(GroupSource(name, group))
+              }
+            (_, _) => {
+              errors.push(SpecError::{
+                path: "$.spec.source",
+                code: "missing-field",
+                message: "group sources require a name (the topic) and a group",
               })
               None
             }

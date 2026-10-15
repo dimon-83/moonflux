@@ -55,6 +55,7 @@ pub(all) enum SourceSpec {
   MqttSource(String)
   KafkaSource(String)
   TopicSource(String, String)
+  GroupSource(String, String)
 } derive(Eq, Show, @debug.Debug)
 
 pub(all) struct SpecError {

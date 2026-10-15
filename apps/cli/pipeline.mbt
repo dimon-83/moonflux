@@ -605,6 +605,236 @@ fn watermarks_of(
 }
 
 ///|
+/// The group-backed source (P1-2c): the durable answer.
+///
+/// A topic source commits nothing, so `from: end` drops everything that arrived
+/// while the task was down and `from: beginning` re-delivers everything. A GROUP
+/// keeps the progress: the coordinator hands this member its partitions with the
+/// committed offsets, and the member's heartbeat carries the commit back. The
+/// semantics stay AT LEAST ONCE — a rebalance can hand the same partition to
+/// another member and a window can be delivered twice — and this loop never
+/// claims otherwise.
+///
+/// Two things are reused rather than re-invented: `adopt_view` (assignment →
+/// cursors, committed offsets win) and `commit_cursors` (the fenced commit), which
+/// the operator's `group commit` and `consume --group` already use. The heartbeat
+/// is both the liveness signal and the carrier of the next assignment (P9: an idle
+/// member that stops speaking is swept and loses its partitions).
+fn group_source_loop(
+  applied : Applied,
+  sink : @connectors.Sink,
+  chain : Array[CompiledNode],
+  state : StateContext?,
+  sc : String,
+  link : PeerLink,
+  group : String,
+  start_from : String,
+  session : RunSession?,
+) -> Unit {
+  let topic = applied.spec.topic.name
+  let member = "task-\{applied.pipeline}-\{runner_pid()}"
+  let me = @client.WireGroupMember::{
+    id: member,
+    address: "task:\{runner_pid()}",
+  }
+  let join = @client.GroupJoin::{ group, member: me, topics: [topic], }
+  let view = match
+    group_request(
+      sc,
+      @client.CMD_GROUP_JOIN,
+      @client.encode_group_join(join),
+      link.token,
+    ) {
+    Ok(payload) =>
+      match @client.decode_group_view(payload) {
+        Ok(view) => view
+        Err(e) => fail("group source \{group}: join: \{e}")
+      }
+    Err(e) => fail("group source \{group}: join: \{e}")
+  }
+  warn(
+    "group source: joined \{group} as \{member} at generation \{view.epoch} (\{view.members} member(s)): \{membership_text(member, view.partitions)}\n",
+  )
+  let cursors : Array[GroupCursor] = []
+  let mut epoch = view.epoch
+  // `from` is only the FIRST start's position: a committed offset always wins,
+  // which is the whole point of a group. `end` is not a group semantic (the group
+  // either has committed progress or it starts at the beginning), so it is
+  // refused by name rather than quietly treated as one of them.
+  let base = match start_from {
+    "beginning" => 0L
+    "end" =>
+      fail(
+        "group source \{group}: `from: end` is not a group semantic — a group starts where it committed, or at the beginning if it never has",
+      )
+    _ => {
+      let text = start_from[7:start_from.length()].to_owned()
+      match (try? @string.parse_int(text)) {
+        Ok(n) => n.to_int64()
+        Err(_) => fail("group source: from=\"\{start_from}\" is not a position")
+      }
+    }
+  }
+  adopt_view(cursors, view, base)
+  let sink_retry = RetryState::new()
+  let commit_ms = 1000L
+  let mut last_beat = now_ms()
+  let mut idle = false
+  while cli_term_requested() == 0 {
+    let mut read_any = false
+    for i = 0; i < cursors.length(); i = i + 1 {
+      let cursor = cursors[i]
+      let leader = match
+        leader_address(sc, cursor.topic, cursor.partition, link) {
+        Ok(leader) => leader
+        Err(_) => continue
+      }
+      if leader.length() == 0 {
+        continue
+      }
+      let (host, port) = parse_listen_addr(leader)
+      let consumer = match
+        connect_consumer_transport(host, port, link.token, link.tls) {
+        Ok(consumer) => consumer
+        Err(e) => {
+          warn("group source: connect \{leader}: \{e}\n")
+          continue
+        }
+      }
+      let window = match
+        consumer.fetch_partition_window(
+          cursor.topic,
+          cursor.partition,
+          cursor.next,
+          topic_source_window,
+        ) {
+        Ok(window) => window
+        Err(e) => {
+          warn(
+            "group source: fetch \{cursor.topic}[\{cursor.partition}]: \{e}\n",
+          )
+          consumer.close()
+          continue
+        }
+      }
+      if window.entries.length() == 0 || window.scan_end <= cursor.next {
+        consumer.close()
+        continue
+      }
+      let pulled : Array[@protocol.Record] = []
+      for entry in window.entries {
+        pulled.push(entry.record)
+      }
+      let out_records = match apply_nodes(chain, pulled, state, None) {
+        Ok(out) => out
+        Err(e) => {
+          consumer.close()
+          fail("transform: \{e}")
+        }
+      }
+      let mut flushed = false
+      while !flushed {
+        if cli_term_requested() != 0 {
+          break
+        }
+        match (sink.flush)(out_records) {
+          Ok(_) => {
+            sink_retry.recovered("sink \{sink.name}")
+            flushed = true
+          }
+          Err(e) => sink_retry.wait("sink \{sink.name}", e)
+        }
+      }
+      consumer.close()
+      if !flushed {
+        // stopping: do NOT advance past work that was not delivered. The commit
+        // below only ever moves to what this loop has actually flushed.
+        break
+      }
+      cursor.committed = cursor.next
+      cursor.next = window.scan_end
+      read_any = true
+      match session {
+        Some(run) => run.batch(cursor.next, now_ms())
+        None => ()
+      }
+    }
+    let now = now_ms()
+    if now - last_beat >= commit_ms {
+      last_beat = now
+      let beat = @client.GroupHeartbeat::{ group, member: me, }
+      match
+        group_request(
+          sc,
+          @client.CMD_GROUP_HEARTBEAT,
+          @client.encode_group_heartbeat(beat),
+          link.token,
+        ) {
+        Ok(payload) =>
+          match @client.decode_group_view(payload) {
+            Ok(fresh) =>
+              if fresh.epoch != epoch {
+                epoch = fresh.epoch
+                adopt_view(cursors, fresh, base)
+                warn(
+                  "group source: generation moved to \{epoch} for \{group}: \{membership_text(member, fresh.partitions)}\n",
+                )
+              }
+            Err(_) => ()
+          }
+        Err(e) => warn("group source: heartbeat \{group}: \{e}\n")
+      }
+      let stale = commit_cursors(sc, group, member, epoch, cursors, link.token)
+      if stale {
+        // the fence moved between the heartbeat and the commit: re-join rather
+        // than push against it (a re-join is idempotent for a member already in)
+        match
+          group_request(
+            sc,
+            @client.CMD_GROUP_JOIN,
+            @client.encode_group_join(join),
+            link.token,
+          ) {
+          Ok(payload) =>
+            match @client.decode_group_view(payload) {
+              Ok(fresh) => {
+                epoch = fresh.epoch
+                adopt_view(cursors, fresh, base)
+              }
+              Err(_) => ()
+            }
+          Err(_) => ()
+        }
+      }
+    }
+    // Idle is not death (decision 105): the RUN's liveness is the session
+    // heartbeat, and the MEMBER's is the group heartbeat above.
+    match session {
+      Some(run) => run.idle(now_ms(), -1L)
+      None => ()
+    }
+    if !read_any {
+      if idle {
+        cli_sleep_ms(200)
+      }
+      idle = true
+    } else {
+      idle = false
+    }
+  }
+  // A stop commits what was delivered and leaves the group, so the next start
+  // resumes exactly there (a killed run does not get here — its last heartbeat's
+  // commit is the progress, which is why the commit above happens every second).
+  let _ = commit_cursors(sc, group, member, epoch, cursors, link.token)
+  leave_group(sc, group, member, link.token)
+  let reason = if cli_term_requested() != 0 { "signal" } else { "exhausted" }
+  match session {
+    Some(run) => run.stop(reason, -1L)
+    None => ()
+  }
+}
+
+///|
 /// The cluster topic source (P1-2b-ii): a task reading a topic the DATA PLANE
 /// hosts. It mirrors the local loop, with three differences that matter:
 ///
@@ -1090,11 +1320,18 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   // node's log, so there is nothing to pull from the outside world and
   // nothing to append (the parser requires the source to name this
   // pipeline's own topic, which is the topic the log below opens).
+  let group_source : String? = match applied.spec.source {
+    GroupSource(_, group) => Some(group)
+    _ => None
+  }
   let topic_source : String? = match applied.spec.source {
     TopicSource(_, from) => Some(from)
     _ => None
   }
   let source : @connectors.Source? = match applied.spec.source {
+    // A group source reads the CLUSTER at the group's committed offsets; there is
+    // no connector to pull from (same shape as a topic source).
+    GroupSource(_, _) => None
     TopicSource(_, _) => None
     FileSource(path) => Some(@connectors.file_source(path, now))
     HttpSource(url, interval_ms, headers, ca) =>
@@ -1111,7 +1348,9 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   // plane a data-node question, which answered "unknown command". For a source
   // that is not a topic, the broker itself would have to live on the cluster, and
   // that path is not implemented: say so rather than half-work.
-  if cluster_data && !(applied.spec.source is TopicSource(_, _)) {
+  if cluster_data &&
+    !(applied.spec.source is TopicSource(_, _)) &&
+    !(applied.spec.source is GroupSource(_, _)) {
     // A topic source reads the CLUSTER in its own loop below and needs no local
     // broker. Any other source DOES need one — the broker is the topic its records
     // are appended to — and in this mode that topic would have to live on the
@@ -1201,6 +1440,27 @@ fn pipeline_run(argv : Array[String]) -> Unit {
         Err(e) => fail("state \{topic}: \{e}")
       }
   }
+  match group_source {
+    Some(group) if cluster_data =>
+      match control {
+        Some(sc) =>
+          // A fresh group starts at the beginning: the spec's `from` is a TOPIC
+          // source's notion, and a group either has committed progress (which
+          // wins) or it has none. An operator who wants a different first start
+          // commits it once with `group commit`.
+          group_source_loop(
+            applied, sink, chain, state, sc, sink_link, group, "beginning", session,
+          )
+        None => fail("group source: cluster mode without a control plane")
+      }
+    Some(_) =>
+      // A group needs a coordinator. Locally there is none, so this is refused by
+      // name rather than run as something else.
+      fail(
+        "pipeline run: a group source needs a coordinator, which lives on a control plane. Pass --control and drop --data-dir to run on the cluster's data plane.",
+      )
+    None => ()
+  }
   match topic_source {
     Some(from) if cluster_data =>
       match control {
@@ -1218,7 +1478,7 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   }
   let source = match source {
     Some(source) => source
-    None => fail("a topic source has no connector to pull from")
+    None => fail("a topic or group source has no connector to pull from")
   }
   // The broker: the topic this path appends the source's records to. It lives HERE
   // rather than above the dispatch because a cluster-data topic source never
@@ -1344,6 +1604,7 @@ fn pipeline_run(argv : Array[String]) -> Unit {
 fn source_kind_text(source : @spec.SourceSpec) -> String {
   match source {
     TopicSource(_, _) => "topic"
+    GroupSource(_, _) => "group"
     FileSource(_) => "file"
     HttpSource(_, _, _, _) => "http"
     StdinSource => "stdin"

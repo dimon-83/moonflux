@@ -73,6 +73,11 @@ pub fn compile(spec : @spec.PipelineSpec) -> Topology {
         "source-runner",
         "topic source: \{name} (from \{from}) — reads this node's own log, no connector",
       )
+    GroupSource(name, group) =>
+      (
+        "source-runner",
+        "group source: \{name} as a member of \{group} — reads the cluster at the group's committed offsets",
+      )
   }
   processes.push(Process::{
     name: "source-runner",
