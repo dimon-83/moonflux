@@ -149,6 +149,28 @@ fn fixture_instance(config : String) -> @operator.OperatorInstance {
 }
 
 ///|
+test "guest text is decoded as UTF-8, not mapped byte-to-char" {
+  // Regression for a user-visible defect: the decoder used to map each byte to one
+  // char (Latin-1), so a Chinese trap message reached the operator as mojibake.
+  // Assert the text comes back EXACTLY, and that a message without a terminator is
+  // still decoded (the shim normally writes one; the error path must not depend on
+  // it being there).
+  let text = "算子在 node_name 上卡住了"
+  let utf8 = @utf8.encode(text)
+  let arr : FixedArray[Byte] = FixedArray::make(utf8.length() + 1, b'\x00')
+  for i = 0; i < utf8.length(); i = i + 1 {
+    arr[i] = utf8[i]
+  }
+  assert_eq(guest_text(arr, arr.length()), text)
+  // lossy, never a panic: broken bytes still produce something readable
+  let broken : FixedArray[Byte] = FixedArray::make(3, b'\x00')
+  broken[0] = b'\xff'
+  broken[1] = b'\xfe'
+  broken[2] = b'\x41'
+  assert_true(guest_text(broken, 3).contains("A"))
+}
+
+///|
 test "guest refusal surfaces as GuestTrap with its message" {
   let instance = fixture_instance("{\"mode\":\"refuse\"}")
   match (instance.process)([rec("hello")]) {

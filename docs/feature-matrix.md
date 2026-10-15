@@ -76,6 +76,7 @@
 | **`dedupe` primitive**（P31，决策 71） | ✅ | `apps/operator-dedupe`：每个键的第一条通过（1→0）；**期限 = 键的形状**（`keyfield → tumble → dedupe` ⇒ 每窗去重一次，无窗口 ⇒ 永久，且状态上界如实写明）；无键的链在**宿主**处按名拒绝 |
 | 窗口（hopping / 定时器触发 flush） | ⏳ | 未立项：与"算子不读时钟"的红线正面冲突，要做先定义事件时间水位的来源 | 未立项：需要"水位推进才产出"的语义，与"算子不读时钟"的红线冲突，要做就得先定义事件时间水位的来源 |
 | **SDF 例子的 native 部署**（决策 86） | ✅ | [`deploy-sdf.sh`](../scripts/deploy-sdf.sh)（start/status/verify/logs/list/stop）+ 部署根（每用例自己的数据目录、共享运行登记 broker、日志、pids、catalog）；三种模式逐行写明（**无静默跳过**）：5 个跑并逐字节验证、3 个跑了但无单一 golden、18 个 deploy-only 带理由；**跨用例主题冲突**（sentence/cars）由"每用例一个数据目录"化解。门禁 `e2e-p41-deploy.sh` 7 腿。指南 [`docs/deployment.md`](deployment.md)。**Docker 部署见下一行** |
+| **GuestTrap 文本按 UTF-8 解码（P2-2）**（决策 126） | ✅ | 修用户可见缺陷：算子 trap 的中文消息曾被按 Latin-1 逐字节转字符 ⇒ `ç®å¨ node_name ...`；两处合成一个 `guest_text`，UTF-8 **lossy** 解码（错误路径不 panic）；wbtest **已证明可证伪**（改回旧映射即失败，失败信息就是那串乱码）|
 | **持久进度：`{"type":"group"}` 源（P1-2c）**（决策 124） | ✅ | 任务以**组成员**运行：已提交偏移优先、心跳=保活+提交+分配载体、停下提交并离开、重启以新成员从已提交偏移续读；复用 P9 的块（无第二套进度存储）；**至少一次**（SIGKILL 最多丢最后一秒）；门禁 `e2e-p60-group-source.sh` **3/3**（不丢 + 不重放 / 无协调者按名拒绝）|
 | **源进集群（P1-2b-ii）**（决策 122） | ✅ | 集群 topic 源（镜像本地循环：leader 查一次、游标按 `scan_end` 推进、等待 = sleep + 空闲心跳）；**任务可端到端只碰集群主题**；无宿主、非同构源、`resume` 都**按名拒绝**；门禁 `e2e-p59-cluster-pipeline.sh` **3/3**（完整管道 / `from: end` 不重放 / 无宿主按名拒绝）|
 | **汇进集群（P1-2b-i）**（决策 121） | ✅ | 集群数据模式（`--control` 且**不给** `--data-dir`）下 topic 汇写进**数据面宿主**的主题（复用运行日志那段 `append_to_cluster`）；集群 **topic 源**未实现 ⇒ **按名拒绝**（注册之前失败）；门禁 `e2e-p58-cluster-data.sh` **4/4**；顺带修"卡在死 sink 的 run 无法优雅停止"（重试循环现在响应停止信号；批不丢，源主题仍在） |

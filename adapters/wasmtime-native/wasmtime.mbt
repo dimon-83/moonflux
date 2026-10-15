@@ -12,16 +12,28 @@
 
 ///|
 fn read_err(err : FixedArray[Byte]) -> String {
-  // the shim NUL-terminates; scan up to the terminator
-  let sb = StringBuilder::new()
-  for i in 0..<err.length() {
-    let b = err[i]
-    if b == b'\x00' {
-      break
-    }
-    sb.write_char(b.to_int().unsafe_to_char())
+  guest_text(err, err.length())
+}
+
+///|
+/// The guest's own text, decoded. THE BYTES ARE UTF-8 — a trap message can be
+/// Chinese — so they are decoded, not mapped one byte to one char. Mapping is
+/// Latin-1: it turned every non-ASCII trap into mojibake, and that is how a
+/// Chinese refusal reached the operator as `GuestTrap(æ‰§è¡Œ...)`.
+///
+/// Lossy on purpose: an error path must not panic, so a guest emitting broken
+/// bytes still gets a readable complaint instead of a second failure inside the
+/// first one's handler. Scanning stops at the NUL the shim writes, or at
+/// `max_len`.
+fn guest_text(bytes : FixedArray[Byte], max_len : Int32) -> String {
+  let mut len = 0
+  while len < max_len && len < bytes.length() && bytes[len] != b'\x00' {
+    len = len + 1
   }
-  sb.to_string()
+  if len == 0 {
+    return ""
+  }
+  @utf8.decode_lossy(Bytes::from_array(bytes[:len]))
 }
 
 ///|
@@ -288,13 +300,5 @@ fn guest_error_text(session : Session, err : FixedArray[Byte]) -> String {
   if we_mem_read(session.handle, ptr_out[0], buf, len, err2, err2.length()) != 0 {
     return read_err(err)
   }
-  let sb = StringBuilder::new()
-  for i in 0..<len {
-    let b = buf[i]
-    if b == b'\x00' {
-      break
-    }
-    sb.write_char(b.to_int().unsafe_to_char())
-  }
-  sb.to_string()
+  guest_text(buf, len)
 }
