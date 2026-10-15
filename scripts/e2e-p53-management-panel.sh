@@ -40,6 +40,10 @@ cleanup() {
   # unrelated process, and took the gate down inside its own cleanup (the log
   # showed the cleanup entered twice, the summary never printed, and the exit
   # status was 1). A cleanup that can signal the wrong process is worse than none.
+  # `pkill -f ""` matches EVERY process: refuse to run with nothing in the
+  # variable. This cleanup can run on a CI runner shared with the runner
+  # agent itself, so an empty pattern is a machine-wide kill.
+  [ -n "$WORK" ] || return 0
   pkill -9 -f "$WORK" 2>/dev/null
   sleep 0.3
   # VERIFY the release and say so when it did not happen (iron rule 1): a

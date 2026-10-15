@@ -28,6 +28,10 @@ cleanup() {
   # One scoped operation: every process this gate starts carries its own temp path
   # in its argv. The pid list is deliberately not used (a recycled pid once took a
   # gate down inside its own cleanup — see AGENT.md rule 1).
+  # `pkill -f ""` matches EVERY process: refuse to run with nothing in the
+  # variable. This cleanup can run on a CI runner shared with the runner
+  # agent itself, so an empty pattern is a machine-wide kill.
+  [ -n "$WORK" ] || return 0
   pkill -9 -f "$WORK" 2>/dev/null
   sleep 0.3
   if pgrep -f "$WORK" > /dev/null 2>&1; then

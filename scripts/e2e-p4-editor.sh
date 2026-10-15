@@ -36,6 +36,10 @@ WORK="${MOONFLUX_P4_WORK:-/tmp/moonflux-p4-editor}"
 # scripts/audit-gate-hygiene.py): a failure path would otherwise leave them
 # running, and a survivor can hold the caller's stdout open (decision 101).
 cleanup() {
+  # `pkill -f ""` matches EVERY process: refuse to run with nothing in the
+  # variable. This cleanup can run on a CI runner shared with the runner
+  # agent itself, so an empty pattern is a machine-wide kill.
+  [ -n "$WORK" ] || return 0
   pkill -f "$WORK" 2>/dev/null || true
 }
 trap cleanup EXIT

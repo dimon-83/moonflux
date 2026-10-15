@@ -20,6 +20,10 @@ by READING the scripts:
     can hang, and a hang is the failure this file exists to prevent.
   * a `pkill`/`killall` pattern that is not scoped to a temp path can kill
     something it did not start (including the tool that invoked the suite).
+  * a `pkill -f "$VAR"` whose variable could be EMPTY: `pkill -f ""` matches every
+    process on the machine, so such a pattern needs a guard that refuses to run
+    when the variable has nothing in it. Not hypothetical tidiness - the cleanup
+    runs on a CI runner shared with the runner agent itself.
   * the SUITE's own mechanisms (`--suite`): a per-step process group and a
     watchdog in gates.sh, detached stdin, and the helper scripts that make rule 1
     real. Deleting one of these silently returns the repository to the state
@@ -59,10 +63,41 @@ BROAD_KILL = re.compile(r"\b(pkill|killall)\b[^\n]*")
 SCOPED = re.compile(r"(moonflux-|/tmp/|\$[A-Za-z_]+|e2e-)")
 
 
+PKILL_VAR = re.compile(r"pkill\b[^\n]*?-f\s+\"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def unguarded_pkill_variables(text: str) -> list[tuple[int, str]]:
+    """`pkill -f "$VAR"` with no refusal for an empty VAR.
+
+    `pkill -f ""` matches EVERY process, so a cleanup whose pattern comes from a
+    variable must say what happens when that variable is empty. The guard may be
+    `${VAR:?}`, `${VAR:-...}`, or `[ -n "$VAR" ]` anywhere in the file: these
+    cleanups are short and the guard has to run before the kill on every path.
+    """
+    found: list[tuple[int, str]] = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        for match in PKILL_VAR.finditer(line):
+            var = match.group(1)
+            guarded = re.search(
+                r"\$\{" + var + r":[?\-]|\[\s+-n\s+\"\$\{?" + var + r"\}?\"\s+\]",
+                text,
+            )
+            if not guarded:
+                found.append((number, var))
+    return found
+
+
 def audit(path: pathlib.Path) -> list[str]:
     problems: list[str] = []
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
+    for number, var in unguarded_pkill_variables(text):
+        problems.append(
+            f"{path}:{number}: `pkill -f \"${var}\"` with no empty-variable guard — "
+            f"an empty pattern matches EVERY process; refuse to run when {var} is empty"
+        )
     for number, line in enumerate(lines, 1):
         stripped = line.split("#", 1)[0]
         # 1. read without a source

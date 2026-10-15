@@ -31,6 +31,10 @@ FAIL=0
 # event. The sweep is scoped to THIS gate's temp dir on purpose: an unscoped
 # pkill can kill something it never started. Found by scripts/audit-gate-hygiene.py.
 cleanup() {
+  # `pkill -f ""` matches EVERY process: refuse to run with nothing in the
+  # variable. This cleanup can run on a CI runner shared with the runner
+  # agent itself, so an empty pattern is a machine-wide kill.
+  [ -n "$WORK" ] || return 0
   pkill -f "$WORK" 2>/dev/null || true
   rm -rf "$WORK"
 }
