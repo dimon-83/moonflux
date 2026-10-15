@@ -292,6 +292,9 @@ if [ "$MODE" != "fast" ]; then
   # the run log lives in the cluster: task logs --remote reads it from the data
   # node that hosts it, even after the task's own node is gone
   step "e2e-p57-cluster-runlog.sh" scripts/e2e-p57-cluster-runlog.sh
+  # the sink side of the cluster data path: a task publishes into the topics the
+  # data plane hosts, and the unimplemented half refuses by name
+  step "e2e-p58-cluster-data.sh" scripts/e2e-p58-cluster-data.sh
   step "e2e-p41-deploy.sh" scripts/e2e-p41-deploy.sh
   step "e2e-p42-docker.sh" scripts/e2e-p42-docker.sh
   step "e2e-p43-stuck.sh" scripts/e2e-p43-stuck.sh

@@ -836,6 +836,23 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     Some(addr) => Some(addr)
     None => flags.get("state-remote")
   }
+
+  // Cluster-data mode: a control plane AND no --data-dir flag at all. The two
+  // 口径 stay separate (decision 34): WITH --data-dir the data path belongs to
+  // this node (and --control only routes the run log and the state topic, which
+  // is what a supervised task does today); WITHOUT it the data path IS the
+  // cluster. Absence of the flag is the signal, because its default
+  // (".moonflux-data") would otherwise silently mean "somewhere on disk".
+  let cluster_data = flags.get("data-dir") is None && control is Some(_)
+  if cluster_data && applied.spec.source is TopicSource(_, _) {
+    // Half a pipeline that works is worse than none: a cluster-data run with a
+    // topic source would have nowhere to read from, and finding that out from an
+    // empty output stream is the kind of thing this repo refuses to ship. The
+    // cluster topic source is P1-2b's next slice.
+    fail(
+      "pipeline run: this run has a control plane and no --data-dir, so its data path is the cluster — but the cluster topic SOURCE is not implemented yet. Pass --data-dir to keep the input on this node (the sink can still go to the cluster), or use a source that is not a topic.",
+    )
+  }
   let revision = match load_task_set(data_dir).revision {
     Some(revision) => revision
     None => 0L
@@ -926,11 +943,36 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     Err(e) => fail(e)
   }
   // 3. the sink (constructed once: a streaming run flushes many batches)
+  // The link carries this run's credentials; a cluster sink needs it, and it is
+  // built here rather than reusing the run log's (which lives in a narrower
+  // scope).
+  let sink_link = peer_link(flags)
   let sink = match applied.spec.sink {
     StdoutSink => @connectors.stdout_sink()
     HttpSink(url, headers, ca) => @connectors.http_sink(url, headers, ca)
     MqttSink(url) => @connectors.mqtt_sink(url)
     KafkaSink(url) => @connectors.kafka_sink(url)
+    TopicSink(name) if cluster_data =>
+      match control {
+        Some(sc) =>
+          // The sink IS the cluster: the batch becomes a record in a topic the
+          // DATA PLANE hosts, so another task anywhere can read it. The leader is
+          // looked up per batch, and a topic with no host is a structured error
+          // rather than a silent drop (see append_to_cluster).
+          @connectors.Sink::{
+            name: "topic(cluster):\{name}",
+            flush: fn(records) {
+              if records.length() == 0 {
+                return Ok(())
+              }
+              match append_to_cluster(sc, name, records, sink_link) {
+                Ok(_) => Ok(())
+                Err(e) => Err(e)
+              }
+            },
+          }
+        None => fail("sink topic \{name}: cluster mode without a control plane")
+      }
     TopicSink(name) => {
       // the first half of a relay: the transformed batch lands in a topic
       // this node owns, and another pipeline can consume it
@@ -1064,6 +1106,16 @@ fn pipeline_run(argv : Array[String]) -> Unit {
           // the run does not need a restart to keep its promise.
           let mut flushed = false
           while !flushed {
+            // A STOP is a stop. Retrying a dead sink forever is deliberate (a
+            // dropped batch is a silently lost alert), but it must not make the
+            // run un-stoppable: without this check a `task stop` would have to be
+            // a SIGKILL, and the run would end `offline` instead of `stopped` —
+            // the very distinction P37-2 exists to keep. Ending here loses
+            // nothing: the batch is already in the source topic, so a restart
+            // replays it (the same argument the retry itself rests on).
+            if cli_term_requested() != 0 {
+              break
+            }
             match (sink.flush)(out_records) {
               Ok(_) => {
                 sink_retry.recovered("sink \{sink.name}")

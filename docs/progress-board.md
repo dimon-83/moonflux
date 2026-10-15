@@ -48,6 +48,7 @@
 | # | 项 | 优先级 | 说明 / 依据 |
 | :--- | :--- | :--- | :--- |
 | 0a | **P37-1 多任务地基（本地口径）** | ✅ 2026-10-13 | 决策 81：`topology.json` v2 集合 + 按名 upsert/`--set`/`delete`/`list` + **取数按 topic 选链** + v1 内存迁移 + `moonflux_tasks` 无标签 gauge；门禁 `e2e-p37-multi-task.sh` **10 腿**。顺带修：健康检查恒真、诊断走块缓冲 stdout、`--set` 吞参数（并加 `audit-flags.py` 门禁防这一类） |
+| 1p | **汇进集群（P1-2b-i）** | ✅ 2026-10-16 | 决策 121：集群数据模式 + topic 汇（复用 append_to_cluster）；源按名拒绝；p58 4/4；修重试循环不响应停止信号 |
 | 1m | **CI exit 143 嫌疑：p48 清理** | ✅ 2026-10-15 | 决策 119：p48 的 pid 清单清理换成作用域化操作（回收 pid 可杀到 runner agent）；两周 CI 同点同因两平台 ✓；**间接证据**，修复后仍需 CI 复验 |
 | 1k | **运行日志进集群（P1-2a）** | ✅ 2026-10-15 | 决策 118：runner 传 `--state-remote`、`task logs --remote` 解析 leader 再读、无宿主明说；p57 5/5（含"杀 runner 后仍可读"边界腿）| 
 | 1j | **P1-2 设计稿 + 门禁安全修复** | ✅ 2026-10-15 | 决策 116/117：`pkill -f ""` 守卫（审计抓出 7 个）；[task-cluster-data-plane.md](task-cluster-data-plane.md) 设计稿（P1-2a/2b 判据与风险）| 
