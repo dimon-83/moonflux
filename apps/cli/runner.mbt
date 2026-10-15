@@ -55,11 +55,33 @@ fn task_stderr_path(data_dir : String, name : String) -> String {
 }
 
 ///|
+/// Whether the cluster currently has a leader for a task's run log. One control
+/// call per spawn (not per tick): spawns happen when a task starts or restarts.
+fn run_log_hosted(control : String, name : String, link : PeerLink) -> Bool {
+  let ref = @client.PartitionRef::{ topic: "\{name}.run-log", partition: 0, }
+  match
+    control_call_secure(
+      control,
+      @client.CMD_LEADER,
+      @client.encode_partition_ref(ref),
+      link,
+    ) {
+    Ok(payload) =>
+      match @client.decode_partition_view(payload) {
+        Ok(view) => view.leader.length() > 0
+        Err(_) => false
+      }
+    Err(_) => false
+  }
+}
+
+///|
 fn spawn_task(
   cli : String,
   name : String,
   data_dir : String,
   control : String?,
+  link : PeerLink,
 ) -> Int32 {
   let parts : Array[String] = [
     "pipeline", "run", "--name", name, "--data-dir", data_dir,
@@ -70,15 +92,25 @@ fn spawn_task(
       let more = parts
       more.push("--control")
       more.push(c)
-      // The child's run-log (and its state topic, when the spec has one) belongs
-      // to the CLUSTER when the runner has one: that is what makes
-      // `task logs --remote` read the same events, and what keeps a task's record
-      // of itself out of a data dir nobody else can see. `pipeline run` routes
-      // those writes through `--state-remote` (see append_to_cluster), so the
-      // runner passes its control plane there as well; the data path of the spec
-      // still follows --data-dir for now (P1-2b).
-      more.push("--state-remote")
-      more.push(c)
+      // The run log goes to the CLUSTER only when the cluster can actually HOST
+      // it. `pipeline run` routes those writes through `--state-remote`, and a
+      // run log that cannot be written means no registration at all (see the
+      // long note in pipeline.mbt): a task that runs unregistered is worse than a
+      // task whose log is local, because the table then shows it as merely
+      // `assigned` while it is in fact working.
+      //
+      // So the runner asks who leads <task>.run-log and passes `--state-remote`
+      // only when somebody does. Declaring the topic stays an OPERATOR action
+      // (P3/P18: a runner does not change a cluster behind the operator's back);
+      // this only decides where a task's own record of itself is written.
+      if run_log_hosted(c, name, link) {
+        more.push("--state-remote")
+        more.push(c)
+      } else {
+        warn(
+          "runner: \{name}: the cluster does not host \{name}.run-log yet, so this run's log stays local (declare it with: topic create --name \{name}.run-log --partitions 1 --replication-factor 1 --remote \{c})\n",
+        )
+      }
       more
     }
   }
@@ -311,7 +343,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
           "task \{task.name}: restart must be never|on-failure|always (got \{policy})",
         )
       }
-      let pid = spawn_task(cli, task.name, data_dir, control)
+      let pid = spawn_task(cli, task.name, data_dir, control, link)
       if pid < 0 {
         fail("runner: could not spawn task \{task.name}")
       }
@@ -419,7 +451,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
               "runner: task \{task.name}: bad restart \{policy}; not started\n",
             )
           } else {
-            let pid = spawn_task(cli, task.name, data_dir, control)
+            let pid = spawn_task(cli, task.name, data_dir, control, link)
             if pid >= 0 {
               warn("runner: started \{task.name} (pid \{pid})\n")
               // REUSE a stopped slot for this task when there is one. Pushing a
@@ -474,7 +506,7 @@ fn cmd_runner(argv : Array[String]) -> Unit {
             done: false,
           }
         } else if should_restart(c.restart, code) {
-          let pid = spawn_task(cli, c.name, data_dir, control)
+          let pid = spawn_task(cli, c.name, data_dir, control, link)
           if pid >= 0 {
             warn("runner: \{c.name} exited (\{code}), restarted (pid \{pid})\n")
             children[i] = Child::{

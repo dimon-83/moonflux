@@ -27,8 +27,25 @@ fail() { echo "E2E-P48-RUNNER FAIL: $*" >&2; exit 1; }
 pass() { echo "E2E-P48-RUNNER PASS: $*"; PASS=$((PASS + 1)); }
 
 cleanup() {
-  for pid in $PIDS; do kill -9 "$pid" 2>/dev/null; done
-  wait 2>/dev/null
+  # ONE scoped operation, and it is complete: every process this gate starts
+  # carries its own temp path in its argv, so a pattern scoped to that path kills
+  # exactly what it started — including the runner's `pipeline run` children,
+  # which no pid list can follow.
+  #
+  # The pid list is deliberately NOT used. `kill -9` on pids collected earlier in
+  # the run hits a RECYCLED pid once the original process is gone, and the victim
+  # can be anything — measured elsewhere in this suite: a cleanup that signalled a
+  # recycled pid took its own gate down mid-cleanup. On CI the victim looks like
+  # "the runner has received a shutdown signal" (exit 143), which is exactly how
+  # both the macOS and the Linux full jobs died right after p47 — the step before
+  # this gate — twice in a row.
+  [ -n "$WORK" ] || return 0
+  pkill -9 -f "$WORK" 2>/dev/null
+  sleep 0.3
+  if pgrep -f "$WORK" > /dev/null 2>&1; then
+    echo "WARNING: process(es) survived cleanup, still referencing $WORK:" >&2
+    pgrep -fl "$WORK" >&2
+  fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT
