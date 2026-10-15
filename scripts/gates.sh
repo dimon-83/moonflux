@@ -289,6 +289,9 @@ if [ "$MODE" != "fast" ]; then
   # one template plus a fleet of points becomes a task set, with the refusals that
   # keep a typo out of the cluster
   step "e2e-p56-points.sh" scripts/e2e-p56-points.sh
+  # the run log lives in the cluster: task logs --remote reads it from the data
+  # node that hosts it, even after the task's own node is gone
+  step "e2e-p57-cluster-runlog.sh" scripts/e2e-p57-cluster-runlog.sh
   step "e2e-p41-deploy.sh" scripts/e2e-p41-deploy.sh
   step "e2e-p42-docker.sh" scripts/e2e-p42-docker.sh
   step "e2e-p43-stuck.sh" scripts/e2e-p43-stuck.sh

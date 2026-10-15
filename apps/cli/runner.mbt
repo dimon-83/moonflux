@@ -70,6 +70,15 @@ fn spawn_task(
       let more = parts
       more.push("--control")
       more.push(c)
+      // The child's run-log (and its state topic, when the spec has one) belongs
+      // to the CLUSTER when the runner has one: that is what makes
+      // `task logs --remote` read the same events, and what keeps a task's record
+      // of itself out of a data dir nobody else can see. `pipeline run` routes
+      // those writes through `--state-remote` (see append_to_cluster), so the
+      // runner passes its control plane there as well; the data path of the spec
+      // still follows --data-dir for now (P1-2b).
+      more.push("--state-remote")
+      more.push(c)
       more
     }
   }

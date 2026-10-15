@@ -47,9 +47,38 @@ fn cmd_task(argv : Array[String]) -> Unit {
       }
       let rest : Array[String] = ["--topic", run_log_topic(name), "--from", "0"]
       match flags.get("remote") {
-        Some(r) => {
+        Some(sc) => {
+          // With --remote the log is read from the CLUSTER. The control plane
+          // knows who leads <task>.run-log; the records live with that data node,
+          // because the control plane serves no data reads at all (asking it for
+          // a topic fails with "unknown command", measured). So resolve the
+          // leader first, and say plainly when nothing hosts the topic yet —
+          // "no host" must not look like "an empty log".
+          let ref = @client.PartitionRef::{
+            topic: run_log_topic(name),
+            partition: 0,
+          }
+          let payload = match
+            control_call_secure(
+              sc,
+              @client.CMD_LEADER,
+              @client.encode_partition_ref(ref),
+              peer_link(flags),
+            ) {
+            Ok(payload) => payload
+            Err(e) => fail("task logs: \{e}")
+          }
+          let view = match @client.decode_partition_view(payload) {
+            Ok(view) => view
+            Err(e) => fail("task logs: \{e}")
+          }
+          if view.leader.length() == 0 {
+            fail(
+              "task logs: \{run_log_topic(name)} has no host yet — no data node holds it. Declare it (topic create --name \{run_log_topic(name)} --partitions 1 --replication-factor 1 --remote \{sc}) and give the cluster a data node.",
+            )
+          }
           rest.push("--remote")
-          rest.push(r)
+          rest.push(view.leader)
         }
         None => ()
       }

@@ -1,7 +1,10 @@
 # 任务跑在集群数据面（P1-2 设计稿）
 
-> 状态：**设计稿**（2026-10-15）。实现分两片：**P1-2a**（运行日志进集群）与 **P1-2b**（源/汇进集群）。
-> 计划与优先级见 [dev-plan.md](dev-plan.md)；相关决策见 README 决策 104 / 116。
+> 状态：**P1-2a 已交付**（决策 118 ✓）——运行日志进集群、`task logs --remote` 成立；**P1-2b 待实现**。
+> 计划与优先级见 [dev-plan.md](dev-plan.md)；相关决策见 README 决策 104 / 116 / 117 / 118。
+
+**P1-2a 落地情况（决策 118）**：`pipeline run` 的集群追加路径**早已存在**（`RunLog.append` + `append_to_cluster`），但挂在 `--state-remote` 上、runner 从不传它 ⇒ 日志一直留在工作节点。现在 runner 会把控制面同时作为 `--state-remote` 传给孩子；`task logs --remote <sc>` **先解析 leader 再去数据节点读**（控制面不提供数据读，实测 `unknown command 21`）；没有宿主时它**明说** `has no host yet`。
+**仍然待办**：① **runner 自动声明**任务的运行日志主题（现在要操作员 `topic create` 一次）；② 数据路径（源/汇）进集群 = P1-2b。
 
 ## 1. 问题（当前的诚实边界）
 
