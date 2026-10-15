@@ -29,12 +29,38 @@ PASS=0
 fail() { echo "E2E-P53-MANAGEMENT-PANEL FAIL: $*" >&2; exit 1; }
 pass() { echo "E2E-P53-MANAGEMENT-PANEL PASS: $*"; PASS=$((PASS + 1)); }
 cleanup() {
-  for pid in $PIDS; do kill -9 "$pid" 2>/dev/null; done
-  wait 2>/dev/null
+  # ONE scoped operation, and it is complete: every process this gate starts
+  # carries this run's own temp path in its argv (`--data-dir $WORK/plant`,
+  # `python3 $WORK/hook.py`), so a pattern scoped to that path kills exactly what
+  # this gate started — including the runner's own `pipeline run` children, which
+  # no pid list can follow.
+  #
+  # The pid list is deliberately NOT used. Measured here: `kill -TERM` on pids
+  # collected with `$!` hit a RECYCLED pid on a busy machine, signalled an
+  # unrelated process, and took the gate down inside its own cleanup (the log
+  # showed the cleanup entered twice, the summary never printed, and the exit
+  # status was 1). A cleanup that can signal the wrong process is worse than none.
+  pkill -9 -f "$WORK" 2>/dev/null
   sleep 0.3
+  # VERIFY the release and say so when it did not happen (iron rule 1): a
+  # survivor keeps heartbeating a worker into the next run's control plane, which
+  # makes a correct platform look stale.
+  if pgrep -f "$WORK" > /dev/null 2>&1; then
+    echo "WARNING: process(es) survived cleanup, still referencing $WORK:" >&2
+    pgrep -fl "$WORK" >&2
+  fi
   rm -rf "$WORK"
 }
-trap cleanup EXIT
+
+# The failure path releases and keeps the verdict...
+trap 'status=$?; cleanup; exit "$status"' EXIT
+# ...and the HAPPY path releases EXPLICITLY and disarms the trap, so the verdict
+# cannot depend on what an EXIT trap does afterwards (measured: on CI's bash 5.x a
+# failing command inside the trap turned a green gate's status into 1).
+release() {
+  cleanup
+  trap - EXIT
+}
 
 [ -x "$EXE" ] || { echo "missing $EXE (build first)" >&2; exit 1; }
 command -v node > /dev/null 2>&1 || fail "node is required to run the page's kernel artifact"
@@ -248,4 +274,5 @@ grep -q "abi !== $KERNEL_ABI" web/editor/index.html ||
   fail "4: the page's expected ABI is not the kernel's ($KERNEL_ABI)"
 pass "4. 页面只吃内核解码、用的是这两个导出、渲染了 reason、ABI 与内核一致（v${KERNEL_ABI}）"
 
+release
 echo "E2E-P53-MANAGEMENT-PANEL: $PASS passed, 0 failed"

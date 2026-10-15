@@ -31,27 +31,38 @@ PASS=0
 fail() { echo "E2E-P54-DEPLOYMENT-PLANE FAIL: $*" >&2; exit 1; }
 pass() { echo "E2E-P54-DEPLOYMENT-PLANE PASS: $*"; PASS=$((PASS + 1)); }
 cleanup() {
-  for pid in $PIDS; do kill -9 "$pid" 2>/dev/null; done
-  # Also kill anything still referencing THIS run's work dir, and verify the
-  # release. Iron rule 1 says a resource must be released AND that the release
-  # must be visible: a runner that survived its work-dir removal keeps
-  # HEARTBEATING a worker into whatever control plane listens on that port next,
-  # so a leftover from one run makes the next run's placement look stale - a
-  # correct platform blamed for a leak in its own gate (measured: exactly that,
-  # one leaked `runner --control 127.0.0.1:19751` poisoned the following run).
+  # ONE scoped operation, and it is complete: every process this gate starts
+  # carries this run's own temp path in its argv (`--data-dir $WORK/plant`,
+  # `python3 $WORK/hook.py`), so a pattern scoped to that path kills exactly what
+  # this gate started — including the runner's own `pipeline run` children, which
+  # no pid list can follow.
+  #
+  # The pid list is deliberately NOT used. Measured here: `kill -TERM` on pids
+  # collected with `$!` hit a RECYCLED pid on a busy machine, signalled an
+  # unrelated process, and took the gate down inside its own cleanup (the log
+  # showed the cleanup entered twice, the summary never printed, and the exit
+  # status was 1). A cleanup that can signal the wrong process is worse than none.
   pkill -9 -f "$WORK" 2>/dev/null
-  wait 2>/dev/null
   sleep 0.3
-  # VERIFY the release, and say so when it did not happen: a survivor keeps
-  # heartbeating a worker into whatever control plane listens on that port next,
-  # so the honest failure mode is a loud line here, not a mystery in the next run
+  # VERIFY the release and say so when it did not happen (iron rule 1): a
+  # survivor keeps heartbeating a worker into the next run's control plane, which
+  # makes a correct platform look stale.
   if pgrep -f "$WORK" > /dev/null 2>&1; then
-    echo "E2E-P54-DEPLOYMENT-PLANE: WARNING: process(es) survived cleanup, still referencing $WORK:" >&2
+    echo "WARNING: process(es) survived cleanup, still referencing $WORK:" >&2
     pgrep -fl "$WORK" >&2
   fi
   rm -rf "$WORK"
 }
-trap cleanup EXIT
+
+# The failure path releases and keeps the verdict...
+trap 'status=$?; cleanup; exit "$status"' EXIT
+# ...and the HAPPY path releases EXPLICITLY and disarms the trap, so the verdict
+# cannot depend on what an EXIT trap does afterwards (measured: on CI's bash 5.x a
+# failing command inside the trap turned a green gate's status into 1).
+release() {
+  cleanup
+  trap - EXIT
+}
 
 [ -x "$EXE" ] || { echo "missing $EXE (build first)" >&2; exit 1; }
 command -v python3 > /dev/null 2>&1 || fail "python3 is required for the webhook counter"
@@ -272,6 +283,7 @@ done
   { sched; fail "5: a beginning-sourced alert task did NOT replay its history (records=$(hits), expected >= 6)"; }
 pass "5. 反证腿：同一个任务改成 beginning 后，重启把 3 条历史全部重发（records=$(hits)）——警告说的是真的"
 
+release
 echo "E2E-P54-DEPLOYMENT-PLANE: $PASS passed, 0 failed"
 # `fail` is the only failing exit; reaching the last line means every leg passed
 exit 0
