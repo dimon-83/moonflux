@@ -133,3 +133,44 @@
 - 阶段状态变化：先过**门禁**，再同步本文 §1/§2，并同步 AGENTS.md §2 的阶段表（两处口径一致）。
 - 新里程碑立项时在 `.scratch/moonflux-pN/issues/` 建 ticket 集（编号跨阶段全局连续），关账后回填本文。
 - 排期变更（尤其是"推迟/不做"）必须**留痕**：写明日期、依据与裁定者。
+
+## 里程碑门禁台账（自 AGENTS.md §2 移入）
+
+> 这份表原先长在项目章程里，占了章程 14 KB —— 而章程是**每轮 agent 都要读**的文件，
+> 它超出 agent 指令预算就会被截断（每轮少读一段）。台账属于**进度管理**，
+> 于是按决策 37「roadmap 是进度单一真相」搬到这里；章程只留一行指针与纪律本身。
+> 内容**逐字未改**，只是换了住处。
+
+| 阶段 | 里程碑 | 门禁（可证伪） | 状态 |
+| :--- | :--- | :--- | :--- |
+| P0 | **Native 最小闭环**：内核 codec + fs/net-native 适配 + 单机最小日志 + CLI + 文件源 → topic → stdout 汇贯通 | 端到端 demo 可复现；协议样本对拍通过 | ✅ 2026-09-15（`scripts/e2e-p0.sh`、`scripts/crosscheck-protocol.sh`） |
+| P0′（并行） | PipelineSpec v1alpha1 + CLI 编译/计划 | 一份 spec 可编译为可运行的进程拓扑 | ✅ 2026-09-15（`scripts/e2e-p0p.sh`） |
+| P1 | **连接器与外设**：Source/Sink 框架 + HTTP/文件/MQ + mbel 表达式 transforms + 客户端 SDK 雏形 | ≥3 个真实数据源接入跑通；改规则秒级生效 | ✅ 2026-09-15（`scripts/e2e-p1-connectors.sh`、`scripts/e2e-p1-rules.sh`；MQTT/Kafka 留后续） |
+| P2 | WASM 算子沙箱：guest SDK + ABI + 全算子 + 双后端测试矩阵 | 算子语义与参考实现对拍一致 | ✅ 2026-09-16（`scripts/crosscheck-operators.sh`：native vs wasm 字节级一致 + trap/拒绝/超预算 fail-closed；`scripts/build-operators.sh` 构建门禁） |
+| P3 | 复制 + 选主 + 元数据调和（本地多进程优先） | 故障注入通过（宕机/恢复/水位一致性） | ✅ 2026-09-16（`scripts/e2e-p3-{replication,failover,nodes,metadata}.sh`；`scripts/gates.sh` 含全部 19 步） |
+| P4 | 客户端 SDK 完备 + Web 编辑器 + 部署形态（本地优先，K8s 可选） | 端到端：拖拽一条管道 → 运行 → 消费到数据 | ✅ 2026-09-17（`scripts/e2e-p4-{readmodes,ws}.sh`；编辑器闭环 `scripts/e2e-p4-editor.sh`，浏览器阶段由 agent/人驱动） |
+| P5 | 并发与运维面：连接多路复用 + 多分区存储与数据路径 + 算子管理命令面 | 并发/多分区/算子管理三组门禁全绿 | ✅ 2026-09-17（`scripts/e2e-p5-{concurrency,partitions,operator}.sh`；**如实标注**：非 0 分区的复制仍在，矩阵 #10） |
+| P6 | 规则资产：mbel 函数集（版本化规则资产 + 命令面 + spec 引用） | 函数集全生命周期门禁：部署→引用→发布期拦截→变换→更新 re-apply 生效 | ✅ 2026-09-17（`scripts/e2e-p6-functions.sh`，10 条断言；2026-10-10 增第 11 条：本地 `--data-dir` 路径与远端共用同一 handler） |
+| P7 | 多分区复制：数据节点多分区宿主 + 逐分区水位/选主 + 协作式节点间调用 | 3 分区 RF=2 跨 3 节点：逐分区复制、分区隔离、逐分区换主、按分区截断报告 | ✅ 2026-09-17（`scripts/e2e-p7-partitions.sh`，7 条腿） |
+| P8 | 存储完备：多段日志 + 稀疏索引 + 滚动/retention（安全下界由应用给出） | 分段对读者不可见、索引回退逐字节一致、retention 只删 floor 以下整段、撕裂尾只损失自身段、复制逐段字节一致 | ✅ 2026-09-17（`scripts/e2e-p8-storage.sh`，7 条腿；矩阵 #10 收口） |
+| P9 | 消费组与托管偏移：协调者（控制面）+ 世代围栏 + range 分配 + 偏移持久化；retention 下界接最慢消费者 | 份额既覆盖又不重叠、成员死亡后接管续读、投递无缺口、过期世代提交被拒、偏移跨重启存活、消费者地板挡住 retention | ✅ 2026-09-17（`scripts/e2e-p9-groups.sh`，7 条腿；矩阵 #11 收口） |
+| P10 | 复制走持久链接 + 预算语义（fuel 强制 / 墙钟观测） | 一次拨号、后续轮次复用（结构事实而非速度宣称）；墙钟只报告不设门禁 | ✅ 2026-09-17（`e2e-p7-partitions.sh` 的 link 腿；`e2e-p5-operator.sh` 的语义腿；矩阵 #14 收口） |
+| P11 | 控制面资产下发：spec 与函数集由控制面持有、节点拉取 | 一次发布两个节点采纳并生效、修订不变不重拉、后加入节点自动取得、控制面消失仍服务、修订不回退 | ✅ 2026-09-17（`scripts/e2e-p11-assets.sh`，7 条腿） |
+| P12 | **安全面**：内核鉴权语义（身份/角色/闭合权限表）+ 握手期认证 + TLS 传输（含节点间）+ 授权门禁 | 关闭认证时行为与 P11 完全一致且启动明示；无凭据/坏 token 被拒且不入日志；只读能读不能写；**客户端身份发节点命令被拒**；错 CA/无证书/明文被拒且服务端存活；TLS+认证下复制逐字节一致 | ✅ 2026-09-17（`scripts/e2e-p12-security.sh`，7 条腿；矩阵 #17–19） |
+| P14 | **键语义与键控压实**：`produce --key/--key-separator` + `cluster compact`（偏移不变的删旧留新） | 键全链路可见；压实只删被取代的记录并保留偏移（空洞可读）；floor 之上不动；两副本各自压实后逐段字节一致；新副本跨空洞追赶 | ✅ 2026-09-18（`scripts/e2e-p14-compaction.sh`，8 条腿；矩阵 #20） |
+| P13 | **控制面改为 poll 驱动**：`sc` 接入 `ConnectionHub` + 逐帧分发器 + 步进式 TLS 握手 | 沉默对端不夺走健康节点的存活窗且不触发选举；慢客户端不阻塞他人命令；安全面不回退；真死仍判离线；并发客户端各自正确应答 | ✅ 2026-09-17（`scripts/e2e-p13-control-plane.sh`，5 条腿；执行中修掉环状死锁与 SIGPIPE，见决策 36） |
+| P15 | **载荷预算贯穿数据路径**：分批生产 + 有界窗口消费 + 复制窗口字节预算 + 传输缓冲与协议限制一致 | 20 MiB 文件端到端逐字节一致；跨分块偏移连续；超限记录/超限帧**结构化拒绝且有日志**；12 MiB 批次复制逐字节一致 | ✅ 2026-09-19（`scripts/e2e-p15-bulk.sh`，5 条腿；执行中修掉客户端分片拼接覆盖与复制等待期泵空转两处既有缺陷，见决策 39） |
+| P16 | **日志句柄复用**：进程级有界缓存（`open_partition_log` 命中即复用），变更（append/roll/truncate/skip_to/压实/保留）走同一句柄 | 13 次请求跨 6 段只开一次日志；关掉缓存则按请求次数打开；淘汰后可重开且不丢记录；retention/压实经缓存句柄后读取精确、副本逐字节一致；12 MiB 复制期间控制面零投诉 | ✅ 2026-09-19（`scripts/e2e-p16-logcache.sh`，6 条腿；见决策 40） |
+| P17 | **基准工具**：`benchmark produce/consume/latency`（本地+远端；值头 4 字节序号做负载下完整性校验；单调 µs 时钟与 nearest-rank 直方图）；执行中修掉 accept 阻塞在 poll 之前的「每请求一 tick」税 | 六条结构腿：计数与偏移区间精确、序号头校验通过、百分位单调、e2e ⊇ produce-ack、**每主题恰好一次 `opened`**（P16 回归护栏）、超限按名拒绝且服务端存活；**吞吐/延迟数字只报告不设门禁**（决策 41） | ✅ 2026-09-22（`scripts/e2e-p17-bench.sh`，6 条腿；矩阵 #22；见决策 41） |
+| P18 | **已定位小票收口**：① 真偏移——fetch 应答按**连续偏移段**分帧（空洞/扇出重复各起新帧），本地消费游标按偏移推进（不再按条数）；② serve 命令面——topic 家族（声明入 serve 元数据库、list 为**声明∪磁盘**、delete = 失效缓存后删数据）+ group 家族结构化拒绝；执行中修掉布尔 flag 吞参数的解析 bug | p14 腿 9–11（远端/committed 跨中洞显示真偏移、本地零重复）+ p0 新腿（rf>1 拒绝且说明、声明∪自动创建、删后重产从 0 且 `evicted` 有据、group 解释性拒绝）+ wbtest（分帧 6 条、flag 解析 4 条） | ✅ 2026-09-23（见决策 42） |
+| P22 | **单机消费组**：serve 自任协调者（与控制面同一注册表/命令/围栏/清扫）+ 分区枚举 = **声明∪磁盘**（取 max(index)+1，不是数目录）+ compact/retention 地板接最慢消费者 + 成员凭据走 `client_token` 口径 | 自动建题的分区全部被份额覆盖且不重叠、接管续读无缺口、过期世代提交被拒、偏移跨 serve 重启存活、组地板挡 retention、read-only join 被拒且 root 可管理 | ✅ 2026-09-25（`scripts/e2e-p22-serve-groups.sh`，7 条腿；矩阵 #11 补 serve 证据；见决策 46） |
+| P23 | **命令面尾巴**：`partition list`（客户端组合，集群/单机同一实现）+ `cluster spu list`（承载计数）+ `profile` 配置档案（resolve_remote 单点解析，档案不是凭据库）+ serve 补 `CMD_OFFSET_INFO` 臂 | partition list 与 cluster offsets 逐分区一致（两种宿主）、自动建题的列表= max(index)+1、档案往返/优先级/移除后拒绝、spu list 承载计数正确 | ✅ 2026-09-25（`scripts/e2e-p23-cli.sh`，5 条腿；见决策 47） |
+| P24 | **无重启轮转**：TLS 上下文与 auth.json 按 **mtime 监视**热重载（cert-manager 式换文件即生效；新连接用新材料、在途连接不受影响；坏文件保旧并大声警告）+ 明文+认证启动警告 | 轮转后新 CA 可用、旧 CA 被拒、旧凭据被拒、进程存活且有重载 note；SC 同机制；认证无 TLS 启动即警告 | ✅ 2026-09-25（`scripts/e2e-p24-rotation.sh`，4 条腿；矩阵安全面行；见决策 48） |
+| P25 | **批压缩**：DEFLATE 进 `core/codec`（inflate 三块型 + deflate 固定 Huffman/LZ77 + zlib/gzip 容器 + 炸弹上界；外部锚 = Python zlib）；Kafka 连接器按压缩列行动（gzip 解压解析、其余按名拒绝、`?compression=gzip` 产生端可选项） | Python 三容器输出逐字节读回、自往返、校验和对照、炸弹拒绝；我们的压缩器过 Python 解压审判、Python 压缩器过我们解压审判；默认仍为未压缩；未知 codec apply 期拒绝 | ✅ 2026-09-25（`scripts/e2e-p25-compression.sh`，4 条腿 + codec wbtest 9 条；矩阵 #24 补证据；见决策 49） |
+| P26 | **ABI v2 标量调用**（设计稿落地）：`mf_op_scalar_abi_version` + `mf_op_eval`（可选成对导出；返回指针、长度走 v1 的 `mf_op_output_len`、失败走 `last_status`/`last_error`）；guest SDK 的 `GuestScalarFn`（显式参数类型）；节点注册表 `scalar-functions.json`（apply 时绑定）；`{"type":"scalar"}` 变换按整批应用 | 沙箱标量跑通且**与 mbel `upper()` 逐字节一致**；未注册名/v1-only 模块在 apply 被拒；类型错与每批上限 fail-closed 无输出；探针补**无导入段检查**与 v2 成对导出 | ✅ 2026-09-25（`scripts/e2e-p26-scalar.sh`，6 条腿 + 真 wasmtime wbtest 9 条；见决策 50） |
+| P27 | **编辑器函数集 UI**（P26 收口时议定的六部分范围）：面板（列表/刷新/删除/载入）+ 编辑表单（部署即 CREATE）+ 表达式节点集合下拉（图 → `build_spec` 派生 `functions`）+ 修订漂移标记（部署快照 revision，LIST 前进即提示 re-apply）；资产文档与协议帧全在 `apps/editor-kernel`（ABI 2，页面断言版本） | 门禁 `e2e-p27-editor-functions.sh`（setup/bump/verify，浏览器阶段 agent/人驱动，与 p4-editor 同形不进步表）三腿：面板 CREATE 经 WS 落地、选择器引用入 spec 且 re-apply 换绑 revision 2、历史按当前规则重现（`ALPHA?`）+ 新记录（`BETA?`）；wbtest 11 条（含**长夹具**回归：JSON 应答先于 uleb 试探，短夹具当年全绿是教训） | ✅ 2026-10-05（见决策 52） |
+| P28 | **存储维护调度**：后台压实加入既有维护节拍——serve 的 housekeeping 旁按 `MOONFLUX_COMPACT_MS` 跑 `serve_compact_all`（枚举/floor 与 retention 同源），spu 在 leader tick 上按每分区节拍（HostTable 按 topic/partition 记时间戳）跑 `compact_partition`；`MOONFLUX_COMPACT_MIN_DIRTY_BYTES` 透传内核 `min_dirty_bytes` | 默认关（节拍即开关，重写不是默认）；floor 之上被超越的记录幸存、之下收敛到每键最新且偏移不变；手动 `cluster compact` 阈值 0 不变；spu 压实与 50ms tick 解耦 | ✅ 2026-10-06（`scripts/e2e-p28-maintenance.sh`，5 腿；见决策 53） |
+| P29 | **SDF 示例集的应用案例 + Studio 对标探索**：8 个可运行案例（`examples/sdf/*`）+ 两个新 guest 算子（`operator-filter` 1→0、`operator-flatmap` 1→N）+ 对照与缺口文档；Studio 三阶段提案（只读拓扑 / 活指标 / 诚实版状态） | `scripts/e2e-p29-examples.sh` 8 腿字节级对拍（含「日志即状态」：原始日志视图 vs 服务视图、键控压实保持偏移、地板之下结构化拒绝）；缺口 9 条如实留档（无服务内键控状态/窗口/SQL/arrow-row/Rust 工具链） | ✅ 2026-10-10（见决策 54） |
+| P19 | **连接器流式语义 + MQTT**：三态 pull（`Records`/`Quiet`/`Exhausted`）+ `pipeline run` 循环（一次性源语义不变）；手写 MQTT 3.1.1 客户端（零依赖、QoS 0 边界、会话复用）；spec 增 mqtt 源/汇 | `e2e-p19-mqtt.sh` 5 腿：订阅源流式交付且**不退出**、线上形状（CONNECT clean / SUBSCRIBE topic）被独立 Python broker 断言、汇发布被 broker 解码、坏 url **apply 期**拒绝 + 死 broker 结构化错误、一次性源一遍退出；wbtest 4 条（URL 解析 / varint 边界 / CONNECT 字节 / PUBLISH 解码含 QoS 1 形状） | ✅ 2026-09-23（见决策 43） |
+| P20 | **Kafka 连接器（对接生态对象）**：手写五个锁定版本的非 flexible API（ApiVersions v0 / Metadata v1 / ListOffsets v1 / Produce v3 / Fetch v4）+ RecordBatch v2 构建与解析 + CRC-32C 进 `core/codec`；spec 增 `kafka://` 源/汇 | `e2e-p20-kafka.sh` 5 腿：往返（file→kafka→moonflux）且源保持流式、线上形状（探针/元数据/**CRC 有效的批**/acks=1）被独立 Python broker 断言、`from=latest` 静默与缺失分区拒绝、坏 url/死 broker/旧版本 broker 三种结构化拒绝、一次性源语义不变；wbtest（URL/zigzag 边界/批往返/CRC 篡改/压缩拒绝）；**开发期用 kafka-python 3.0.11 解码我们发出的请求与自建批**（留痕于 ticket 83） | ✅ 2026-09-23（见决策 44；矩阵 #24） |
+| P21 | **细粒度授权与审计**：凭据可携带按主题 grants（read/write），`authorize_topic` 作为角色表之后的第二道门（**只收窄、不放大**）；`audit.log` 记拒绝、认证结果与主题生命周期，凭据永不入 | `e2e-p12` 腿 8–10：授权主题双向可用、未授权主题按名拒绝（码 10）、无 grants 凭据行为不变、read-only+write grant 不可放大、审计三断言 + **无凭据泄漏** grep | ✅ 2026-09-25（见决策 45） |
