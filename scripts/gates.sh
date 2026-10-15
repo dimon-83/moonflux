@@ -286,6 +286,9 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p54-deployment-plane.sh" scripts/e2e-p54-deployment-plane.sh
   # a task that cannot stay up must be a FACT in the table, not a log line
   step "e2e-p55-crash-loop.sh" scripts/e2e-p55-crash-loop.sh
+  # one template plus a fleet of points becomes a task set, with the refusals that
+  # keep a typo out of the cluster
+  step "e2e-p56-points.sh" scripts/e2e-p56-points.sh
   step "e2e-p41-deploy.sh" scripts/e2e-p41-deploy.sh
   step "e2e-p42-docker.sh" scripts/e2e-p42-docker.sh
   step "e2e-p43-stuck.sh" scripts/e2e-p43-stuck.sh

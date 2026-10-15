@@ -10,6 +10,8 @@ pub const SPEC_API_VERSION : String = "moonflux.io/v1alpha1"
 
 pub const SPEC_KIND : String = "Pipeline"
 
+pub fn expand_points(String) -> Result[String, Array[SpecError]]
+
 pub fn parse_spec(String) -> Result[PipelineSpec, Array[SpecError]]
 
 pub fn replay_warnings(PipelineSpec) -> Array[String]

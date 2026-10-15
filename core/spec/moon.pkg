@@ -2,6 +2,7 @@
 // Pure computation; compiles for every target.
 
 import {
+  "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
 }

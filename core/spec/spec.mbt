@@ -103,6 +103,295 @@ pub fn replay_warnings(spec : PipelineSpec) -> Array[String] {
 }
 
 ///|
+/// Placeholder expansion for a FLEET of points (P1-1). One template plus a list
+/// of points becomes a task SET: the difference between "add another spec for
+/// every tag" and "add a line".
+///
+///   { "template": <a Pipeline spec, with {name} / {point} / {index} inside its
+///                   string values>,
+///     "points": [ { "name": "inlet-cod", "point": "CN_进水COD",
+///                   "target": "worker-a", "restart": "on-failure" }, ... ] }
+///
+/// Substitution happens on the PARSED JSON TREE, never on the text: a point name
+/// containing a quote would otherwise break the document, and a template is data
+/// like everything else.
+///
+/// Only `{identifier}` is a placeholder; every other brace is a literal —
+/// decision 66's convention, reused rather than reinvented. An identifier-shaped
+/// placeholder with no value is REFUSED, not left in place: it is a typo, and a
+/// task running with `{ponit}` in its URL is worse than an apply that says so.
+///
+/// Returns the task-set document text, ready for the existing `--set` path, which
+/// then applies ITS rules too (one topic per task, valid names, ...). This
+/// function invents no second validator.
+pub fn expand_points(text : String) -> Result[String, Array[SpecError]] {
+  let errors : Array[SpecError] = []
+  let root = @json.parse(text[0:text.length()]) catch {
+    e =>
+      return Err([
+        SpecError::{
+          path: "$",
+          code: "bad-json",
+          message: "points document: \{e}",
+        },
+      ])
+  }
+  let obj = match root {
+    Object(o) => o
+    _ =>
+      return Err([
+        SpecError::{
+          path: "$",
+          code: "bad-shape",
+          message: "the points document must be an object with \"template\" and \"points\"",
+        },
+      ])
+  }
+  let template = match obj.get("template") {
+    Some(t) => t
+    None =>
+      return Err([
+        SpecError::{
+          path: "$.template",
+          code: "missing",
+          message: "no template: there is nothing to expand",
+        },
+      ])
+  }
+  let points = match obj.get("points") {
+    Some(Array(items)) =>
+      if items.length() == 0 {
+        return Err([
+          SpecError::{
+            path: "$.points",
+            code: "empty",
+            message: "no points: an empty fleet is a task set nobody asked for",
+          },
+        ])
+      } else {
+        items
+      }
+    _ =>
+      return Err([
+        SpecError::{
+          path: "$.points",
+          code: "missing",
+          message: "no points array",
+        },
+      ])
+  }
+  let pipelines : Array[Json] = []
+  let seen : Array[String] = []
+  let mut index = 0
+  for item in points {
+    let entry = match item {
+      Object(o) => o
+      _ => {
+        errors.push(SpecError::{
+          path: "$.points[\{index}]",
+          code: "bad-shape",
+          message: "every point must be an object",
+        })
+        continue
+      }
+    }
+    let name = match entry.get("name") {
+      Some(String(n)) =>
+        if n.length() == 0 {
+          errors.push(SpecError::{
+            path: "$.points[\{index}].name",
+            code: "empty",
+            message: "a point needs a task name",
+          })
+          continue
+        } else {
+          n
+        }
+      _ => {
+        errors.push(SpecError::{
+          path: "$.points[\{index}].name",
+          code: "missing",
+          message: "a point needs a task name: the run log, the schedule and the placement all key on it",
+        })
+        continue
+      }
+    }
+    if list_has(seen, name) {
+      errors.push(SpecError::{
+        path: "$.points[\{index}].name",
+        code: "duplicate",
+        message: "two points want the task name \"\{name}\"; task names identify runs, so they must be unique",
+      })
+      continue
+    }
+    seen.push(name)
+    let vars : Map[String, String] = {}
+    vars["name"] = name
+    vars["index"] = "\{index}"
+    match entry.get("point") {
+      Some(String(p)) => vars["point"] = p
+      _ => ()
+    }
+    let missing : Array[String] = []
+    let spec = substitute_placeholders(template, vars, missing)
+    if missing.length() > 0 {
+      for what in missing {
+        errors.push(SpecError::{
+          path: "$.template",
+          code: "unknown-placeholder",
+          message: "task \{name} uses an unknown placeholder \"\{what}\"; known placeholders are name, point and index",
+        })
+      }
+      continue
+    }
+    let task : Map[String, Json] = {}
+    task["pipeline"] = Json::string(name)
+    task["spec"] = spec
+    match entry.get("target") {
+      Some(String(t)) => task["target"] = Json::string(t)
+      _ => ()
+    }
+    match entry.get("restart") {
+      Some(String(r)) => task["restart"] = Json::string(r)
+      _ => ()
+    }
+    pipelines.push(Json::object(task))
+    index = index + 1
+  }
+  if errors.length() > 0 {
+    return Err(errors)
+  }
+  let out : Map[String, Json] = {}
+  out["pipelines"] = Json::array(pipelines)
+  Ok(Json::object(out).stringify())
+}
+
+///|
+/// Replaces `{identifier}` placeholders inside every STRING of a JSON tree, and
+/// records the identifier-shaped ones it could not resolve. Structural JSON is
+/// untouched: a placeholder is text inside a value, never a key or a shape.
+fn substitute_placeholders(
+  json : Json,
+  vars : Map[String, String],
+  missing : Array[String],
+) -> Json {
+  match json {
+    String(s) => Json::string(substitute_string(s, vars, missing))
+    Array(items) => {
+      let out : Array[Json] = []
+      for item in items {
+        out.push(substitute_placeholders(item, vars, missing))
+      }
+      Json::array(out)
+    }
+    Object(obj) => {
+      let out : Map[String, Json] = {}
+      for key, value in obj {
+        out[key] = substitute_placeholders(value, vars, missing)
+      }
+      Json::object(out)
+    }
+    other => other
+  }
+}
+
+///|
+/// One string's placeholders. `{` without a matching `}` is a literal, and so is
+/// any brace pair whose inside is not an identifier — that is what makes a JSON
+/// body's braces safe to keep in a template (decision 66's lesson).
+fn substitute_string(
+  s : String,
+  vars : Map[String, String],
+  missing : Array[String],
+) -> String {
+  let mut acc = ""
+  let n = s.length()
+  let mut i = 0
+  while i < n {
+    let rest = s[i:n].to_owned()
+    match rest.find("{") {
+      None => {
+        acc = acc + rest
+        i = n
+      }
+      Some(k) => {
+        let open = i + k
+        acc = acc + s[i:open].to_owned()
+        match s[open:n].to_owned().find("}") {
+          None => {
+            acc = acc + s[open:n].to_owned()
+            i = n
+          }
+          Some(j) => {
+            let close = open + j
+            let inner = s[open + 1:close].to_owned()
+            if is_placeholder_identifier(inner) {
+              match vars.get(inner) {
+                Some(v) => acc = acc + v
+                None => {
+                  acc = acc + s[open:close + 1].to_owned()
+                  if !list_has(missing, inner) {
+                    missing.push(inner)
+                  }
+                }
+              }
+              i = close + 1
+            } else {
+              // A literal `{` (a JSON body's, say): emit it and keep scanning ONE
+              // character on, so a real placeholder INSIDE that body is still
+              // replaced. Skipping to the matching `}` looked equivalent and was
+              // not: `{"point":"{point}"}` came out unsubstituted (measured by the
+              // test that reads the content back out of the tree).
+              acc = acc + "{"
+              i = open + 1
+            }
+          }
+        }
+      }
+    }
+  }
+  acc
+}
+
+///|
+/// Membership without the apps-side helper: core does not import apps, and this
+/// file already lives without it.
+fn list_has(items : Array[String], what : String) -> Bool {
+  for item in items {
+    if item == what {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// Whether a brace pair's inside is a placeholder NAME: an ASCII identifier.
+/// Checked on bytes, so a CJK point name can never be mistaken for one (its bytes
+/// are all >= 0x80).
+fn is_placeholder_identifier(s : String) -> Bool {
+  if s.length() == 0 {
+    return false
+  }
+  let bytes = @utf8.encode(s)
+  for i = 0; i < bytes.length(); i = i + 1 {
+    let b = bytes[i].to_int()
+    let ok = if i == 0 {
+      (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+    } else {
+      (b >= 65 && b <= 90) ||
+      (b >= 97 && b <= 122) ||
+      (b >= 48 && b <= 57) ||
+      b == 95
+    }
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+///|
 /// v1alpha1 transform nodes. `expr` runs the mbel expression engine
 /// (per record); `wasm` runs a compiled operator module through the
 /// sandbox ABI (per batch, P2) with the operator's own JSON config.

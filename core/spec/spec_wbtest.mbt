@@ -444,3 +444,114 @@ test "replay_warnings: from the end, or a non-external sink, says nothing" {
     Err(errors) => abort("spec rejected: \{errors}")
   }
 }
+
+///|
+/// One template plus a list of points becomes a task set (P1-1). The JSON body's
+/// own braces stay literal — decision 66's rule, reused: only `{identifier}` is a
+/// placeholder.
+test "expand_points: a template and a fleet become a task set" {
+  let text = "{\"template\":{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"{name}\"},\"spec\":{\"source\":{\"type\":\"http\",\"url\":\"https://x/pgrest?node_name=eq.{point}\",\"interval_ms\":20000,\"headers\":{\"Accept-Profile\":\"ia_csc\"}},\"topic\":{\"name\":\"{name}-polls\"},\"transforms\":[],\"sink\":{\"type\":\"callout\",\"mode\":\"live\",\"method\":\"POST\",\"url\":\"https://hook/{point}\",\"body\":\"{\\\"point\\\":\\\"{point}\\\"}\"}}},\"points\":[{ \"name\":\"inlet-cod\",\"point\":\"CN_进水COD\",\"target\":\"worker-a\",\"restart\":\"on-failure\"},{\"name\":\"outlet-nh3\",\"point\":\"CN_出水氨氮\"}]}"
+  match expand_points(text) {
+    Ok(set) => {
+      let json = @json.parse(set[0:set.length()]) catch {
+        e => abort("expanded set is not JSON: \{e}")
+      }
+      let root = match json {
+        Object(o) => o
+        _ => abort("expanded set is not an object")
+      }
+      let pipelines = match root.get("pipelines") {
+        Some(Array(items)) => items
+        _ => abort("no pipelines array")
+      }
+      assert_eq(pipelines.length(), 2)
+      // Read the CONTENT back out of the TREE, not out of the serialized text:
+      // JSON escapes non-ASCII, so a `contains` on the document would be testing
+      // the serializer's escaping rather than the substitution (measured: exactly
+      // how this assertion first failed).
+      let first = match pipelines[0] {
+        Object(p) => p
+        _ => abort("a pipeline is not an object")
+      }
+      // a task is {pipeline, spec, target, restart} and that `spec` is the whole
+      // Pipeline document, so the content lives one level deeper than it looks
+      let doc = match first.get("spec") {
+        Some(Object(x)) => x
+        _ => abort("no spec document")
+      }
+      let spec = match doc.get("spec") {
+        Some(Object(x)) => x
+        _ => abort("no spec body")
+      }
+      let source = match spec.get("source") {
+        Some(Object(x)) => x
+        _ => abort("no source")
+      }
+      assert_eq(
+        match source.get("url") {
+          Some(String(u)) => u
+          _ => ""
+        },
+        "https://x/pgrest?node_name=eq.CN_\u8fdb\u6c34COD",
+      )
+      // the JSON body's own braces survived as LITERALS, and only `{point}` was
+      // replaced inside it
+      let sink = match spec.get("sink") {
+        Some(Object(x)) => x
+        _ => abort("no sink")
+      }
+      assert_eq(
+        match sink.get("body") {
+          Some(String(b)) => b
+          _ => ""
+        },
+        "{" + "\"point\":\"CN_\u8fdb\u6c34COD\"}",
+      )
+      assert_eq(
+        match spec.get("topic") {
+          Some(Object(t)) =>
+            match t.get("name") {
+              Some(String(n)) => n
+              _ => ""
+            }
+          _ => ""
+        },
+        "inlet-cod-polls",
+      )
+      // the task-level fields ride along, and only where they were given
+      assert_true(set.contains("\"pipeline\":\"inlet-cod\""))
+      assert_true(set.contains("\"target\":\"worker-a\""))
+      assert_true(set.contains("\"restart\":\"on-failure\""))
+      assert_true(set.contains("\"topic\":{\"name\":\"outlet-nh3-polls\"}"))
+    }
+    Err(errors) => abort("a valid fleet was refused: \{errors}")
+  }
+}
+
+///|
+/// Three refusals, each one a mistake that would otherwise reach the cluster:
+/// two points wanting one task name (names identify runs), a placeholder nothing
+/// supplies (a typo), and a point with no name at all.
+test "expand_points: duplicate names, unknown placeholders and nameless points are refused" {
+  let base = "\"template\":{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"{name}\"},\"spec\":{\"source\":{\"type\":\"stdout\"}}}"
+  match
+    expand_points(
+      "{" +
+      base +
+      ",\"points\":[{ \"name\":\"a\",\"point\":\"p\"},{\"name\":\"a\",\"point\":\"q\"}]}",
+    ) {
+    Ok(_) => abort("a duplicate task name was accepted")
+    Err(errors) => assert_eq(errors[0].code, "duplicate")
+  }
+  match
+    expand_points(
+      "{\"template\":{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"{name}\",\"x\":\"{ponit}\"},\"spec\":{\"source\":{\"type\":\"stdout\"}}},\"points\":[{ \"name\":\"a\",\"point\":\"p\"}]}",
+    ) {
+    Ok(_) => abort("an unknown placeholder was accepted")
+    Err(errors) => assert_eq(errors[0].code, "unknown-placeholder")
+  }
+  match expand_points("{" + base + ",\"points\":[{ \"point\":\"p\"}]}") {
+    Ok(_) => abort("a point with no task name was accepted")
+    Err(errors) => assert_eq(errors[0].code, "missing")
+  }
+}

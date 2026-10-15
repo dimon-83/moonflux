@@ -159,20 +159,45 @@ fn pipeline_view(argv : Array[String]) -> Unit {
 ///|
 fn pipeline_apply(argv : Array[String]) -> Unit {
   let flags = parse_flags(argv)
-  let spec_path = flags.require("file")
+  // --points FILE: one template plus a fleet, expanded into a task SET before
+  // anything else looks at it (P1-1). Both口径 then treat it as a set apply,
+  // because that is what it is. The expansion is pure (`@spec.expand_points`), so
+  // a bad fleet is refused before a byte moves.
+  let points_path = flags.get("points")
+  let points = match points_path {
+    Some(path) => {
+      let text = match @fs.read_file(path) {
+        Ok(bytes) => @utf8.decode_lossy(bytes[0:bytes.length()])
+        Err(e) => fail("read \{path}: \{e}")
+      }
+      match @spec.expand_points(text) {
+        Ok(set) => Some(set)
+        Err(errors) => fail("points \{path}: \{errors}")
+      }
+    }
+    None => None
+  }
+  let spec_path = match points_path {
+    Some(path) => path
+    None => flags.require("file")
+  }
   // Two口径, deliberately separate: with --remote the pipeline becomes
   // the *cluster's* desired state (the control plane holds it and data
   // nodes pull); without it, this data dir applies to itself, which is
   // what a single-process broker has always done.
   if flags.get("remote") is Some(sc_addr) {
-    let text = match @fs.read_file(spec_path) {
-      Ok(bytes) => @utf8.decode_lossy(bytes[0:bytes.length()])
-      Err(e) => fail("read \{spec_path}: \{e}")
+    let text = match points {
+      Some(set) => set
+      None =>
+        match @fs.read_file(spec_path) {
+          Ok(bytes) => @utf8.decode_lossy(bytes[0:bytes.length()])
+          Err(e) => fail("read \{spec_path}: \{e}")
+        }
     }
     // Which of the three shapes the operator meant travels WITH the document
     // (P37): a control plane must never have to guess whether "apply" means
     // "add this task" or "this is now the whole cluster's task list".
-    let mode = if flags.get("set") is Some(_) {
+    let mode = if points is Some(_) || flags.get("set") is Some(_) {
       "set"
     } else if flags.get("replace") is Some(_) {
       "replace"
@@ -211,8 +236,15 @@ fn pipeline_apply(argv : Array[String]) -> Unit {
   //   --set               -> a set document replaces the whole set
   // The distinction matters because the first is what an operator does to a
   // task and the second is what an operator does to a catalog.
-  let (tasks, message) = if flags.get("set") is Some(_) {
-    let incoming = load_set_doc(spec_path)
+  let (tasks, message) = if points is Some(_) || flags.get("set") is Some(_) {
+    let incoming = match points {
+      Some(set) =>
+        match task_docs_from_set_text(set, "the expanded points") {
+          Ok(docs) => docs
+          Err(e) => fail("points: \{e}")
+        }
+      None => load_set_doc(spec_path)
+    }
     let prepared : Array[TaskDoc] = []
     for doc in incoming {
       prepared.push(prepare_stored_task(store, data_dir, doc, now))
