@@ -553,6 +553,171 @@ fn topic_source_poll_ms() -> Int32 {
 const DEFAULT_TOPIC_POLL_MS : Int32 = 100
 
 ///|
+/// The leader address of a partition, asked of the control plane. An EMPTY answer
+/// means "nobody hosts it yet", which every caller must turn into a named failure
+/// rather than read as an empty stream.
+fn leader_address(
+  sc : String,
+  topic : String,
+  partition : Int32,
+  link : PeerLink,
+) -> Result[String, String] {
+  let payload = match
+    control_call_secure(
+      sc,
+      @client.CMD_LEADER,
+      @client.encode_partition_ref(@client.PartitionRef::{ topic, partition, }),
+      link,
+    ) {
+    Ok(payload) => payload
+    Err(e) => return Err("\{e}")
+  }
+  match @client.decode_partition_view(payload) {
+    Ok(view) => Ok(view.leader)
+    Err(e) => Err("\{e}")
+  }
+}
+
+///|
+/// A partition's watermarks, asked of the control plane: (hw, leo). `from: end`
+/// needs the leo, and asking the same question `cluster offsets` asks keeps one
+/// answer to it.
+fn watermarks_of(
+  sc : String,
+  topic : String,
+  partition : Int32,
+  link : PeerLink,
+) -> Result[(Int64, Int64), String] {
+  let payload = match
+    control_call_secure(
+      sc,
+      @client.CMD_OFFSET_INFO,
+      @client.encode_partition_ref(@client.PartitionRef::{ topic, partition, }),
+      link,
+    ) {
+    Ok(payload) => payload
+    Err(e) => return Err("\{e}")
+  }
+  match @client.decode_offset_info(payload) {
+    Ok(pair) => Ok(pair)
+    Err(e) => Err("\{e}")
+  }
+}
+
+///|
+/// The cluster topic source (P1-2b-ii): a task reading a topic the DATA PLANE
+/// hosts. It mirrors the local loop, with three differences that matter:
+///
+///   * the leader is looked up once and a consumer connects to it; a topic with no
+///     host is refused BY NAME rather than read as an empty stream;
+///   * the cursor advances by the server's `scan_end`, never by a record count — a
+///     window is byte-truncated and a rule can filter a whole window away, so only
+///     the server knows where the scan stopped (P18);
+///   * waiting is a sleep plus the idle heartbeat (decision 105). The node-side
+///     pump discipline does not apply: a task is a CLIENT, with no other
+///     connection to serve.
+fn cluster_topic_source_loop(
+  applied : Applied,
+  sink : @connectors.Sink,
+  chain : Array[CompiledNode],
+  state : StateContext?,
+  sc : String,
+  link : PeerLink,
+  from : String,
+  session : RunSession?,
+) -> Unit {
+  let name = applied.spec.topic.name
+  let leader = match leader_address(sc, name, 0, link) {
+    Ok(addr) => addr
+    Err(e) => fail("topic source \{name}: \{e}")
+  }
+  if leader.length() == 0 {
+    fail(
+      "topic source \{name}: no data node hosts it yet — declare it (topic create --name \{name} --partitions 1 --replication-factor 1 --remote \{sc}) and give the cluster a data node",
+    )
+  }
+  let (host, port) = parse_listen_addr(leader)
+  let consumer = match
+    connect_consumer_transport(host, port, link.token, link.tls) {
+    Ok(consumer) => consumer
+    Err(e) => fail("topic source \{name}: connect \{leader}: \{e}")
+  }
+  let mut cursor = match from {
+    "beginning" => 0L
+    "end" =>
+      // Asked of the LEADER, not of the control plane: the leader owns the
+      // progress ledger, and a control plane serves no data-node command at all
+      // (measured: asking it for watermarks answered "unknown command"). The
+      // docstring on `cluster offsets` says exactly this — "asked of the node that
+      // holds it".
+      match watermarks_of(leader, name, 0, link) {
+        Ok((_, leo)) => leo
+        Err(e) => fail("topic source \{name}: \{e}")
+      }
+    _ => {
+      let text = from[7:from.length()].to_owned()
+      match (try? @string.parse_int(text)) {
+        Ok(n) => n.to_int64()
+        Err(_) => fail("topic source: from=\"\{from}\" is not a position")
+      }
+    }
+  }
+  let sink_retry = RetryState::new()
+  while cli_term_requested() == 0 {
+    let window = match
+      consumer.fetch_partition_window(name, 0, cursor, topic_source_window) {
+      Ok(window) => window
+      Err(e) => fail("topic source \{name}: fetch: \{e}")
+    }
+    if window.entries.length() == 0 || window.scan_end <= cursor {
+      match session {
+        Some(run) => run.idle(now_ms(), cursor)
+        None => ()
+      }
+      cli_sleep_ms(topic_source_poll_ms())
+      continue
+    }
+    let pulled : Array[@protocol.Record] = []
+    for entry in window.entries {
+      pulled.push(entry.record)
+    }
+    let out_records = match apply_nodes(chain, pulled, state, None) {
+      Ok(out) => out
+      Err(e) => fail("transform: \{e}")
+    }
+    // The same batch is retried until it goes out (a dropped batch is a silently
+    // lost alert) — but a STOP is still a stop: without this check a run stuck on
+    // a dead sink could only be killed, and would end `offline` instead of
+    // `stopped` (P37-2). Ending here loses nothing: the source topic still holds
+    // the batch.
+    let mut flushed = false
+    while !flushed {
+      if cli_term_requested() != 0 {
+        break
+      }
+      match (sink.flush)(out_records) {
+        Ok(_) => {
+          sink_retry.recovered("sink \{sink.name}")
+          flushed = true
+        }
+        Err(e) => sink_retry.wait("sink \{sink.name}", e)
+      }
+    }
+    cursor = window.scan_end
+    match session {
+      Some(run) => run.batch(cursor, now_ms())
+      None => ()
+    }
+  }
+  consumer.close()
+  let reason = if cli_term_requested() != 0 { "signal" } else { "exhausted" }
+  match session {
+    Some(run) => run.stop(reason, cursor)
+    None => ()
+  }
+}
+
+///|
 /// Runs the consumption loop for a topic source: read from the pipeline's own
 /// log at a cursor, apply the chain, deliver, advance by the last offset + 1
 /// (P18's rule: records can be missing from a window, so counting records
@@ -844,13 +1009,14 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   // cluster. Absence of the flag is the signal, because its default
   // (".moonflux-data") would otherwise silently mean "somewhere on disk".
   let cluster_data = flags.get("data-dir") is None && control is Some(_)
-  if cluster_data && applied.spec.source is TopicSource(_, _) {
-    // Half a pipeline that works is worse than none: a cluster-data run with a
-    // topic source would have nowhere to read from, and finding that out from an
-    // empty output stream is the kind of thing this repo refuses to ship. The
-    // cluster topic source is P1-2b's next slice.
+  if cluster_data && applied.spec.state is Some(_) {
+    // RESUME is bookkeeping kept in the state topic through a LOCAL data dir
+    // (docs/state-migration.md). A cluster-data run has no local dir, and
+    // pretending to resume without a marker would silently re-apply records the
+    // state already absorbed — so this mode refuses the combination by name
+    // instead of guessing.
     fail(
-      "pipeline run: this run has a control plane and no --data-dir, so its data path is the cluster — but the cluster topic SOURCE is not implemented yet. Pass --data-dir to keep the input on this node (the sink can still go to the cluster), or use a source that is not a topic.",
+      "pipeline run: a cluster-data run (--control with no --data-dir) cannot use a state topic yet: its resume marker lives in a local data dir. Pass --data-dir, or run without a state node.",
     )
   }
   let revision = match load_task_set(data_dir).revision {
@@ -937,10 +1103,22 @@ fn pipeline_run(argv : Array[String]) -> Unit {
     MqttSource(url) => Some(@connectors.mqtt_source(url))
     KafkaSource(url) => Some(@connectors.kafka_source(url))
   }
-  // 2. broker: append to the topic log
-  let log = match open_topic_log(data_dir, applied.spec.topic.name) {
-    Ok(log) => log
-    Err(e) => fail(e)
+  // 2. broker: append to the topic log.
+  //
+  // NOT in cluster-data mode. A topic source reads the CLUSTER in its own loop
+  // below, so a local broker log here is unnecessary — and it FAILS: measured, it
+  // opened a topic in a data dir this mode does not have and then asked a control
+  // plane a data-node question, which answered "unknown command". For a source
+  // that is not a topic, the broker itself would have to live on the cluster, and
+  // that path is not implemented: say so rather than half-work.
+  if cluster_data && !(applied.spec.source is TopicSource(_, _)) {
+    // A topic source reads the CLUSTER in its own loop below and needs no local
+    // broker. Any other source DOES need one — the broker is the topic its records
+    // are appended to — and in this mode that topic would have to live on the
+    // cluster, which is not implemented. Say so rather than half-work.
+    fail(
+      "pipeline run: a cluster-data run with a \{source_kind_text(applied.spec.source)} source would need its BROKER topic on the cluster, which is not implemented yet. Pass --data-dir, or use a topic source.",
+    )
   }
   // 3. the sink (constructed once: a streaming run flushes many batches)
   // The link carries this run's credentials; a cluster sink needs it, and it is
@@ -1024,6 +1202,14 @@ fn pipeline_run(argv : Array[String]) -> Unit {
       }
   }
   match topic_source {
+    Some(from) if cluster_data =>
+      match control {
+        Some(sc) =>
+          cluster_topic_source_loop(
+            applied, sink, chain, state, sc, sink_link, from, session,
+          )
+        None => fail("topic source: cluster mode without a control plane")
+      }
     Some(from) =>
       topic_source_loop(
         applied, sink, chain, state, data_dir, from, resume, session,
@@ -1033,6 +1219,14 @@ fn pipeline_run(argv : Array[String]) -> Unit {
   let source = match source {
     Some(source) => source
     None => fail("a topic source has no connector to pull from")
+  }
+  // The broker: the topic this path appends the source's records to. It lives HERE
+  // rather than above the dispatch because a cluster-data topic source never
+  // reaches this point (it has its own loop), and opening a local log for it was
+  // both unnecessary and a failure (measured).
+  let log = match open_topic_log(data_dir, applied.spec.topic.name) {
+    Ok(log) => log
+    Err(e) => fail(e)
   }
   let source_retry = RetryState::new()
   let sink_retry = RetryState::new()

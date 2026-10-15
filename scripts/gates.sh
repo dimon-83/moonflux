@@ -295,6 +295,9 @@ if [ "$MODE" != "fast" ]; then
   # the sink side of the cluster data path: a task publishes into the topics the
   # data plane hosts, and the unimplemented half refuses by name
   step "e2e-p58-cluster-data.sh" scripts/e2e-p58-cluster-data.sh
+  # a task that lives entirely on cluster topics: source and sink both hosted by
+  # the data plane, with the end-of-topic semantics a restart depends on
+  step "e2e-p59-cluster-pipeline.sh" scripts/e2e-p59-cluster-pipeline.sh
   step "e2e-p41-deploy.sh" scripts/e2e-p41-deploy.sh
   step "e2e-p42-docker.sh" scripts/e2e-p42-docker.sh
   step "e2e-p43-stuck.sh" scripts/e2e-p43-stuck.sh
