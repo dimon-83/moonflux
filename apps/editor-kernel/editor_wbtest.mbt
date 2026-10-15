@@ -7,10 +7,11 @@
 
 ///|
 test "abi: the page's expected kernel version" {
-  // 4: the task-set and run-table panels joined the surface. This number and
-  // the page's own assertion move together, so a stale artifact beside a fresh
-  // page is announced instead of guessed at (P37-3a/3b).
-  assert_eq(mf_editor_abi_version(), 4)
+  // 5: the management verbs joined the surface (mf_editor_schedule,
+  // mf_editor_task_enabled), after 4 added the task-set and run-table panels.
+  // This number and the page's own assertion move together, so a stale artifact
+  // beside a fresh page is announced instead of guessed at (P37-3a/3b/P37-5c).
+  assert_eq(mf_editor_abi_version(), 5)
 }
 
 ///|
@@ -262,4 +263,26 @@ test "feed: a schedule reply arrives as rows, reason included" {
   assert_true(decoded.contains("\"task\":\"floater\""))
   assert_true(decoded.contains("\"state\":\"pending\""))
   assert_true(decoded.contains("a pin is a declaration"))
+}
+
+///|
+/// A lifecycle flip is acknowledged with a REVISION ALONE, and the kernel says
+/// so. Rendering an empty task set from that acknowledgement would show "there
+/// are no tasks" right after a successful stop — the shape is real (see
+/// CMD_TASK_ENABLED in apps/cli/node.mbt), and this is the fact that keeps the
+/// page honest about it.
+test "feed: a revision-only task-set ack does not claim to carry tasks" {
+  let req = mf_editor_task_enabled("off", false)
+  let rid = (req[5].to_int() << 24) |
+    (req[6].to_int() << 16) |
+    (req[7].to_int() << 8) |
+    req[8].to_int()
+  let ack = @client.encode_cluster_pipeline(@client.ClusterPipeline::{
+    revision: 7L,
+    document: "",
+  })
+  let decoded = mf_editor_feed(frame(@client.CMD_OK, rid, ack))
+  assert_true(decoded.contains("\"kind\":\"task-set\""))
+  assert_true(decoded.contains("\"has_document\":false"))
+  assert_true(decoded.contains("\"revision\":7"))
 }

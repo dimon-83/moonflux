@@ -34,6 +34,12 @@ options(
         "mf_editor_view",
         "mf_editor_task_list",
         "mf_editor_run_list",
+        // the management panel's verbs (P37-5c): the page calls these directly,
+        // and an export list is part of the page's ABI - a function missing here
+        // is not a compile error, it is a button that throws on click (measured:
+        // the panel gate's probe got "not a function" before this line existed)
+        "mf_editor_schedule",
+        "mf_editor_task_enabled",
         "mf_editor_session_reset",
         "mf_editor_hello",
         "mf_editor_apply",

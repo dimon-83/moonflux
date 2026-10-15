@@ -48,7 +48,8 @@
 | # | 项 | 优先级 | 说明 / 依据 |
 | :--- | :--- | :--- | :--- |
 | 0a | **P37-1 多任务地基（本地口径）** | ✅ 2026-10-13 | 决策 81：`topology.json` v2 集合 + 按名 upsert/`--set`/`delete`/`list` + **取数按 topic 选链** + v1 内存迁移 + `moonflux_tasks` 无标签 gauge；门禁 `e2e-p37-multi-task.sh` **10 腿**。顺带修：健康检查恒真、诊断走块缓冲 stdout、`--set` 吞参数（并加 `audit-flags.py` 门禁防这一类） |
-| 1d | **开发计划 + 管理界面第一片** | 🚧 2026-10-15 | 决策 110：[dev-plan.md](dev-plan.md) 收益排序；内核 schedule/task_enabled 两帧 + js 测试进门禁（13/13）；页面留下一片 |
+| 1e | **管理界面收口（P37-5c）** | ✅ 2026-10-15 | 决策 111：调度面板 + 生命周期按钮 + p53 4/4；修 js 导出清单/ABI 5/`has_document`；内核 14/14 |
+| 1d | **开发计划 + 管理界面第一片** | ✅ 2026-10-15 | 决策 110：[dev-plan.md](dev-plan.md) 收益排序；内核 schedule/task_enabled 两帧 + js 测试进门禁（13/13）；页面留下一片 |
 | 1c | **安全跑法机制化** | ✅ 2026-10-15 | 决策 109：`run-watched.sh` + CI 监控+artifact + 前台提示 + `--suite` 自检 |
 | 1b | **铁律落地：never + 运行表** | ✅ 2026-10-15 | 决策 108：`Child.done`（CI 抓出 never 被复活）+ 门禁竞态修 + `RunTable` 有界（活运行不淘汰）| 
 | 1a | **铁律：资源 + 文档语言** | ✅ 2026-10-15 | 决策 107：英文 `AGENT.md`（两条铁律）+ `AGENTS.md` 指针；双语副本后补 |

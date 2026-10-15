@@ -278,6 +278,9 @@ if [ "$MODE" != "fast" ]; then
   step "e2e-p38-run-registration.sh" scripts/e2e-p38-run-registration.sh
   step "e2e-p39-console.sh" scripts/e2e-p39-console.sh
   step "e2e-p40-panels.sh" scripts/e2e-p40-panels.sh
+  # the management panel (P37-5c): the scheduler's table and the lifecycle verbs,
+  # driven through the page's own kernel artifact against a real control plane
+  step "e2e-p53-management-panel.sh" scripts/e2e-p53-management-panel.sh
   step "e2e-p41-deploy.sh" scripts/e2e-p41-deploy.sh
   step "e2e-p42-docker.sh" scripts/e2e-p42-docker.sh
   step "e2e-p43-stuck.sh" scripts/e2e-p43-stuck.sh

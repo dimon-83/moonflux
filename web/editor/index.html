@@ -178,6 +178,12 @@
       <button class="act" id="btn-runs">refresh runs</button></p>
     <table><thead><tr><th>run</th><th>task</th><th>state</th><th>pid</th><th>progress</th><th>log</th></tr></thead>
            <tbody id="run-rows"></tbody></table>
+    <h2>schedule <span class="status">(desired against actual — the control plane decides)</span></h2>
+    <p class="hintline"><code>pending</code> is a real state with a reason, never silence:
+      a task pinned to a worker that is not running says exactly that.
+      <button class="act" id="btn-schedule">refresh schedule</button></p>
+    <table><thead><tr><th>task</th><th>target</th><th>owner</th><th>state</th><th>why</th><th>lifecycle</th></tr></thead>
+           <tbody id="schedule-rows"></tbody></table>
     <h2>records</h2>
     <table><thead><tr><th>offset</th><th>key</th><th>value</th></tr></thead>
            <tbody id="rows"></tbody></table>
@@ -212,7 +218,7 @@ let graph = {
 // editor-kernel.js next to this page would leave the function-set
 // surface silently missing, so the mismatch is announced, not guessed
 const abi = kernel.mf_editor_abi_version();
-if (abi !== 4) say(`kernel ABI ${abi} — this page expects 4; rebuild apps/editor-kernel (js)`);
+if (abi !== 5) say(`kernel ABI ${abi} — this page expects 5; rebuild apps/editor-kernel (js)`);
 $("kernel").textContent = "kernel ABI " + abi;
 
 // ---- rendering --------------------------------------------------------
@@ -450,6 +456,8 @@ function nodeBox(node) {
 
 $("btn-tasks").addEventListener("click", () =>
   guard("tasks", () => send(kernel.mf_editor_task_list(), "tasks")));
+$("btn-schedule").addEventListener("click", () =>
+  guard("schedule", () => send(kernel.mf_editor_schedule(), "schedule")));
 $("btn-runs").addEventListener("click", () =>
   guard("runs", () => send(kernel.mf_editor_run_list(), "runs")));
 
@@ -510,6 +518,49 @@ function renderRuns(decoded) {
       `${runs.filter((r) => r.state === "offline").length} offline`);
 }
 
+/// Renders the scheduler's table. The page does not decide placement and does not
+/// judge permissions: it draws what the control plane answered, including the
+/// reason a row is not running, and a lifecycle button reports the server's
+/// refusal rather than pretending the click worked.
+function renderSchedule(decoded) {
+  const body = $("schedule-rows");
+  body.textContent = "";
+  const rows = decoded.rows || [];
+  if (rows.length === 0) {
+    const row = body.insertRow();
+    row.insertCell().textContent = "(no task set is applied on this control plane)";
+    row.cells[0].colSpan = 6;
+    return;
+  }
+  for (const r of rows) {
+    const row = body.insertRow();
+    row.insertCell().textContent = r.task;
+    row.insertCell().textContent = r.target;
+    row.insertCell().textContent = r.owner === "" ? "-" : r.owner;
+    const state = row.insertCell();
+    state.textContent = r.state;
+    state.className = r.state === "running" ? "" : "status";
+    row.insertCell().textContent = r.reason === "" ? "-" : r.reason;
+    const cell = row.insertCell();
+    const btn = document.createElement("button");
+    btn.className = "act";
+    // the STATE picks the verb; whether it is permitted is the SERVER's answer
+    // (Root-only), and a refusal surfaces in the log rather than in silence
+    const starting = r.state === "disabled";
+    btn.textContent = starting ? "start" : "stop";
+    btn.addEventListener("click", () =>
+      guard("task-enabled", () => {
+        send(kernel.mf_editor_task_enabled(r.task, starting), `task-enabled:${r.task}`);
+        // the flip is acknowledged with a revision alone, so ask for BOTH the
+        // task set (the new desired state, with its document) and the new table
+        send(kernel.mf_editor_task_list(), "tasks");
+        send(kernel.mf_editor_schedule(), "schedule");
+      }));
+    cell.append(btn);
+  }
+  say(`schedule: ${rows.length} task(s), ${rows.filter((r) => r.state === "pending").length} pending`);
+}
+
 $("name").addEventListener("input", (ev) => { graph.name = ev.target.value; refresh(); });
 $("topic").addEventListener("input", (ev) => { graph.topic = ev.target.value; refresh(); });
 
@@ -563,15 +614,22 @@ function handle(decoded) {
   const action = awaiting.get(decoded.rid) ?? "reply";
   awaiting.delete(decoded.rid);
   if (decoded.kind === "task-set") {
-    renderTasks(decoded);
+    // a lifecycle flip's reply carries the revision only, so re-rendering from
+    // it would show an EMPTY task set: the page distinguishes the two answers
+    // and asks for the document when it needs one
+    if (decoded.has_document) renderTasks(decoded);
+    else say(`task set moved to revision ${decoded.revision}`);
   } else if (decoded.kind === "runs") {
     renderRuns(decoded);
+  } else if (decoded.kind === "schedule") {
+    renderSchedule(decoded);
   } else if (decoded.kind === "welcome") {
     say(`hello accepted (server v${decoded.major}.${decoded.minor})`);
     // the panel comes alive with the connection: list what the node holds
     guard("set-list", () => send(kernel.mf_editor_function_set_list(), "set-list"));
     guard("tasks", () => send(kernel.mf_editor_task_list(), "tasks"));
     guard("runs", () => send(kernel.mf_editor_run_list(), "runs"));
+    guard("schedule", () => send(kernel.mf_editor_schedule(), "schedule"));
     updateButtons();
   } else if (decoded.kind === "ok") {
     if (decoded.pipeline) {

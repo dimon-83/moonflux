@@ -27,7 +27,11 @@ pub fn mf_editor_abi_version() -> Int32 {
   // mf_editor_run_list) — an artifact from ABI 3 has the view model but not
   // these, and the page would call a missing function. The page asserts this
   // number, so a stale artifact beside a fresh page refuses instead of guessing.
-  4
+  //
+  // 5: the MANAGEMENT verbs joined (mf_editor_schedule, mf_editor_task_enabled) —
+  // the lifecycle panel calls those, and an ABI-4 artifact beside a fresh page
+  // would throw on the click. Additive, so the number moves rather than the shape.
+  5
 }
 
 // ---------------------------------------------------------------------
@@ -524,7 +528,17 @@ pub fn mf_editor_feed(reply : Bytes) -> String {
       }
       root["kind"] = Json::string("task-set")
       root["revision"] = Json::number(decoded.revision.to_double())
-      root["tasks"] = Json::array(task_rows(decoded.document))
+      // A lifecycle flip answers with the revision ALONE (its document is
+      // empty): it is an acknowledgement, not the task set. Saying which one
+      // arrived keeps the page from wiping its task panel with an empty
+      // document - "stop succeeded" must not render as "the cluster has no
+      // tasks" (measured: the reply really is revision-only, see
+      // CMD_TASK_ENABLED in apps/cli/node.mbt).
+      let has_document = decoded.document != ""
+      root["has_document"] = Json::boolean(has_document)
+      if has_document {
+        root["tasks"] = Json::array(task_rows(decoded.document))
+      }
       return Json::object(root).stringify()
     }
     Some("schedule") => {
