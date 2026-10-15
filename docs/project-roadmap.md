@@ -17,6 +17,7 @@
 | P37-4…6 | 每任务资产 / 生命周期与 Docker / 浏览器 playground | — | ⏳ 未开工 |
 | 部署 | **SDF 例子的 native 部署**（每用例一次部署 + 运行登记处） | `e2e-p41-deploy.sh` 7 腿 | ✅ 决策 86 |
 | 能力 | **http 源请求头**（决策 90） | `e2e-p44-http-headers.sh` 5 腿 | ✅ |
+| 计划 | **下一批优先级（收益排序）** | 见 [docs/dev-plan.md](dev-plan.md)：P0-1 管理界面（进行中）→ P0-2 部署并轨管理平面 → P1 多点位/任务进集群数据面 → P2 文档与诊断 | 🚧 |
 | 部署 | **docker 集群测试（目标 ④）**（决策 104） | `e2e-p49-docker-cluster.sh` 动态 9 腿（CI docker 作业） | ✅ |
 | 能力 | **控制面对账 + 远程启停**（决策 100） | `e2e-p52-control-reconcile.sh` 4 腿（真集群） | ✅ |
 | 能力 | **task start/stop + runner 对账**（决策 98） | `e2e-p51-lifecycle.sh` 3 腿 | ✅ 本地 |

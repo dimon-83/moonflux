@@ -76,6 +76,7 @@
 | **`dedupe` primitive**（P31，决策 71） | ✅ | `apps/operator-dedupe`：每个键的第一条通过（1→0）；**期限 = 键的形状**（`keyfield → tumble → dedupe` ⇒ 每窗去重一次，无窗口 ⇒ 永久，且状态上界如实写明）；无键的链在**宿主**处按名拒绝 |
 | 窗口（hopping / 定时器触发 flush） | ⏳ | 未立项：与"算子不读时钟"的红线正面冲突，要做先定义事件时间水位的来源 | 未立项：需要"水位推进才产出"的语义，与"算子不读时钟"的红线冲突，要做就得先定义事件时间水位的来源 |
 | **SDF 例子的 native 部署**（决策 86） | ✅ | [`deploy-sdf.sh`](../scripts/deploy-sdf.sh)（start/status/verify/logs/list/stop）+ 部署根（每用例自己的数据目录、共享运行登记 broker、日志、pids、catalog）；三种模式逐行写明（**无静默跳过**）：5 个跑并逐字节验证、3 个跑了但无单一 golden、18 个 deploy-only 带理由；**跨用例主题冲突**（sentence/cars）由"每用例一个数据目录"化解。门禁 `e2e-p41-deploy.sh` 7 腿。指南 [`docs/deployment.md`](deployment.md)。**Docker 部署见下一行** |
+| **开发计划排序 + 管理界面第一片**（决策 110） | 🚧 | 计划 [`docs/dev-plan.md`](dev-plan.md)（收益排序）；P0-1 内核两帧 `mf_editor_schedule`/`mf_editor_task_enabled` + **js 目标测试进门禁**（此前无人测页面实际运行的目标 ✗）13/13。**未做**：页面面板与浏览器门禁 |
 | **安全跑法机制化（监控进 CI + 自检）**（决策 109） | ✅ | `run-watched.sh`（报告不设门禁）+ CI docker 两条重活被监控 + 样本留 artifact；`gates.sh` 前台 TTY 提示；`audit-gate-hygiene.py --suite` 断言"机制在位"（**首跑即抓到 CI 未接管监控的缺口** ✓） |
 | **铁律落地：never 不复活 + 运行表有界**（决策 108） | ✅ | CI 抓出 `restart: never` 被对账复活（`Child.done` ✓，期望变化时清除 ✓）；门禁自身竞态修（从 runner 自己的 stderr 取 pid ✓）；`RunTable` 加 `RUN_TABLE_CAP=1024` + 淘汰（**活运行永不淘汰** ✓、淘汰被报出 ✓）+ 2 条 wbtest |
 | **铁律：资源受控/释放 + 文档语言政策**（决策 107） | ✅ | 英文 [`AGENT.md`](AGENT.md)（两条铁律，必读，`AGENTS.md` 一行指针）；门禁与平台同等适用；强制手段 `gates-bg.sh`/`resource-watch.sh`/`audit-gate-hygiene.py`/看门狗；其余文档中文，双语副本后补 |

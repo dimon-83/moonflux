@@ -464,6 +464,10 @@ fn request(cmd : Int32, payload : Bytes) -> Bytes {
   let kind = match cmd {
     @client.CMD_CLUSTER_PIPELINE_FETCH => "task-set"
     @client.CMD_RUN_LIST => "runs"
+    @client.CMD_SCHEDULE_LIST => "schedule"
+    // the reply to a lifecycle flip IS the updated cluster task set, so the page
+    // gets the new desired state back and can re-render without a second round
+    @client.CMD_TASK_ENABLED => "task-set"
     _ => ""
   }
   if kind != "" {
@@ -521,6 +525,26 @@ pub fn mf_editor_feed(reply : Bytes) -> String {
       root["kind"] = Json::string("task-set")
       root["revision"] = Json::number(decoded.revision.to_double())
       root["tasks"] = Json::array(task_rows(decoded.document))
+      return Json::object(root).stringify()
+    }
+    Some("schedule") => {
+      let _ = session.pending.remove(rid)
+      let rows = match @client.decode_schedule_rows(payload) {
+        Ok(rows) => rows
+        Err(e) => return json_error("schedule reply: \{e}")
+      }
+      root["kind"] = Json::string("schedule")
+      let items : Array[Json] = []
+      for row in rows {
+        let item : Map[String, Json] = {}
+        item["task"] = Json::string(row.task)
+        item["target"] = Json::string(row.target)
+        item["owner"] = Json::string(row.owner)
+        item["state"] = Json::string(row.state)
+        item["reason"] = Json::string(row.reason)
+        items.push(Json::object(item))
+      }
+      root["rows"] = Json::array(items)
       return Json::object(root).stringify()
     }
     Some("runs") => {
@@ -742,6 +766,25 @@ pub fn mf_editor_task_list() -> Bytes {
 /// ended.
 pub fn mf_editor_run_list() -> Bytes {
   request(@client.CMD_RUN_LIST, b"")
+}
+
+///|
+/// Asks for the scheduler's table (P37-5c): the cluster's DESIRED task set
+/// against what is ACTUALLY running, one row per task, with the reason a row is
+/// not running (`disabled`, `pending` + why, `assigned`, `running`). The control
+/// plane decides it; this frame only carries the question, and the page renders
+/// the answer.
+pub fn mf_editor_schedule() -> Bytes {
+  request(@client.CMD_SCHEDULE_LIST, b"")
+}
+
+///|
+/// Flips a task's `enabled` bit in the CLUSTER's task set — what the lifecycle
+/// buttons send. Root-only at the protocol layer: the page does NOT judge
+/// permissions, it reports a refusal, because the server is the only place that
+/// can know (and a button that silently does nothing is the worst outcome).
+pub fn mf_editor_task_enabled(name : String, enabled : Bool) -> Bytes {
+  request(@client.CMD_TASK_ENABLED, @client.encode_task_enabled(name, enabled))
 }
 
 ///|

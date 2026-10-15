@@ -26,7 +26,11 @@ pub fn mf_editor_produce(String, String) -> Bytes
 
 pub fn mf_editor_run_list() -> Bytes
 
+pub fn mf_editor_schedule() -> Bytes
+
 pub fn mf_editor_session_reset() -> Unit
+
+pub fn mf_editor_task_enabled(String, Bool) -> Bytes
 
 pub fn mf_editor_task_list() -> Bytes
 

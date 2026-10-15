@@ -202,6 +202,12 @@ done
 step "moon test --target native" moon test --target native
 step "moon test --target wasm-gc" moon test --target wasm-gc
 
+# The console's kernel (apps/editor-kernel) is the page's ONLY protocol speaker
+# and parser (P4), and it runs on the JS target - which this suite was not
+# testing at all. The target the page actually runs on was the one target nobody
+# tested; the management UI's new verbs are gated by exactly these tests.
+step "moon test --target js apps/editor-kernel" moon test --target js apps/editor-kernel
+
 # 3. operator artifacts + ABI surface
 step "build-operators.sh" scripts/build-operators.sh
 

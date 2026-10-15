@@ -205,3 +205,61 @@ test "feed: records and empty OKs keep their shapes" {
   let err = mf_editor_feed(frame(@client.CMD_ERR, 13, @utf8.encode("boom")))
   assert_true(err.contains("\"kind\":\"error\""))
 }
+
+///|
+/// The management verbs (P37-5c) must speak the SAME commands the CLI does: the
+/// page is a second caller of one protocol, never a second protocol.
+test "session: the management verbs speak the protocol's commands" {
+  let schedule = mf_editor_schedule()
+  assert_eq(schedule[4].to_int(), @client.CMD_SCHEDULE_LIST)
+  assert_eq(schedule.length(), 13)
+  let flip = mf_editor_task_enabled("relay", false)
+  assert_eq(flip[4].to_int(), @client.CMD_TASK_ENABLED)
+  // the payload is the encoding the CLI sends — one place knows the shape
+  let expected = @client.encode_task_enabled("relay", false)
+  let payload = flip[13:flip.length()].to_owned()
+  assert_eq(payload.length(), expected.length())
+  assert_eq(
+    @utf8.decode_lossy(payload[0:payload.length()]),
+    @utf8.decode_lossy(expected[0:expected.length()]),
+  )
+}
+
+///|
+/// A schedule reply becomes rows for the page — and the PENDING row keeps its
+/// reason, because "not running" without "why" is the silence this table exists
+/// to remove.
+test "feed: a schedule reply arrives as rows, reason included" {
+  let rows : Array[@client.ScheduleRow] = [
+    @client.ScheduleRow::{
+      task: "floater",
+      target: "any",
+      owner: "worker-a",
+      state: "running",
+      reason: "",
+    },
+    @client.ScheduleRow::{
+      task: "pinned-gone",
+      target: "worker-zzz",
+      owner: "",
+      state: "pending",
+      reason: "target worker worker-zzz has no live runner (a pin is a declaration: not reassigned)",
+    },
+  ]
+  // Ask first, then answer with the request's OWN rid: `feed` attributes a reply
+  // through session.pending, so a reply fabricated with a made-up rid is not the
+  // flow the page uses (measured — the first version of this test passed the
+  // frame in directly and the reply decoded as nothing).
+  let req = mf_editor_schedule()
+  let rid = (req[5].to_int() << 24) |
+    (req[6].to_int() << 16) |
+    (req[7].to_int() << 8) |
+    req[8].to_int()
+  let decoded = mf_editor_feed(
+    frame(@client.CMD_OK, rid, @client.encode_schedule_rows(rows)),
+  )
+  assert_true(decoded.contains("\"kind\":\"schedule\""))
+  assert_true(decoded.contains("\"task\":\"floater\""))
+  assert_true(decoded.contains("\"state\":\"pending\""))
+  assert_true(decoded.contains("a pin is a declaration"))
+}
