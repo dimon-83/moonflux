@@ -404,3 +404,43 @@ test "https sink needs a ca, and carries headers" {
     Err(_) => ()
   }
 }
+
+///|
+/// A topic source that starts from the beginning, feeding a sink with an
+/// EXTERNAL side effect, re-delivers everything on every restart — a run commits
+/// no progress (see TopicSource). The platform can see it, so it says it.
+test "replay_warnings: a replay into an external side effect is named" {
+  let spec = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"alerts\"},\"spec\":{\"source\":{\"type\":\"topic\",\"name\":\"decisions\",\"from\":\"beginning\"},\"transforms\":[],\"topic\":{\"name\":\"decisions\"},\"sink\":{\"type\":\"http\",\"url\":\"http://example.invalid/hook\"}}}"
+  match parse_spec(spec) {
+    Ok(parsed) => {
+      let warnings = replay_warnings(parsed)
+      assert_eq(warnings.length(), 1)
+      assert_true(warnings[0].contains("EVERY restart"))
+      assert_true(warnings[0].contains("HTTP sink"))
+    }
+    Err(errors) => abort("spec rejected: \{errors}")
+  }
+}
+
+///|
+/// The two ways to NOT have that trap: start at the end, or keep the effect
+/// inside the platform. Both must be silent, or the warning becomes noise and
+/// operators learn to ignore it.
+test "replay_warnings: from the end, or a non-external sink, says nothing" {
+  let at_end = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"alerts\"},\"spec\":{\"source\":{\"type\":\"topic\",\"name\":\"decisions\",\"from\":\"end\"},\"transforms\":[],\"topic\":{\"name\":\"decisions\"},\"sink\":{\"type\":\"http\",\"url\":\"http://example.invalid/hook\"}}}"
+  match parse_spec(at_end) {
+    Ok(parsed) => assert_eq(replay_warnings(parsed).length(), 0)
+    Err(errors) => abort("spec rejected: \{errors}")
+  }
+  let internal = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"relay\"},\"spec\":{\"source\":{\"type\":\"topic\",\"name\":\"decisions\",\"from\":\"beginning\"},\"transforms\":[],\"topic\":{\"name\":\"decisions\"},\"sink\":{\"type\":\"stdout\"}}}"
+  match parse_spec(internal) {
+    Ok(parsed) => assert_eq(replay_warnings(parsed).length(), 0)
+    Err(errors) => abort("spec rejected: \{errors}")
+  }
+  // an explicit offset replays too, and it is the same trap for the same reason
+  let from_offset = "{\"apiVersion\":\"moonflux.io/v1alpha1\",\"kind\":\"Pipeline\",\"metadata\":{\"name\":\"alerts\"},\"spec\":{\"source\":{\"type\":\"topic\",\"name\":\"decisions\",\"from\":5},\"transforms\":[],\"topic\":{\"name\":\"decisions\"},\"sink\":{\"type\":\"mqtt\",\"url\":\"mqtt://broker/t\"}}}"
+  match parse_spec(from_offset) {
+    Ok(parsed) => assert_eq(replay_warnings(parsed).length(), 1)
+    Err(errors) => abort("spec rejected: \{errors}")
+  }
+}

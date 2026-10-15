@@ -281,6 +281,9 @@ if [ "$MODE" != "fast" ]; then
   # the management panel (P37-5c): the scheduler's table and the lifecycle verbs,
   # driven through the page's own kernel artifact against a real control plane
   step "e2e-p53-management-panel.sh" scripts/e2e-p53-management-panel.sh
+  # the deployment plane (P0-2): one runner over a whole task set, and the
+  # restart that must not repeat a side effect
+  step "e2e-p54-deployment-plane.sh" scripts/e2e-p54-deployment-plane.sh
   step "e2e-p41-deploy.sh" scripts/e2e-p41-deploy.sh
   step "e2e-p42-docker.sh" scripts/e2e-p42-docker.sh
   step "e2e-p43-stuck.sh" scripts/e2e-p43-stuck.sh

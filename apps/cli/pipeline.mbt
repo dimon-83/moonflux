@@ -292,6 +292,17 @@ fn prepare_task(
   spec_json : Json,
   now : Int64,
 ) -> TaskDoc {
+  // Say the deployment traps where EVERY local apply path passes — one spec,
+  // --replace, or a whole --set document. stderr, because stdout is the
+  // confirmation an operator may be parsing.
+  //
+  // A REMOTE apply never reaches this: the client sends the document text
+  // verbatim (it does not parse it), so the control plane says it instead, in
+  // its own log. That asymmetry is honest and worth knowing: the cluster's
+  // warning is in the cluster's log.
+  for warning in @spec.replay_warnings(spec) {
+    warn("warning: task \{name}: \{warning}\n")
+  }
   for t in spec.transforms {
     match compile_node(store, data_dir, t) {
       Ok(_) => ()

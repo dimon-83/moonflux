@@ -61,6 +61,48 @@ pub(all) enum SourceSpec {
 } derive(Debug, Eq, Show)
 
 ///|
+/// Deployment traps the platform can SEE, as text the operator should read.
+///
+/// The one that costs real money: a topic source that starts from the beginning
+/// (or from a fixed offset), feeding a sink with an EXTERNAL side effect — a
+/// webhook, an MQTT publish, a Kafka produce. A run commits no progress (see
+/// TopicSource), so every restart re-delivers everything it has ever delivered.
+/// Measured on a real deployment: an alert task whose source said
+/// `from: beginning` re-sent the whole day's webhooks after each `systemd`
+/// restart, and `Restart=always` made every crash a fresh burst.
+///
+/// The platform can see this in the spec, so it says so at apply time instead of
+/// letting an operator discover it from a duplicate-delivery complaint. A
+/// warning rather than a refusal: replaying into a side effect is a legitimate
+/// thing to do on purpose (a rehearsal, a re-send), and the repo's rule is that
+/// a risky mode must be VISIBLE, not forbidden (see the callout `mode` field).
+pub fn replay_warnings(spec : PipelineSpec) -> Array[String] {
+  let warnings : Array[String] = []
+  match spec.source {
+    TopicSource(name, from) => {
+      let replay = from == "beginning" || from.has_prefix("offset:")
+      if replay {
+        let effect = match spec.sink {
+          HttpSink(_, _, _) => Some("an HTTP sink (a webhook or an API call)")
+          MqttSink(_) => Some("an MQTT publish")
+          KafkaSink(_) => Some("a Kafka produce")
+          _ => None
+        }
+        match effect {
+          Some(what) =>
+            warnings.push(
+              "source topic \{name} starts from \{from} and the sink is \{what}: a run commits no progress, so EVERY restart re-delivers every record it already delivered. Use from: end (whatever arrives while the task is down is then lost — that is the trade), or keep the side effect behind a consumer group (P9).",
+            )
+          None => ()
+        }
+      }
+    }
+    _ => ()
+  }
+  warnings
+}
+
+///|
 /// v1alpha1 transform nodes. `expr` runs the mbel expression engine
 /// (per record); `wasm` runs a compiled operator module through the
 /// sandbox ABI (per batch, P2) with the operator's own JSON config.

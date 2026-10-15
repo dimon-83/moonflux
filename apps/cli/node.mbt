@@ -1227,6 +1227,21 @@ fn dispatch_control_frame(
               note(
                 "cluster task set now revision \{revision} (\{names.length()} task(s): \{names.join(", ")}); data nodes pull it on their next heartbeat",
               )
+              // The client ships the document verbatim, so this is the only
+              // place a REMOTE apply can see the deployment traps: they go to
+              // the control plane's log, not to the operator's terminal.
+              match
+                task_docs_from_set_text(asset.document, "<cluster task set>") {
+                Ok(docs) =>
+                  for task in docs {
+                    for warning in @spec.replay_warnings(task.spec) {
+                      note("warning: task \{task.name}: \{warning}")
+                    }
+                  }
+                // publish already validated the document; a parse failure here
+                // would be a second opinion nobody asked for
+                Err(_) => ()
+              }
               Ok(
                 @client.encode_cluster_pipeline(@client.ClusterPipeline::{
                   revision,
