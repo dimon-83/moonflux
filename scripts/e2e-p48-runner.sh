@@ -90,9 +90,11 @@ JSON
 # >&3 is the console (see gates.sh step()): this line survives a job that is killed
 # from outside, which is the only way it was ever going to be read (decision 130).
 echo "p48: leg 1 (local apply)" >&3
+echo "p48: apply (local spec)" >&3
 "$EXE" pipeline apply -f "$WORK/stream.json" --data-dir "$D" > /dev/null 2>&1 ||
   fail "apply of the relay task failed"
 
+echo "p48: starting sc on $SC_PORT" >&3
 "$EXE" sc --listen "127.0.0.1:$SC_PORT" --data-dir "$WORK/sc" \
   --metrics-listen "127.0.0.1:$METRICS_PORT" > "$WORK/sc.log" 2>&1 &
 PIDS="$PIDS $!"
@@ -102,6 +104,7 @@ export MOONFLUX_EXE="$EXE"
 
 echo "p48: leg 1/2/3. on-failure runner ------------------------------------------" >&3
 # ---- 1/2/3. on-failure runner ------------------------------------------
+echo "p48: starting runner" >&3
 "$EXE" runner --data-dir "$D" --control "127.0.0.1:$SC_PORT" \
   > "$WORK/runner.out" 2> "$WORK/runner.err" &
 RUNNER_PID=$!
