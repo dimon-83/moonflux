@@ -83,6 +83,11 @@ cat > "$WORK/stream.json" <<'JSON'
  "spec":{"source":{"type":"topic","name":"relay-in","from":"beginning"},"topic":{"name":"relay-in"},
  "transforms":[],"sink":{"type":"stdout"}}}
 JSON
+# A heartbeat at the top of each leg, on stdout, counted by the suite's step
+# wrapper. Reason (decision 128): the full jobs died with exit 143 INSIDE this gate
+# and the log held nothing between p47's PASS and the shutdown line, so "which leg
+# was it in" was unanswerable. One bounded line per leg answers it next time.
+echo "p48: leg 1 (local apply)"
 "$EXE" pipeline apply -f "$WORK/stream.json" --data-dir "$D" > /dev/null 2>&1 ||
   fail "apply of the relay task failed"
 
