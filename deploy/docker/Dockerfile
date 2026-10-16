@@ -96,6 +96,18 @@ WORKDIR /opt/moonflux
 COPY --from=builder /src/_build/native/release/build/apps/cli/cli.exe /usr/local/bin/moonflux
 COPY --from=builder /src/_build/wasm/debug/build/apps/ /opt/moonflux/_build/wasm/debug/build/apps/
 COPY --from=builder /src/examples/ /opt/moonflux/examples/
+# The one-command way to run a catalog case on moonflux, inside this image:
+#   docker run --rm --entrypoint moonflux-example <tag> --list
+#   docker run --rm --entrypoint moonflux-example <tag> all
+# It is a thin loop over `pipeline run --spec` + a byte comparison with each case's
+# expected.txt - the same statement the p42 and p29 gates make, without requiring a
+# host script to drive it.
+COPY deploy/docker/example-runner.sh /usr/local/bin/moonflux-example
+# 0755, not `chmod +x`: `+x` only ADDS execute bits, so a source file that lacks
+# read for group/other stays unreadable - and a shebang script must be READ to be
+# interpreted, which showed up as "Permission denied" for the non-root user the
+# runtime stage switches to. Measured, not guessed.
+RUN chmod 0755 /usr/local/bin/moonflux-example
 COPY --from=builder /src/web/editor/index.html /opt/moonflux/web/editor/index.html
 COPY --from=builder /src/_build/js/release/build/apps/editor-kernel/editor-kernel.js /opt/moonflux/web/editor/editor-kernel.js
 
