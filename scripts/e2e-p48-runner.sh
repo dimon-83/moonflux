@@ -100,6 +100,7 @@ wait_listen "$SC_PORT" || { cat "$WORK/sc.log"; fail "the control plane did not 
 
 export MOONFLUX_EXE="$EXE"
 
+echo "p48: leg 1/2/3. on-failure runner ------------------------------------------" >&3
 # ---- 1/2/3. on-failure runner ------------------------------------------
 "$EXE" runner --data-dir "$D" --control "127.0.0.1:$SC_PORT" \
   > "$WORK/runner.out" 2> "$WORK/runner.err" &
@@ -111,6 +112,7 @@ PID1=$(task_pid relay)
 [ -n "$PID1" ] || { runs; fail "1: no pid for the running task"; }
 pass "1. runner 起的任务进了 run list（running, pid=${PID1}）"
 
+echo "p48: leg 3. kill -9 the child -> on-failure respawns -----------------------" >&3
 # ---- 3. kill -9 the child -> on-failure respawns -----------------------
 kill -9 "$PID1" 2>/dev/null
 # the OLD run is still listed as "running" until the reap window turns it
@@ -129,6 +131,7 @@ done
   { runs; cat "$WORK/runner.err"; fail "3: the runner did not restart the killed task"; }
 pass "3. kill -9 子进程 → on-failure 重启（新 pid=${PID2}）"
 
+echo "p48: leg 2. SIGTERM the runner -> graceful stop ----------------------------" >&3
 # ---- 2. SIGTERM the runner -> graceful stop ----------------------------
 kill -TERM "$RUNNER_PID" 2>/dev/null
 wait_run "task=relay	state=stopped" 120 ||
@@ -136,6 +139,7 @@ wait_run "task=relay	state=stopped" 120 ||
 pass "2. runner 收 SIGTERM → 子进程优雅停止（run list 变 stopped，不是 offline）"
 PIDS="$(echo "$PIDS" | tr ' ' '\n' | grep -v "^$RUNNER_PID$" | tr '\n' ' ')"
 
+echo "p48: leg 4. --restart never leaves a killed task offline -------------------" >&3
 # ---- 4. --restart never leaves a killed task offline -------------------
 "$EXE" runner --data-dir "$D" --control "127.0.0.1:$SC_PORT" --restart never \
   > "$WORK/runner2.out" 2> "$WORK/runner2.err" &
