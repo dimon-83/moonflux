@@ -27,7 +27,12 @@ What that means concretely, with the failure each item has already caused here:
    kill something it did not start, including the tool that invoked the suite).
    A survivor that inherited the caller's stdout keeps that pipe open, so the
    caller waits on a pipe held by a daemon it never started. That is exactly how
-   "a gate hung" and "the client died" turned out to be one event.
+   "a gate hung" and "the client died" turned out to be one event. MEASURED AGAIN
+   (2026-10-16): launched a gate detached with `3>&1` - fd 3 pointing at the tool
+   call's own stdout - so the background gate held that pipe, the call was
+   SIGTERM'd, and the client restarted. Redirect EVERY descriptor that can reach
+   the caller (`> log 2>&1 3> log </dev/null`); never write `>&1`, and never
+   `3>&1`, in a command that leaves anything running after it returns.
 4. **Bound every output.** Text written to a file is free; text drawn into a
    terminal, a CI log view, or an agent's transcript is re-rendered on every run
    and its memory is not given back. Full output goes to a log file; the console
