@@ -195,6 +195,19 @@ jobs:
           uname -a
       - name: Gates (full, Linux)
         run: bash scripts/gates.sh
+      # The per-step logs ARE the evidence when a job dies: `step()` sends each
+      # gate's output to its own file, so the console carries only PASS/FAIL and a
+      # job killed from outside takes every explanation with it (decision 129 —
+      # that is exactly what happened to p48 three times). Keep them, always.
+      - name: Keep the per-step gate logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gates-steps-linux
+          path: /tmp/moonflux-gates.*/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
 
   full:
     # everything, including the E2E gates (real processes, fault
@@ -239,3 +252,16 @@ jobs:
           openssl version || true
       - name: Gates (full)
         run: bash scripts/gates.sh
+      # The per-step logs ARE the evidence when a job dies: `step()` sends each
+      # gate's output to its own file, so the console carries only PASS/FAIL and a
+      # job killed from outside takes every explanation with it (decision 129 —
+      # that is exactly what happened to p48 three times). Keep them, always.
+      - name: Keep the per-step gate logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gates-steps-macos
+          path: /tmp/moonflux-gates.*/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
