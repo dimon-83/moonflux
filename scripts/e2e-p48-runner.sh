@@ -87,7 +87,9 @@ JSON
 # wrapper. Reason (decision 128): the full jobs died with exit 143 INSIDE this gate
 # and the log held nothing between p47's PASS and the shutdown line, so "which leg
 # was it in" was unanswerable. One bounded line per leg answers it next time.
-echo "p48: leg 1 (local apply)"
+# >&3 is the console (see gates.sh step()): this line survives a job that is killed
+# from outside, which is the only way it was ever going to be read (decision 130).
+echo "p48: leg 1 (local apply)" >&3
 "$EXE" pipeline apply -f "$WORK/stream.json" --data-dir "$D" > /dev/null 2>&1 ||
   fail "apply of the relay task failed"
 

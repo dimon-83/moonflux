@@ -78,7 +78,15 @@ step() { # $1 = label, rest = command
   #     leaving children behind to hold the pipes the step was handed. Measured
   #     reason: a suite run that outlived its own tool call left the caller
   #     waiting on exactly those pipes.
-  ( set -m; "$@" ) </dev/null > "$log" 2>&1 &
+  # fd 3 is the CONSOLE, deliberately opened before stdout is sent to the log file
+  # (`3>&1` must come first, or 3 would point into the log too). A gate may write a
+  # BOUNDED progress line to >&3 — one per leg — and it reaches the CI job log as it
+  # happens. Measured need (decision 130): when a job is killed from outside, the
+  # step's log file dies with the VM, `if: always()` never runs, and the artifact
+  # upload cannot save the evidence; three runs of the full suite died inside p48
+  # leaving nothing behind. Bounded by construction: a heartbeat per leg, not a
+  # transcript.
+  ( set -m; "$@" ) 3>&1 </dev/null > "$log" 2>&1 &
   local pid=$!
   local waited=0 status=0 limit="${MOONFLUX_GATES_STEP_TIMEOUT:-900}"
   while kill -0 "$pid" 2>/dev/null; do
