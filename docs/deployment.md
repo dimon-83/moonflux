@@ -110,6 +110,12 @@ docker compose -f deploy/docker/compose.yaml up -d broker console
 docker compose -f deploy/docker/compose.yaml --profile case \
   run --rm -e CASE=13-parse-sentence case
 
+# 一个镜像、一条命令、宿主不需要任何脚本（moonflux-example 装在镜像里）
+docker run --rm --entrypoint moonflux-example moonflux:local --list
+docker run --rm --entrypoint moonflux-example moonflux:local 13-parse-sentence
+docker run --rm -e MOONFLUX_EXAMPLE_TIMEOUT=45 \
+  --entrypoint moonflux-example moonflux:local all
+
 # 集群形状（控制面 + 两个数据节点）代替单个 broker
 docker compose -f deploy/docker/compose.yaml --profile cluster up -d
 
@@ -117,6 +123,31 @@ docker compose -f deploy/docker/compose.yaml --profile cluster up -d
 docker build -f deploy/docker/Dockerfile -t moonflux:local .
 docker run --rm moonflux:local doctor
 ```
+
+### 一个命令跑整个 SDF 目录（`moonflux-example`）
+
+镜像里装了一个运行器（`deploy/docker/example-runner.sh` → `/usr/local/bin/moonflux-example`），
+于是**宿主只需要 `docker run`**：起容器、按用例目录自己的形状跑 spec、与 `expected*.txt`
+**逐字节**比对、给出结论。它需要知道的一切都**从用例目录推导**（`spec.json → expected.txt`、
+`spec-<x>.json → expected-<x>.txt`、`fns.json` 是必须先 `function-set create` 的资产），
+因此这个脚本里**没有第二份映射表**。
+
+**四个桶，如实分开**（这是实测改出来的，不是设计出来的）：
+
+| 桶 | 含义 |
+| :--- | :--- |
+| `matched` | 跑了，且与该用例的 expected 文件**逐字节一致** ✓ |
+| `ran` | 跑完了，但该 spec **没有** expected 文件 ✓ —— 实测：这些多是门禁在后台驱动的**接力/辅助运行**（接力的输出被别的 spec 比对）✗ 曾被我错误地当成"必须被拒绝"，一次性误报 29 条健康运行 ✗ |
+| `needs` | 在**封闭容器**里跑不起来，并**按名说明**缺什么 ✓：一个本地端口上的对端（HTTP/MQTT/callout 夹具）✓，或一个凭据（如 `OPENAI_API_KEY`）✓ |
+| `failed` | 跑了，且**与仓库不一致** ✗ —— 只有这个桶，以及"没有具名外部原因的真失败"，才决定退出码 ✓ |
+
+**它不声称的事** ✗：用例 spec 的**语义**（哪个是拒绝用例、哪几条要按什么顺序读同一份状态）
+**以门禁 `scripts/e2e-p29-examples.sh` 为唯一权威** ✓；本运行器只报告观测到的事实 ✓。
+需要外部对端/凭据的用例在封闭容器里**永远**跑不起来——这正是它们进 `needs` 而不是进
+`failed` 的原因 ✓，而把 `needs` 悄悄算成通过 ✗ 是让一套判据失效的最快方式 ✗。
+
+**实测**（本机 arm64，`moonflux:local`）：`--list` 列出目录 ✓；`13-parse-sentence` → **4 条记录、
+与 `expected.txt` 逐字节一致** ✓；`all` 的四桶计数见下（每次运行的真实输出）✓。
 
 **实测（本机 arm64 与 CI amd64 都真跑过）**：镜像大小 CI 量到 270 MB、本机量到 70.5 MB
 （差异未追查，只如实记下两个数）；
